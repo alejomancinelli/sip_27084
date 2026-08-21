@@ -1,0 +1,37 @@
+# Dependencias de la aplicación.
+#
+# Python 3.10 de 64 bits: el wheel de stapipy que trae el SDK de Sentech es cp310,
+# así que la versión del intérprete no es libre.
+#
+#   Windows:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+#   Linux:    .venv/bin/python -m pip install -r requirements.txt
+
+# Núcleo
+# numpy queda por debajo de 2.0: es lo que piden las librerías de deep learning
+# (Torch, stardist, csbdeep) y los wheels compilados contra la ABI de numpy 1.x.
+numpy>=1.24,<2.0
+PyYAML>=6.0
+
+# OpenCV de la misma época que numpy 1.x: los wheels 4.9+ se compilan contra la ABI
+# de numpy 2 y no cargan con numpy 1.
+#
+# Variante con GUI a propósito, no la headless que usan los proyectos en producción:
+# manual_test/camera_live_view.py muestra el feed con cv2.imshow. Cuando entre la UI
+# de PySide6 y el visor deje de depender de imshow, pasar a opencv-python-headless
+# (las dos instaladas a la vez se pisan).
+opencv-python>=4.8,<4.9
+
+# Cámaras Basler. El wheel incluye su propio runtime de pylon, así que alcanza para
+# capturar: el SDK completo (viewer, IP Configurator, filter driver) es opcional y lo
+# cubre setup/cameras/.
+pypylon>=2.1.0
+
+# Cámaras Sentech / Omron: stapipy NO está en PyPI. Lo instala el script de setup
+# desde el wheel que hay que copiar a packages/:
+#   Windows: setup\cameras\windows\sentech.ps1
+#   Linux:   setup/cameras/linux/sentech.sh
+# Se deja asentado acá porque es una dependencia real de la app, aunque pip no la
+# pueda resolver.
+
+# Tests
+pytest>=7.4
