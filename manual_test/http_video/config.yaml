@@ -1,0 +1,18 @@
+# Config de la prueba manual video_streams.py, separada del config.yaml de la app.
+#
+# El puerto va distinto al de la app a propósito: así la prueba se puede correr con
+# el sistema andando, sin pelearse por el 8091.
+
+http_video:
+  enabled: true
+  port: 8191
+  jpeg_quality: 80              # 0–100; menos calidad = menos bytes por frame
+  frame_width_px: 960           # ancho al que se reduce antes de codificar; 0 = nativo
+  log_connections: true         # en false, abrir y cerrar pestañas no dice nada
+
+# De esta sección el servidor sólo usa las claves: son los slots que van en la ruta
+# (/camera_1/raw). Los campos de una cámara real —`name`, `driver`, `roi`— no
+# aparecen porque no lee ninguno; la ruta sale del slot, no del nombre.
+cameras:
+  camera_1: {}
+  camera_2: {}
