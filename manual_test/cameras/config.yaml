@@ -1,0 +1,34 @@
+# Config del visor de prueba camera_live_view.py, separada del config.yaml de la app.
+# Solo lleva lo que leen los drivers: `driver`, `address`, `rotation` y `acquisition`.
+# `brand`, `model`, `roi` e `illumination_min` no aparecen porque ningún driver los usa.
+#
+# Acá la clave nombra el caso a probar, no un slot físico de cámara.
+
+cameras:
+  mock:
+    driver: mock
+    rotation: null
+    acquisition:
+      fps_limit: 15
+
+  basler:
+    driver: basler_gige
+    address: 192.168.1.101
+    rotation: null
+    acquisition:
+      fps_limit: 15
+      exposure_time_us: 15000
+      gain: 1.5
+
+  sentech:
+    driver: st_gige
+    address: 10.8.83.77
+    rotation: null
+    acquisition:
+      fps_limit: 15
+      exposure_time_us: 15000
+      gain: 1.5
+
+  # Verifica la salida por configuración inválida: debe dar un NullDriver.
+  unregistered:
+    driver: DOES_NOT_EXIST
