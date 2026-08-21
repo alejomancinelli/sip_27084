@@ -17,6 +17,16 @@ ui:
   language: LANGUAGE
   dark_mode: true
 
+http_video:
+  # Streams MJPEG, dos por cámara: http://<ip>:<puerto>/camera_1/raw (frame de
+  # cámara) y /camera_1/annotated (con anotaciones de inferencia). La ruta usa la
+  # clave del slot, no el `name`. Sin nadie mirando un stream no se codifica nada.
+  enabled: true
+  port: 8091
+  jpeg_quality: 80              # 0–100; menos calidad = menos bytes por frame
+  frame_width_px: 960           # ancho al que se reduce antes de codificar; 0 = nativo
+  log_connections: true         # una línea de log por cliente que entra o sale del stream
+
 cameras:
   # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
   # slot: es la identidad con la que la cámara aparece en el resto del sistema.
