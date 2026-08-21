@@ -40,8 +40,8 @@ class MockDriver(AbstractCameraDriver):
         self.is_connected = False
 
         # `or` cubre ausente, None y 0: los tres rompen la división de abajo.
-        _fps_limit = config_cam.get("acquisition", {}).get("fps_limit") or _DEFAULT_FPS_LIMIT
-        self._fps_limit = float(_fps_limit)
+        fps_limit = config_cam.get("acquisition", {}).get("fps_limit") or _DEFAULT_FPS_LIMIT
+        self._fps_limit = float(fps_limit)
         self._frame_time_s = 1.0 / self._fps_limit
         self._last_frame_time_s = time.time()
 
@@ -58,11 +58,11 @@ class MockDriver(AbstractCameraDriver):
 
         # Ritmo limitado al fps configurado. Si el próximo frame no entra en el
         # timeout, devuelve None como haría una cámara real.
-        _pending_s = self._frame_time_s - (time.time() - self._last_frame_time_s)
-        if _pending_s > timeout_ms / 1000.0:
+        pending_s = self._frame_time_s - (time.time() - self._last_frame_time_s)
+        if pending_s > timeout_ms / 1000.0:
             return None
-        if _pending_s > 0:
-            time.sleep(_pending_s)
+        if pending_s > 0:
+            time.sleep(pending_s)
 
         self._last_frame_time_s = time.time()
         return self._deliver(self._build_frame())
@@ -80,17 +80,17 @@ class MockDriver(AbstractCameraDriver):
         }
 
     def _build_frame(self) -> np.ndarray:
-        _frame = np.zeros((_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), dtype=np.uint8)
+        frame = np.zeros((_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), dtype=np.uint8)
 
-        _jitter_px = np.random.randint(-_FLOW_JITTER_PX, _FLOW_JITTER_PX)
+        jitter_px = np.random.randint(-_FLOW_JITTER_PX, _FLOW_JITTER_PX)
         cv2.rectangle(
-            _frame,
-            (_FLOW_X_MIN_PX - _jitter_px, 0),
-            (_FLOW_X_MAX_PX + _jitter_px, _FRAME_HEIGHT_PX),
+            frame,
+            (_FLOW_X_MIN_PX - jitter_px, 0),
+            (_FLOW_X_MAX_PX + jitter_px, _FRAME_HEIGHT_PX),
             (_FLOW_GRAY, _FLOW_GRAY, _FLOW_GRAY),
             -1,
         )
 
         # Ruido uniforme: simula polvillo en suspensión.
-        _noise = np.random.randint(0, _DUST_NOISE_MAX, _frame.shape, dtype=np.uint8)
-        return cv2.add(_frame, _noise)
+        noise = np.random.randint(0, _DUST_NOISE_MAX, frame.shape, dtype=np.uint8)
+        return cv2.add(frame, noise)

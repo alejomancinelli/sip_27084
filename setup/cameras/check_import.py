@@ -21,16 +21,16 @@ def main() -> int:
         print("usage: check_import.py <module>")
         return 2
 
-    _name = sys.argv[1]
+    name = sys.argv[1]
     try:
-        _module = importlib.import_module(_name)
+        module = importlib.import_module(name)
     except BaseException as e:
         # BaseException on purpose: compiled extensions that cannot find their DLLs
         # may raise SystemExit or others that do not derive from Exception.
         print(f"{type(e).__name__}: {e}")
         return 1
 
-    print(getattr(_module, "__version__", "ok"))
+    print(getattr(module, "__version__", "ok"))
     return 0
 
 

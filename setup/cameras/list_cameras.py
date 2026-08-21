@@ -67,24 +67,24 @@ def _read_field(source, attr_name: str) -> str | None:
     works for pypylon's getters and StApi's properties.
     """
     try:
-        _value = getattr(source, attr_name)
-        if callable(_value):
-            _value = _value()
+        value = getattr(source, attr_name)
+        if callable(value):
+            value = value()
         # StApi returns enums here; their repr carries the class name as noise.
-        if not isinstance(_value, str) and hasattr(_value, "name"):
-            _value = _value.name
+        if not isinstance(value, str) and hasattr(value, "name"):
+            value = value.name
     except Exception:
         return None
-    _text = str(_value).strip()
-    return None if _text.lower() in _MISSING_VALUES else _text
+    text = str(value).strip()
+    return None if text.lower() in _MISSING_VALUES else text
 
 
 def _read_first(source, attr_names: tuple) -> str | None:
     """Returns the first of several candidate attribute names that resolves."""
-    for _attr_name in attr_names:
-        _value = _read_field(source, _attr_name)
-        if _value:
-            return _value
+    for attr_name in attr_names:
+        value = _read_field(source, attr_name)
+        if value:
+            return value
     return None
 
 
@@ -97,14 +97,14 @@ def _print_device(index: int, source, extra: dict | None = None) -> dict:
     out of it.
     """
     print(f"  [{index}] {_read_first(source, _TITLE_FIELDS) or 'unknown'}")
-    _extra = extra or {}
-    _found = {}
-    for _label, _candidates in _DEVICE_FIELDS:
-        _value = _extra.get(_label) or _read_first(source, _candidates)
-        if _value:
-            _found[_label] = _value
-            print(f"       {_label:6}: {_value}")
-    return _found
+    extra = extra or {}
+    found = {}
+    for label, candidates in _DEVICE_FIELDS:
+        value = extra.get(label) or _read_first(source, candidates)
+        if value:
+            found[label] = value
+            print(f"       {label:6}: {value}")
+    return found
 
 
 def _sentech_ips(st_module, st_interface) -> dict:
@@ -115,22 +115,22 @@ def _sentech_ips(st_module, st_interface) -> dict:
     which is what device_id holds. The interface nodemap does publish each camera's
     IP, and without opening the camera.
     """
-    _ips = {}
+    ips = {}
     try:
-        _nodemap = st_interface.port.nodemap
-        _selector = st_module.PyIInteger(_nodemap.get_node("DeviceSelector"))
-        _ip_node = st_module.PyIInteger(_nodemap.get_node("GevDeviceIPAddress"))
+        nodemap = st_interface.port.nodemap
+        selector = st_module.PyIInteger(nodemap.get_node("DeviceSelector"))
+        ip_node = st_module.PyIInteger(nodemap.get_node("GevDeviceIPAddress"))
     except Exception:
-        return _ips
+        return ips
 
-    for _index in range(st_interface.device_count):
+    for index in range(st_interface.device_count):
         try:
-            _selector.set_value(_index)
-            _packed = _ip_node.value
-            _ips[_index] = ".".join(str((_packed >> _s) & 0xFF) for _s in (24, 16, 8, 0))
+            selector.set_value(index)
+            packed = ip_node.value
+            ips[index] = ".".join(str((packed >> s) & 0xFF) for s in (24, 16, 8, 0))
         except Exception:
             continue
-    return _ips
+    return ips
 
 
 def _list_basler() -> int:
@@ -144,26 +144,26 @@ def _list_basler() -> int:
         return 0
 
     try:
-        _devices = pylon.TlFactory.GetInstance().EnumerateDevices()
+        devices = pylon.TlFactory.GetInstance().EnumerateDevices()
     except Exception as e:
         print(f"  Enumeration failed: {e}")
         return 0
 
-    if not _devices:
+    if not devices:
         print("  No cameras detected.")
         return 0
 
-    for _i, _device in enumerate(_devices):
-        _found = _print_device(_i, _device)
+    for i, device in enumerate(devices):
+        found = _print_device(i, device)
         # BaslerDriver matches on the IP, so that is what goes into `address`.
-        if _found.get("class") == _BASLER_GIGE_CLASS and _found.get("ip"):
+        if found.get("class") == _BASLER_GIGE_CLASS and found.get("ip"):
             print(f"       config.yaml -> driver: {_BASLER_DRIVER} | "
-                  f"address: {_found['ip']}")
+                  f"address: {found['ip']}")
         else:
             print(f"       not reachable through the {_BASLER_DRIVER} driver: "
                   f"it needs class {_BASLER_GIGE_CLASS} and an IP")
 
-    return len(_devices)
+    return len(devices)
 
 
 def _list_sentech() -> int:
@@ -178,47 +178,47 @@ def _list_sentech() -> int:
 
     try:
         st.initialize()
-        _system = st.create_system()
+        system = st.create_system()
     except Exception as e:
         print(f"  StApi initialization failed: {e}")
         return 0
 
-    _count = 0
+    count = 0
     try:
-        for _i in range(_system.interface_count):
-            _interface = _system.get_interface(_i)
-            _ip_by_index = _sentech_ips(st, _interface)
+        for i in range(system.interface_count):
+            interface = system.get_interface(i)
+            ip_by_index = _sentech_ips(st, interface)
 
-            for _j in range(_interface.device_count):
-                _found = _print_device(_count, _interface.get_device_info(_j),
-                                       {"ip": _ip_by_index.get(_j)})
+            for j in range(interface.device_count):
+                found = _print_device(count, interface.get_device_info(j),
+                                      {"ip": ip_by_index.get(j)})
                 # StDriver takes either: an IP is translated to the device_id before
                 # opening. The IP is preferred because it is the one you can ping and
                 # the one the Basler entries use, so both drivers read the same.
-                _address = _found.get("ip") or _found.get("id")
-                if _address:
+                address = found.get("ip") or found.get("id")
+                if address:
                     print(f"       config.yaml -> driver: {_SENTECH_DRIVER} | "
-                          f"address: {_address}")
+                          f"address: {address}")
                 else:
                     print(f"       neither ip nor device id: {_SENTECH_DRIVER} "
                           f"cannot target this camera")
-                _count += 1
+                count += 1
     except Exception as e:
         print(f"  Failed while walking the interfaces: {e}")
 
-    if _count == 0:
+    if count == 0:
         print("  No cameras detected.")
-    return _count
+    return count
 
 
 def main() -> int:
     print("=" * _LINE_WIDTH)
     print("Cameras detected on this machine")
     print("=" * _LINE_WIDTH)
-    _total = _list_basler() + _list_sentech()
+    total = _list_basler() + _list_sentech()
     print("=" * _LINE_WIDTH)
-    if _total:
-        print(f"Total: {_total} camera(s).")
+    if total:
+        print(f"Total: {total} camera(s).")
         return 0
     print("Total: none. Use the 'mock' driver for development.")
     return 1

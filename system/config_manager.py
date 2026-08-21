@@ -40,8 +40,8 @@ _FALLBACK_CONFIG = {
 
 def _default_config_path() -> str:
     """config.yaml en la raíz del repo, sin depender del CWD del proceso."""
-    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(_project_root, _CONFIG_FILENAME)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_root, _CONFIG_FILENAME)
 
 
 class ConfigManager:
@@ -97,12 +97,12 @@ class ConfigManager:
         es un mapa de claves.
         """
         with self._lock:
-            _parsed = self._read_file()
-            if _parsed is None:
+            parsed = self._read_file()
+            if parsed is None:
                 self._apply_fallback()
                 return False
 
-            self._config_data = _parsed
+            self._config_data = parsed
             self._is_using_fallback = False
             self._missing_keys.clear()
             logger.debug(f"{_CONFIG_FILENAME} cargado en memoria desde {self._config_path}")
@@ -120,16 +120,16 @@ class ConfigManager:
                 logger.warning(f"Ruta de config vacía. Se usa el default: {default}")
                 return default
 
-            _node = self._config_data
-            for _key in key_path.split("."):
-                if not isinstance(_node, dict) or _key not in _node:
+            node = self._config_data
+            for key in key_path.split("."):
+                if not isinstance(node, dict) or key not in node:
                     self._warn_missing(key_path, default)
                     return default
-                _node = _node[_key]
+                node = node[key]
 
-            if isinstance(_node, (dict, list)):
-                return copy.deepcopy(_node)
-            return _node
+            if isinstance(node, (dict, list)):
+                return copy.deepcopy(node)
+            return node
 
     def set(self, key_path: str, value: object) -> bool:
         """
@@ -143,25 +143,25 @@ class ConfigManager:
                 logger.error("Ruta de config vacía; no se escribe nada.")
                 return False
 
-            _keys = key_path.split(".")
-            _node = self._config_data
-            for _i, _key in enumerate(_keys[:-1]):
-                _child = _node.get(_key)
-                if _child is None:
-                    _child = {}
-                    _node[_key] = _child
-                elif not isinstance(_child, dict):
-                    _prefix = ".".join(_keys[:_i + 1])
+            keys = key_path.split(".")
+            node = self._config_data
+            for i, key in enumerate(keys[:-1]):
+                child = node.get(key)
+                if child is None:
+                    child = {}
+                    node[key] = child
+                elif not isinstance(child, dict):
+                    prefix = ".".join(keys[:i + 1])
                     logger.error(
-                        f"Ruta de config inválida: '{_prefix}' no es un mapa; "
+                        f"Ruta de config inválida: '{prefix}' no es un mapa; "
                         f"no se escribe '{key_path}'."
                     )
                     return False
-                _node = _child
+                node = child
 
             # Copia por el mismo motivo que `get`: la config no comparte objetos
             # con nadie de afuera.
-            _node[_keys[-1]] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+            node[keys[-1]] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
             logger.debug(f"Config: '{key_path}' = {value}")
             return True
 
@@ -186,9 +186,9 @@ class ConfigManager:
                 )
                 return False
 
-            _tmp_path = f"{self._config_path}{_TMP_SUFFIX}"
+            tmp_path = f"{self._config_path}{_TMP_SUFFIX}"
             try:
-                with open(_tmp_path, "w", encoding="utf-8") as f:
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     # safe_dump y no dump: el dumper completo escribe tags
                     # !!python/... que después safe_load rechaza. Mejor que falle
                     # el save que dejar un archivo que la app no puede releer.
@@ -196,12 +196,12 @@ class ConfigManager:
                                    sort_keys=False, allow_unicode=True)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(_tmp_path, self._config_path)
+                os.replace(tmp_path, self._config_path)
                 logger.info(f"{_CONFIG_FILENAME} guardado en {self._config_path}")
                 return True
             except (OSError, yaml.YAMLError) as e:
                 logger.error(f"Error escribiendo {self._config_path}: {e}")
-                self._discard_tmp(_tmp_path)
+                self._discard_tmp(tmp_path)
                 return False
 
     # ── Internos ─────────────────────────────────────────────────────────────
@@ -214,21 +214,21 @@ class ConfigManager:
 
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
-                _parsed = yaml.safe_load(f)
+                parsed = yaml.safe_load(f)
         except (OSError, yaml.YAMLError) as e:
             logger.error(f"Falla crítica leyendo {self._config_path}: {e}")
             return None
 
-        if _parsed is None:
+        if parsed is None:
             logger.error(f"Falla crítica: {self._config_path} está vacío.")
             return None
-        if not isinstance(_parsed, dict):
+        if not isinstance(parsed, dict):
             logger.error(
                 f"Falla crítica: {self._config_path} no es un mapa de claves "
-                f"(se leyó un {type(_parsed).__name__})."
+                f"(se leyó un {type(parsed).__name__})."
             )
             return None
-        return _parsed
+        return parsed
 
     def _apply_fallback(self):
         """Deja en memoria la config de rescate."""

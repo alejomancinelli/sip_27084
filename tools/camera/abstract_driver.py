@@ -31,10 +31,10 @@ class AbstractCameraDriver(ABC):
     is_config_error = False
 
     def __init__(self, config_cam: dict | None = None):
-        _config = config_cam or {}
-        self._rotation = _config.get("rotation")
+        config = config_cam or {}
+        self._rotation = config.get("rotation")
         # `enabled: false` deja la cámara sin capturar sin borrarla del config.
-        self._capture_enabled = bool(_config.get("enabled", True))
+        self._capture_enabled = bool(config.get("enabled", True))
         self._frame_stamps: deque = deque(maxlen=_FPS_WINDOW)
 
     @abstractmethod
@@ -107,14 +107,14 @@ class AbstractCameraDriver(ABC):
         """fps real medido sobre las marcas de los últimos frames entregados."""
         if len(self._frame_stamps) < 2:
             return 0.0
-        _span_s = self._frame_stamps[-1] - self._frame_stamps[0]
-        if _span_s <= 0:
+        span_s = self._frame_stamps[-1] - self._frame_stamps[0]
+        if span_s <= 0:
             return 0.0
-        return round((len(self._frame_stamps) - 1) / _span_s, 1)
+        return round((len(self._frame_stamps) - 1) / span_s, 1)
 
     def _rotate_frame(self, frame: np.ndarray) -> np.ndarray:
         """Aplica la rotación configurada; sin `rotation` válida devuelve el frame tal cual."""
-        _rotate_code = _ROTATE_MAP.get(self._rotation)
-        if _rotate_code is None:
+        rotate_code = _ROTATE_MAP.get(self._rotation)
+        if rotate_code is None:
             return frame
-        return cv2.rotate(frame, _rotate_code)
+        return cv2.rotate(frame, rotate_code)

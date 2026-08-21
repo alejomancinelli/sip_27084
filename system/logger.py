@@ -17,16 +17,16 @@ _DATE_FORMAT = "%H:%M:%S"
 
 
 def _build_logger() -> logging.Logger:
-    _logger = logging.getLogger(_LOGGER_NAME)
+    app_logger = logging.getLogger(_LOGGER_NAME)
     # Reimportar el módulo no debe duplicar la salida.
-    if _logger.handlers:
-        return _logger
+    if app_logger.handlers:
+        return app_logger
 
-    _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
-    _logger.addHandler(_handler)
-    _logger.setLevel(logging.INFO)
-    return _logger
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT))
+    app_logger.addHandler(handler)
+    app_logger.setLevel(logging.INFO)
+    return app_logger
 
 
 logger = _build_logger()

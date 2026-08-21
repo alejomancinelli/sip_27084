@@ -78,8 +78,8 @@ def _is_client_gone(sock: socket.socket) -> bool:
     es que la escritura falle o se trabe más de `_WRITE_TIMEOUT_S`.
     """
     try:
-        _readable, _, _ = select.select([sock], [], [], 0)
-        if not _readable:
+        readable, _, _ = select.select([sock], [], [], 0)
+        if not readable:
             return False
         return sock.recv(4096) == b""
     except (OSError, ValueError):
@@ -90,11 +90,11 @@ def _downscale(frame_bgr: np.ndarray, frame_width_px: int) -> np.ndarray:
     """Reduce el frame a `frame_width_px` de ancho conservando la relación de aspecto."""
     if frame_width_px <= 0:
         return frame_bgr
-    _height_px, _width_px = frame_bgr.shape[:2]
-    if _width_px <= frame_width_px:
+    height_px, width_px = frame_bgr.shape[:2]
+    if width_px <= frame_width_px:
         return frame_bgr
-    _target_height_px = max(1, round(_height_px * frame_width_px / _width_px))
-    return cv2.resize(frame_bgr, (frame_width_px, _target_height_px),
+    target_height_px = max(1, round(height_px * frame_width_px / width_px))
+    return cv2.resize(frame_bgr, (frame_width_px, target_height_px),
                       interpolation=cv2.INTER_AREA)
 
 
@@ -109,9 +109,9 @@ def _build_part_header(jpeg_size: int) -> bytes:
 
 def _build_info_html(slots: tuple[str, ...]) -> bytes:
     """Página con un link por stream disponible."""
-    _links = "\n".join(
-        f'<a href="/{_slot}/{_mode}">/{_slot}/{_mode}</a>'
-        for _slot in slots for _mode in _MODES
+    links = "\n".join(
+        f'<a href="/{slot}/{mode}">/{slot}/{mode}</a>'
+        for slot in slots for mode in _MODES
     ) or "<p>No hay cámaras configuradas.</p>"
     return f"""\
 <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -120,7 +120,7 @@ def _build_info_html(slots: tuple[str, ...]) -> bytes:
 </head><body>
 <h2>Streams MJPEG</h2>
 <p>raw = frame de cámara; annotated = frame con anotaciones de inferencia.</p>
-{_links}
+{links}
 </body></html>
 """.encode()
 
@@ -148,11 +148,11 @@ class _Subscribers:
     def unregister(self, key: _StreamKey, token: int) -> int:
         """Da de baja el lease. Devuelve los clientes que quedan en `key`."""
         with self._lock:
-            _leases = self._leases.get(key)
-            if _leases is None:
+            leases = self._leases.get(key)
+            if leases is None:
                 return 0
-            _leases.pop(token, None)
-            if not _leases:
+            leases.pop(token, None)
+            if not leases:
                 del self._leases[key]
                 return 0
             return self._count_locked(key)
@@ -163,14 +163,14 @@ class _Subscribers:
 
     def count_all(self) -> int:
         with self._lock:
-            return sum(self._count_locked(_key) for _key in list(self._leases))
+            return sum(self._count_locked(key) for key in list(self._leases))
 
     def _count_locked(self, key: _StreamKey) -> int:
-        _leases = self._leases.get(key)
-        if not _leases:
+        leases = self._leases.get(key)
+        if not leases:
             return 0
-        _cutoff_s = time.monotonic() - _LEASE_TTL_S
-        return sum(1 for _seen_s in _leases.values() if _seen_s >= _cutoff_s)
+        cutoff_s = time.monotonic() - _LEASE_TTL_S
+        return sum(1 for seen_s in leases.values() if seen_s >= cutoff_s)
 
 
 class _FrameStore:
@@ -200,14 +200,14 @@ class _FrameStore:
                jpeg_quality: int = _DEFAULT_JPEG_QUALITY,
                frame_width_px: int = _DEFAULT_FRAME_WIDTH_PX):
         """Codifica el frame reducido y despierta a los clientes que esperan."""
-        _ok, _buf = cv2.imencode(".jpg", _downscale(frame_bgr, frame_width_px),
-                                 [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-        if not _ok:
+        ok, buf = cv2.imencode(".jpg", _downscale(frame_bgr, frame_width_px),
+                               [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        if not ok:
             logger.warning(f"[HttpVideo] No se pudo codificar el frame de /{key[0]}/{key[1]}.")
             return
-        _jpeg = _buf.tobytes()
+        jpeg = buf.tobytes()
         with self._cond:
-            self._jpegs[key] = _jpeg
+            self._jpegs[key] = jpeg
             self._seqs[key] = self._seqs.get(key, 0) + 1
             self._cond.notify_all()
 
@@ -245,24 +245,24 @@ class _StreamingHandler(BaseHTTPRequestHandler):
         if self.path == _INFO_PATH:
             self._send_info()
             return
-        _parts = self.path.strip("/").split("/")
-        if len(_parts) == 2 and _parts[0] in self.server.slots and _parts[1] in _MODES:
-            self._send_stream((_parts[0], _parts[1]))
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] in self.server.slots and parts[1] in _MODES:
+            self._send_stream((parts[0], parts[1]))
         else:
             self.send_error(404)
 
     def _send_info(self):
-        _html = self.server.info_html
+        html = self.server.info_html
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(_html)))
+        self.send_header("Content-Length", str(len(html)))
         self.end_headers()
-        self.wfile.write(_html)
+        self.wfile.write(html)
 
     def _send_stream(self, key: _StreamKey):
-        _token = threading.get_ident()
-        _subs: _Subscribers = self.server.subscribers
-        _store: _FrameStore = self.server.frame_store
+        token = threading.get_ident()
+        subs: _Subscribers = self.server.subscribers
+        store: _FrameStore = self.server.frame_store
 
         self.connection.settimeout(_WRITE_TIMEOUT_S)
         try:
@@ -270,10 +270,10 @@ class _StreamingHandler(BaseHTTPRequestHandler):
         except OSError:
             pass    # no todos los SO lo permiten; sin esto la caída se detecta más tarde
 
-        _subs.touch(key, _token)
+        subs.touch(key, token)
         self.server.log_client_event(
             f"Cliente conectado a /{key[0]}/{key[1]} ({self.address_string()}) "
-            f"— {_subs.count(key)} en este stream."
+            f"— {subs.count(key)} en este stream."
         )
         try:
             self.send_response(200)
@@ -281,39 +281,39 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            self._pump_frames(key, _token)
+            self._pump_frames(key, token)
         except OSError:
             pass    # el cliente cerró
         finally:
             # Sin esto el handler queda esperando el request siguiente del keep-alive
             # y el hilo no muere hasta que el cliente cierre el socket.
             self.close_connection = True
-            _remaining = _subs.unregister(key, _token)
-            if _remaining == 0:
-                _store.clear(key)
+            remaining = subs.unregister(key, token)
+            if remaining == 0:
+                store.clear(key)
             self.server.log_client_event(
                 f"Cliente desconectado de /{key[0]}/{key[1]} "
-                f"— quedan {_remaining} en este stream."
+                f"— quedan {remaining} en este stream."
             )
 
     def _pump_frames(self, key: _StreamKey, token: int):
         """Envía frames hasta que el cliente corta o el servidor se detiene."""
-        _subs: _Subscribers = self.server.subscribers
-        _store: _FrameStore = self.server.frame_store
-        _last_seq = -1
-        _last_write_s = 0.0
+        subs: _Subscribers = self.server.subscribers
+        store: _FrameStore = self.server.frame_store
+        last_seq = -1
+        last_write_s = 0.0
 
-        while not _store.is_closed and not _is_client_gone(self.connection):
-            _subs.touch(key, token)
-            _jpeg, _seq = _store.get(key)
-            _now_s = time.monotonic()
-            if _jpeg and (_seq != _last_seq or _now_s - _last_write_s >= _KEEPALIVE_S):
-                self.wfile.write(_build_part_header(len(_jpeg)) + _jpeg + b"\r\n")
+        while not store.is_closed and not _is_client_gone(self.connection):
+            subs.touch(key, token)
+            jpeg, seq = store.get(key)
+            now_s = time.monotonic()
+            if jpeg and (seq != last_seq or now_s - last_write_s >= _KEEPALIVE_S):
+                self.wfile.write(_build_part_header(len(jpeg)) + jpeg + b"\r\n")
                 self.wfile.flush()
-                _last_seq, _last_write_s = _seq, _now_s
+                last_seq, last_write_s = seq, now_s
                 time.sleep(_SEND_PERIOD_S)      # tope de envío; un frame más nuevo espera
             else:
-                _store.wait_for_change(key, _seq, timeout_s=_SEND_PERIOD_S)
+                store.wait_for_change(key, seq, timeout_s=_SEND_PERIOD_S)
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -354,9 +354,9 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         La base de socketserver imprime el traceback completo, y un cliente que
         corta de golpe no es una falla del servidor.
         """
-        _error = sys.exc_info()[1]
-        if isinstance(_error, (ConnectionError, TimeoutError)):
-            logger.debug(f"[HttpVideo] {client_address[0]} cortó la conexión: {_error}")
+        error = sys.exc_info()[1]
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            logger.debug(f"[HttpVideo] {client_address[0]} cortó la conexión: {error}")
             return
         logger.exception(f"[HttpVideo] Error atendiendo a {client_address[0]}")
 
@@ -421,11 +421,11 @@ class HttpVideoServer:
         # cámara, así que sin nadie mirando tiene que salir lo más barato posible.
         if self._subs.count(key) == 0:
             return
-        _jpeg_quality = self._config.get("http_video.jpeg_quality", _DEFAULT_JPEG_QUALITY)
-        _frame_width_px = self._config.get("http_video.frame_width_px",
-                                           _DEFAULT_FRAME_WIDTH_PX)
+        jpeg_quality = self._config.get("http_video.jpeg_quality", _DEFAULT_JPEG_QUALITY)
+        frame_width_px = self._config.get("http_video.frame_width_px",
+                                          _DEFAULT_FRAME_WIDTH_PX)
         self._store.update(key, frame_bgr,
-                           jpeg_quality=_jpeg_quality, frame_width_px=_frame_width_px)
+                           jpeg_quality=jpeg_quality, frame_width_px=frame_width_px)
 
     # ── Ciclo de vida ────────────────────────────────────────────────────────
 
@@ -436,8 +436,8 @@ class HttpVideoServer:
             self._status = "disabled"
             return
 
-        _slots = self._read_camera_slots()
-        if not _slots:
+        slots = self._read_camera_slots()
+        if not slots:
             logger.warning("[HttpVideo] No hay cámaras en el config: no hay streams que servir.")
 
         # Estado por corrida: los hilos de la corrida anterior siguen apuntando a los
@@ -445,27 +445,27 @@ class HttpVideoServer:
         self._store = _FrameStore()
         self._subs = _Subscribers()
 
-        _port = self._config.get("http_video.port", _DEFAULT_PORT)
+        port = self._config.get("http_video.port", _DEFAULT_PORT)
         try:
-            _server = _ThreadingHTTPServer((_HOST, _port), self._store, self._subs,
-                                           _slots, self._config)
+            server = _ThreadingHTTPServer((_HOST, port), self._store, self._subs,
+                                          slots, self._config)
         except OSError as e:
             self._status = "error"
-            logger.error(f"[HttpVideo] No se pudo iniciar en puerto {_port}: {e}")
+            logger.error(f"[HttpVideo] No se pudo iniciar en puerto {port}: {e}")
             return
 
-        self._server = _server
+        self._server = server
         self._thread = threading.Thread(
-            target=_server.serve_forever,
+            target=server.serve_forever,
             daemon=True,
             name="HttpVideo",
         )
         self._thread.start()
         self._is_active = True
         self._status = "active"
-        logger.info(f"[HttpVideo] Servidor activo en http://{_HOST}:{_port}")
-        for _slot in _slots:
-            logger.info(f"[HttpVideo]   /{_slot}/{_MODE_RAW} y /{_slot}/{_MODE_ANNOTATED}")
+        logger.info(f"[HttpVideo] Servidor activo en http://{_HOST}:{port}")
+        for slot in slots:
+            logger.info(f"[HttpVideo]   /{slot}/{_MODE_RAW} y /{slot}/{_MODE_ANNOTATED}")
 
     def stop(self):
         """Detiene el servidor, corta los streams abiertos y libera el puerto. Idempotente."""
@@ -498,5 +498,5 @@ class HttpVideoServer:
         lo que va en la ruta. Van todos, habilitados o no: `enabled` cambia en
         caliente y la ruta del stream no puede aparecer y desaparecer con eso.
         """
-        _cameras = self._config.get("cameras", {}) or {}
-        return tuple(_cameras)
+        cameras = self._config.get("cameras", {}) or {}
+        return tuple(cameras)

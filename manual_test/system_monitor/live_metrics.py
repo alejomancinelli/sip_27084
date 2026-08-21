@@ -74,29 +74,29 @@ class _Stats:
     """Mínimo, promedio y máximo de cada métrica escalar, y el pico de cada interfaz."""
 
     def __init__(self):
-        self._samples = {_key: [] for _key in _TRACKED_KEYS}
+        self._samples = {key: [] for key in _TRACKED_KEYS}
         self._net_peaks = {}
 
     def update(self, metrics: dict):
-        for _key in _TRACKED_KEYS:
-            self._samples[_key].append(metrics[_key])
-        for _iface, _rates in metrics["net_mbps"].items():
-            _peak = self._net_peaks.setdefault(_iface, {"rx_mbps": 0.0, "tx_mbps": 0.0})
-            _peak["rx_mbps"] = max(_peak["rx_mbps"], _rates["rx_mbps"])
-            _peak["tx_mbps"] = max(_peak["tx_mbps"], _rates["tx_mbps"])
+        for key in _TRACKED_KEYS:
+            self._samples[key].append(metrics[key])
+        for iface, rates in metrics["net_mbps"].items():
+            peak = self._net_peaks.setdefault(iface, {"rx_mbps": 0.0, "tx_mbps": 0.0})
+            peak["rx_mbps"] = max(peak["rx_mbps"], rates["rx_mbps"])
+            peak["tx_mbps"] = max(peak["tx_mbps"], rates["tx_mbps"])
 
     def print_summary(self):
-        _count = len(self._samples[_TRACKED_KEYS[0]])
-        if not _count:
+        count = len(self._samples[_TRACKED_KEYS[0]])
+        if not count:
             print("Sin muestras.")
             return
-        print(f"\nResumen de {_count} muestras:")
-        for _key, _values in self._samples.items():
-            print(f"  {_key:14s}  mín {min(_values):8.1f}   "
-                  f"prom {sum(_values) / _count:8.1f}   máx {max(_values):8.1f}")
-        for _iface, _peak in self._net_peaks.items():
-            print(f"  {_iface:14s}  pico rx {_peak['rx_mbps']:8.1f} Mbps   "
-                  f"pico tx {_peak['tx_mbps']:8.1f} Mbps")
+        print(f"\nResumen de {count} muestras:")
+        for key, values in self._samples.items():
+            print(f"  {key:14s}  mín {min(values):8.1f}   "
+                  f"prom {sum(values) / count:8.1f}   máx {max(values):8.1f}")
+        for iface, peak in self._net_peaks.items():
+            print(f"  {iface:14s}  pico rx {peak['rx_mbps']:8.1f} Mbps   "
+                  f"pico tx {peak['tx_mbps']:8.1f} Mbps")
 
 
 def _present(exists: bool) -> str:
@@ -104,21 +104,21 @@ def _present(exists: bool) -> str:
 
 
 def _format_zones(zones: dict) -> str:
-    return ", ".join(f"{_name} {_temp_c:.1f}°C" for _name, _temp_c in zones.items())
+    return ", ".join(f"{name} {temp_c:.1f}°C" for name, temp_c in zones.items())
 
 
 def _format_row(metrics: dict) -> str:
     """Una línea con las métricas del intervalo, alineada con `_HEADER`."""
-    _net = "   ".join(
-        f"{_iface} {_rates['rx_mbps']:.1f}/{_rates['tx_mbps']:.1f}"
-        for _iface, _rates in metrics["net_mbps"].items()
+    net = "   ".join(
+        f"{iface} {rates['rx_mbps']:.1f}/{rates['tx_mbps']:.1f}"
+        for iface, rates in metrics["net_mbps"].items()
     ) or "sin interfaces"
     return (
         f"{datetime.now():%H:%M:%S}  "
         f"{metrics['cpu_usage_pct']:3d}%  {metrics['cpu_temp_c']:3d}°C  "
         f"{metrics['gpu_usage_pct']:3d}%  {metrics['gpu_temp_c']:3d}°C  "
         f"{metrics['ram_used_mb']:6d}/{metrics['ram_total_mb']:<6d}  "
-        f"{metrics['disk_free_gb']:4d} GB  {metrics['power_w']:5.1f} W  {_net}"
+        f"{metrics['disk_free_gb']:4d} GB  {metrics['power_w']:5.1f} W  {net}"
     )
 
 
@@ -136,17 +136,17 @@ def _print_sources(config: ConfigManager, metrics: dict):
 
     # La fuente de las zonas no es la misma en los dos equipos, así que se nombra
     # la que se usó y no la de sysfs siempre.
-    _zone_source = sm._THERMAL_BASE if platform.system() == "Linux" else sm._WMI_THERMAL_CLASS
-    _zones = metrics["temps_c"]
-    print(f"  zonas térmicas  {_zone_source}: {len(_zones)} zonas"
-          f"{' -> ' + _format_zones(_zones) if _zones else ''}")
+    zone_source = sm._THERMAL_BASE if platform.system() == "Linux" else sm._WMI_THERMAL_CLASS
+    zones = metrics["temps_c"]
+    print(f"  zonas térmicas  {zone_source}: {len(zones)} zonas"
+          f"{' -> ' + _format_zones(zones) if zones else ''}")
     print(f"  temperaturas    CPU {metrics['cpu_temp_c']}°C, "
           f"GPU {metrics['gpu_temp_c']}°C")
 
-    for _path in sm._GPU_LOAD_PATHS:
-        print(f"  carga de GPU    {_path}: {_present(os.path.exists(_path))}")
-    for _pattern, _ in sm._POWER_GLOBS:
-        print(f"  potencia        {_pattern}: {len(glob.glob(_pattern))} canales")
+    for path in sm._GPU_LOAD_PATHS:
+        print(f"  carga de GPU    {path}: {_present(os.path.exists(path))}")
+    for pattern, _ in sm._POWER_GLOBS:
+        print(f"  potencia        {pattern}: {len(glob.glob(pattern))} canales")
 
     print(f"  nvidia-smi      {shutil.which(sm._NVIDIA_SMI) or 'ausente'}")
     print(f"  disco           '{config.get('system_monitor.disk_path')}', "
@@ -157,13 +157,13 @@ def _print_sources(config: ConfigManager, metrics: dict):
 def _reload_if_changed(config: ConfigManager, last_mtime_s: float) -> float:
     """Relee el config si el archivo cambió: el módulo lo toma en la vuelta siguiente."""
     try:
-        _mtime_s = _CONFIG_PATH.stat().st_mtime
+        mtime_s = _CONFIG_PATH.stat().st_mtime
     except OSError:
         return last_mtime_s
-    if _mtime_s != last_mtime_s:
+    if mtime_s != last_mtime_s:
         config.load()
         print(f"-- {_CONFIG_PATH.name} recargado --")
-    return _mtime_s
+    return mtime_s
 
 
 def main() -> int:
@@ -171,31 +171,31 @@ def main() -> int:
         print(f"Falta {_CONFIG_PATH}.")
         return 2
 
-    _config = ConfigManager(str(_CONFIG_PATH))
-    _monitor = SystemMonitor(_config)
-    _config_mtime_s = _CONFIG_PATH.stat().st_mtime
+    config = ConfigManager(str(_CONFIG_PATH))
+    monitor = SystemMonitor(config)
+    config_mtime_s = _CONFIG_PATH.stat().st_mtime
 
     # La primera llamada no tiene lectura anterior contra la que medir: la red sale
     # en 0 y se usa para listar las fuentes, no para mostrar tasas.
-    _print_sources(_config, _monitor.get_metrics())
+    _print_sources(config, monitor.get_metrics())
     print(f"\nUna línea cada {_REFRESH_INTERVAL_S:.0f} s. Ctrl+C para terminar.\n")
 
-    _stats = _Stats()
-    _rows = 0
+    stats = _Stats()
+    rows = 0
     try:
         while True:
             time.sleep(_REFRESH_INTERVAL_S)
-            _config_mtime_s = _reload_if_changed(_config, _config_mtime_s)
-            _metrics = _monitor.get_metrics()
-            _stats.update(_metrics)
-            if _rows % _HEADER_EVERY_ROWS == 0:
+            config_mtime_s = _reload_if_changed(config, config_mtime_s)
+            metrics = monitor.get_metrics()
+            stats.update(metrics)
+            if rows % _HEADER_EVERY_ROWS == 0:
                 print(_HEADER)
-            print(_format_row(_metrics))
-            _rows += 1
+            print(_format_row(metrics))
+            rows += 1
     except KeyboardInterrupt:
         print()
 
-    _stats.print_summary()
+    stats.print_summary()
     return 0
 
 

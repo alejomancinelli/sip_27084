@@ -33,23 +33,23 @@ def create_camera(config_cam: dict) -> AbstractCameraDriver:
 
     Si `driver` falta o no está registrado devuelve un NullDriver
     """
-    _raw_driver = config_cam.get("driver")
-    _driver_type = str(_raw_driver or "").strip().lower()
-    _address = config_cam.get("address")
+    raw_driver = config_cam.get("driver")
+    driver_type = str(raw_driver or "").strip().lower()
+    address = config_cam.get("address")
 
-    if not _driver_type:
-        _reason = "Config de cámara sin campo 'driver'"
-        logger.error(f"{_reason}. Cámara marcada como no configurada.")
-        return NullDriver(config_cam, _reason)
+    if not driver_type:
+        reason = "Config de cámara sin campo 'driver'"
+        logger.error(f"{reason}. Cámara marcada como no configurada.")
+        return NullDriver(config_cam, reason)
 
-    _driver_class = _DRIVER_CLASSES.get(_driver_type)
-    if _driver_class is None:
-        _reason = f"Driver '{_raw_driver}' no registrado en el core"
+    driver_class = _DRIVER_CLASSES.get(driver_type)
+    if driver_class is None:
+        reason = f"Driver '{raw_driver}' no registrado en el core"
         logger.error(
-            f"{_reason}. Cámara marcada como no configurada. "
+            f"{reason}. Cámara marcada como no configurada. "
             f"Valores válidos: {', '.join(REGISTERED_DRIVERS)}."
         )
-        return NullDriver(config_cam, _reason)
+        return NullDriver(config_cam, reason)
 
-    logger.info(f"Fábrica: driver '{_driver_type}' para la cámara {_address or '(sin dirección)'}")
-    return _driver_class(config_cam)
+    logger.info(f"Fábrica: driver '{driver_type}' para la cámara {address or '(sin dirección)'}")
+    return driver_class(config_cam)

@@ -1,6 +1,6 @@
 ---
 name: nomenclatura
-description: Reglas de nombres y declaraciones de este proyecto — variables, funciones, clases, constantes, señales, módulos, parámetros de configuración. Usar SIEMPRE que se escriba, renombre o revise código Python del repo — al crear cualquier identificador, al declarar una función (tipos de parámetros), al agregar una constante, una clave de config.yaml o un atributo. Todos los nombres en inglés y en snake_case; los internos arrancan con `_`; las constantes en mayúsculas.
+description: Reglas de nombres y declaraciones de este proyecto — variables, funciones, clases, constantes, señales, módulos, parámetros de configuración. Usar SIEMPRE que se escriba, renombre o revise código Python del repo — al crear cualquier identificador, al declarar una función (tipos de parámetros), al agregar una constante, una clave de config.yaml o un atributo. Todos los nombres en inglés y en snake_case; los internos del módulo o de la clase arrancan con `_` y las variables locales no; las constantes en mayúsculas.
 ---
 
 # Nomenclatura y declaraciones
@@ -29,7 +29,7 @@ siempre en inglés**, incluso los internos y los de los tests.
 | Función / método interno | `_` + verbo | `_turn_lights_off()` |
 | Atributo público | `snake_case` | `tcp_status` |
 | Atributo interno | `_` + `snake_case` | `self._capture_count` |
-| Variable local | `_` + `snake_case` | `_frame_count` |
+| Variable local | `snake_case`, **sin** `_` | `frame_count` |
 | Parámetro de función | `snake_case`, **sin** `_` | `timeout_ms` |
 | Constante de módulo / clase | `UPPER_SNAKE` | `LIGHT_PRE_MS`, `MAX_MESH_SLOTS` |
 | Constante interna | `_` + `UPPER_SNAKE` | `_DEFAULT_TIMEOUT_MS` |
@@ -44,37 +44,49 @@ aunque la librería de terceros los use en su propia API.
 
 ## El prefijo `_`
 
-`_` significa **"nadie de afuera lo mira"**. Es la marca visible del
-encapsulamiento que exige la skill `modularidad`.
+`_` marca **lo que no cruza un límite**: el nombre vive dentro del módulo o de la
+clase y nadie de afuera lo toca. Es la marca visible del encapsulamiento que
+exige la skill `modularidad`.
+
+El límite es el módulo y la clase, **no la función**. Una variable local ya está
+encerrada por el cuerpo donde se declara: no hay nadie de quien esconderla y el
+prefijo no agrega información. Marcarlas todas apaga la señal — un `_` que está
+siempre no distingue nada — y choca con el `_` de descarte de acá abajo.
 
 Lleva `_`:
 
-- Toda variable local dentro de una función o método.
+- Funciones y clases a nivel de módulo que el módulo no expone.
 - Métodos y atributos internos de una clase.
-- Funciones helper a nivel de módulo que el módulo no expone.
 - Constantes que no salen del archivo.
 
 No lleva `_`:
 
-- Parámetros de función (son parte de la firma pública).
-- API pública: métodos, properties, señales, nombres de clase.
+- **Variables locales** de una función o método, incluidas las de un `for`, una
+  comprehension, un `with ... as` y un `except ... as`.
+- Parámetros de función (son parte de la firma).
+- API pública: funciones, métodos, properties, señales, nombres de clase.
 - Claves de `config.yaml` y campos de los objetos que cruzan módulos.
 
 ```python
 # BIEN
 def get_status(self) -> dict:
-    _now_ms = self._clock.now_ms()
-    _is_stale = _now_ms - self._last_frame_ms > STALE_TIMEOUT_MS
-    return {"connected": self._is_connected, "stale": _is_stale}
-
-# MAL — local sin `_`, interno expuesto, parámetro con `_`
-def get_status(self, _verbose: bool) -> dict:
     now_ms = self._clock.now_ms()
-    self.last_frame_ms = now_ms
+    is_stale = now_ms - self._last_frame_ms > STALE_TIMEOUT_MS
+    return {"connected": self._is_connected, "stale": is_stale}
+
+# MAL — local con `_`, interno expuesto, parámetro con `_`
+def get_status(self, _verbose: bool) -> dict:
+    _now_ms = self._clock.now_ms()
+    self.last_frame_ms = _now_ms
 ```
 
+Sin el prefijo que las separaba, una local **no puede tapar** un parámetro de su
+propia firma ni una constante del módulo. Si el nombre que necesita ya está
+ocupado, uno de los dos está mal elegido: se renombra ese, no se esquiva con un
+`_`.
+
 `_` a secas queda reservado para valores que se descartan: `for _ in range(n)`,
-`_, height = frame.shape`. Un índice que sí se usa es `_i`.
+`_, height = frame.shape`. Un índice que sí se usa es `i`.
 
 ## Verbos de las funciones
 
@@ -193,7 +205,8 @@ def add_frames(frames, buffer=[]):
 ## Checklist al escribir un nombre
 
 1. ¿Está en inglés, en `snake_case` (o `PascalCase` si es clase)?
-2. ¿Lleva `_` si nadie de afuera lo usa? ¿No lo lleva si es API pública?
+2. ¿Lleva `_` si es interno del módulo o de la clase? ¿No lo lleva si es una
+   local, un parámetro o API pública?
 3. ¿Se entiende solo, sin leer la línea de arriba? ¿Sobra alguna palabra?
 4. ¿Es un valor físico? ¿Tiene la unidad en el sufijo?
 5. ¿La función arranca con verbo y tiene **todos** los parámetros tipados?
@@ -209,7 +222,8 @@ def add_frames(frames, buffer=[]):
 - `data`, `info`, `value`, `result`, `temp`, `aux`, `x2` como nombre de algo que
   vive más de tres líneas.
 - Una abreviatura que aparece una sola vez en todo el repo.
-- Un `_` en algo que otro módulo importa — o su ausencia en algo que no usa nadie.
+- Un `_` en algo que otro módulo importa, o en una variable local — o su ausencia
+  en un helper, un atributo o una constante que no salen del archivo.
 - Una constante en minúscula, o el mismo literal repetido en dos archivos.
 - Un sufijo de escala (`_x10`, `_bits`, `_reg`) fuera del módulo dueño del formato.
 - Una clave de `config.yaml` que no se llama como el atributo que alimenta.

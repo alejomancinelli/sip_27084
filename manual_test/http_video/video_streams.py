@@ -72,117 +72,117 @@ class _YamlConfig:
         self._values = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     def get(self, key: str, default: object = None) -> object:
-        _node = self._values
-        for _part in key.split("."):
-            if not isinstance(_node, dict) or _part not in _node:
+        node = self._values
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
                 return default
-            _node = _node[_part]
-        return _node
+            node = node[part]
+        return node
 
 
 def _get_lan_address() -> str:
     """IP con la que el host sale a la red, para armar la URL que se abre desde otra PC."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as _probe:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         try:
-            _probe.connect(("8.8.8.8", 80))   # elige la ruta; no envía tráfico
-            return _probe.getsockname()[0]
+            probe.connect(("8.8.8.8", 80))   # elige la ruta; no envía tráfico
+            return probe.getsockname()[0]
         except OSError:
             return "127.0.0.1"
 
 
 def _build_raw_frame(camera_slot: str, frame_index: int) -> np.ndarray:
     """Frame BGR con gradiente, barra móvil y hora, del tamaño de una cámara real."""
-    _frame_bgr = np.zeros((_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), np.uint8)
-    _frame_bgr[:, :, 0] = np.linspace(40, 200, _FRAME_WIDTH_PX, dtype=np.uint8)[None, :]
+    frame_bgr = np.zeros((_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), np.uint8)
+    frame_bgr[:, :, 0] = np.linspace(40, 200, _FRAME_WIDTH_PX, dtype=np.uint8)[None, :]
 
-    _x_px = (frame_index * 20) % (_FRAME_WIDTH_PX - _BAR_WIDTH_PX)
-    _frame_bgr[:, _x_px:_x_px + _BAR_WIDTH_PX] = (255, 255, 255)
-    cv2.putText(_frame_bgr, f"{camera_slot} raw #{frame_index}", (40, 110),
+    x_px = (frame_index * 20) % (_FRAME_WIDTH_PX - _BAR_WIDTH_PX)
+    frame_bgr[:, x_px:x_px + _BAR_WIDTH_PX] = (255, 255, 255)
+    cv2.putText(frame_bgr, f"{camera_slot} raw #{frame_index}", (40, 110),
                 cv2.FONT_HERSHEY_SIMPLEX, 2.2, (0, 0, 0), 5)
-    cv2.putText(_frame_bgr, datetime.now().strftime("%H:%M:%S.%f")[:-3], (40, 200),
+    cv2.putText(frame_bgr, datetime.now().strftime("%H:%M:%S.%f")[:-3], (40, 200),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 0, 0), 4)
-    return _frame_bgr
+    return frame_bgr
 
 
 def _build_annotated_frame(camera_slot: str, cycle: int) -> np.ndarray:
     """Frame crudo con un recuadro y una etiqueta encima, como una salida de inferencia."""
-    _frame_bgr = _build_raw_frame(camera_slot, cycle)
-    cv2.rectangle(_frame_bgr, (300, 400), (900, 900), (0, 220, 0), 6)
-    cv2.putText(_frame_bgr, f"annotated ciclo {cycle}", (300, 380),
+    frame_bgr = _build_raw_frame(camera_slot, cycle)
+    cv2.rectangle(frame_bgr, (300, 400), (900, 900), (0, 220, 0), 6)
+    cv2.putText(frame_bgr, f"annotated ciclo {cycle}", (300, 380),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 220, 0), 4)
-    return _frame_bgr
+    return frame_bgr
 
 
 def _print_status(server: HttpVideoServer, slots: list, published: Counter):
     """Qué streams se están mirando y cuántos frames se publicaron en el intervalo."""
-    for _slot in slots:
+    for slot in slots:
         print(
-            f"  {_slot}  "
-            f"raw: {'mirando' if server.has_raw_clients(_slot) else '  vacío'}, "
-            f"{published[(_slot, _MODE_RAW)]:2d} fps | "
-            f"annotated: {'mirando' if server.has_annotated_clients(_slot) else '  vacío'}, "
-            f"{published[(_slot, _MODE_ANNOTATED)]:2d} fps"
+            f"  {slot}  "
+            f"raw: {'mirando' if server.has_raw_clients(slot) else '  vacío'}, "
+            f"{published[(slot, _MODE_RAW)]:2d} fps | "
+            f"annotated: {'mirando' if server.has_annotated_clients(slot) else '  vacío'}, "
+            f"{published[(slot, _MODE_ANNOTATED)]:2d} fps"
         )
     print(f"  total: {server.get_client_count()} clientes conectados")
 
 
 def main() -> int:
-    _config = _YamlConfig(_CONFIG_PATH)
-    _slots = list(_config.get("cameras", {}) or {})
-    if not _slots:
+    config = _YamlConfig(_CONFIG_PATH)
+    slots = list(config.get("cameras", {}) or {})
+    if not slots:
         print(f"{_CONFIG_PATH} no tiene ninguna cámara en 'cameras'.")
         return 2
 
-    _server = HttpVideoServer(_config)
-    _server.start()
-    if _server.status != "active":
-        print(f"El servidor no arrancó (estado '{_server.status}'). Revisar {_CONFIG_PATH}.")
+    server = HttpVideoServer(config)
+    server.start()
+    if server.status != "active":
+        print(f"El servidor no arrancó (estado '{server.status}'). Revisar {_CONFIG_PATH}.")
         return 1
 
-    _port = _config.get("http_video.port")
+    port = config.get("http_video.port")
     print("Servidor activo. Abrir en el navegador:")
-    for _host in ("localhost", _get_lan_address()):
-        for _slot in _slots:
-            print(f"  http://{_host}:{_port}/{_slot}/{_MODE_RAW}")
-            print(f"  http://{_host}:{_port}/{_slot}/{_MODE_ANNOTATED}")
+    for host in ("localhost", _get_lan_address()):
+        for slot in slots:
+            print(f"  http://{host}:{port}/{slot}/{_MODE_RAW}")
+            print(f"  http://{host}:{port}/{slot}/{_MODE_ANNOTATED}")
     print(f"Generando {_CAMERA_FPS} fps por cámara, sólo para los streams que alguien "
           f"esté mirando. Ctrl+C para terminar.")
 
-    _published = Counter()
-    _frame_period_s = 1.0 / _CAMERA_FPS
-    _frame_index = 0
-    _cycle = 0
-    _next_inference_s = time.monotonic()
-    _next_status_s = time.monotonic() + _STATUS_INTERVAL_S
+    published = Counter()
+    frame_period_s = 1.0 / _CAMERA_FPS
+    frame_index = 0
+    cycle = 0
+    next_inference_s = time.monotonic()
+    next_status_s = time.monotonic() + _STATUS_INTERVAL_S
 
     try:
         while True:
-            _started_s = time.monotonic()
-            _frame_index += 1
+            started_s = time.monotonic()
+            frame_index += 1
 
-            for _slot in _slots:
-                if _server.has_raw_clients(_slot):
-                    _server.push_raw(_slot, _build_raw_frame(_slot, _frame_index))
-                    _published[(_slot, _MODE_RAW)] += 1
+            for slot in slots:
+                if server.has_raw_clients(slot):
+                    server.push_raw(slot, _build_raw_frame(slot, frame_index))
+                    published[(slot, _MODE_RAW)] += 1
 
-            if _started_s >= _next_inference_s:
-                _next_inference_s += _INFERENCE_INTERVAL_S
-                _cycle += 1
-                for _slot in _slots:
-                    if _server.has_annotated_clients(_slot):
-                        _server.push_annotated(_slot, _build_annotated_frame(_slot, _cycle))
-                        _published[(_slot, _MODE_ANNOTATED)] += 1
+            if started_s >= next_inference_s:
+                next_inference_s += _INFERENCE_INTERVAL_S
+                cycle += 1
+                for slot in slots:
+                    if server.has_annotated_clients(slot):
+                        server.push_annotated(slot, _build_annotated_frame(slot, cycle))
+                        published[(slot, _MODE_ANNOTATED)] += 1
 
-            if _started_s >= _next_status_s:
-                _next_status_s += _STATUS_INTERVAL_S
-                _print_status(_server, _slots, _published)
-                _published.clear()
+            if started_s >= next_status_s:
+                next_status_s += _STATUS_INTERVAL_S
+                _print_status(server, slots, published)
+                published.clear()
 
-            time.sleep(max(0.0, _frame_period_s - (time.monotonic() - _started_s)))
+            time.sleep(max(0.0, frame_period_s - (time.monotonic() - started_s)))
     except KeyboardInterrupt:
         print()
     finally:
-        _server.stop()
+        server.stop()
 
     return 0
 

@@ -148,12 +148,12 @@ def _best_temp(zones: dict, names: tuple[str, ...]) -> float:
     sobre las zonas ordenadas: los nombres cambian entre kernels y la métrica no
     puede saltar de sensor de una lectura a la otra.
     """
-    for _name in names:
-        if _name in zones:
-            return zones[_name]
-    for _zone in sorted(zones):
-        if any(_name.lower() in _zone.lower() for _name in names):
-            return zones[_zone]
+    for name in names:
+        if name in zones:
+            return zones[name]
+    for zone in sorted(zones):
+        if any(name.lower() in zone.lower() for name in names):
+            return zones[zone]
     return 0.0
 
 
@@ -171,32 +171,32 @@ def _parse_nvidia_smi(csv_line: str) -> dict:
     Devuelve las claves de `_NVIDIA_SMI_METRICS` que la GPU reportó; las que
     llegan como '[N/A]' quedan afuera. {} si la línea no tiene la forma esperada.
     """
-    _values = [_value.strip() for _value in csv_line.split(",")]
-    if len(_values) != len(_NVIDIA_SMI_METRICS):
+    values = [value.strip() for value in csv_line.split(",")]
+    if len(values) != len(_NVIDIA_SMI_METRICS):
         return {}
-    _metrics = {}
-    for _key, _value in zip(_NVIDIA_SMI_METRICS, _values):
+    metrics = {}
+    for key, value in zip(_NVIDIA_SMI_METRICS, values):
         try:
-            _metrics[_key] = int(float(_value))
+            metrics[key] = int(float(value))
         except ValueError:
             continue
-    return _metrics
+    return metrics
 
 
 def _parse_wmi_zones(stdout: str) -> dict:
     """Traduce las líneas 'nombre=décimas de kelvin' de la consulta WMI a °C."""
-    _zones = {}
-    for _line in stdout.splitlines():
-        _name, _, _raw = _line.strip().partition("=")
-        if not _name or not _raw:
+    zones = {}
+    for line in stdout.splitlines():
+        name, _, raw = line.strip().partition("=")
+        if not name or not raw:
             continue
         try:
-            _temp_c = round(int(_raw) / 10.0 - _KELVIN_OFFSET_C, 1)
+            temp_c = round(int(raw) / 10.0 - _KELVIN_OFFSET_C, 1)
         except ValueError:
             continue
-        if _is_plausible_temp(_temp_c):
-            _zones[_name] = _temp_c
-    return _zones
+        if _is_plausible_temp(temp_c):
+            zones[name] = temp_c
+    return zones
 
 
 def _is_loopback(iface: str) -> bool:
@@ -256,32 +256,32 @@ class SystemMonitor:
         valor neutro y el resto se reporta igual.
         """
         with self._lock:
-            _zones = self._read_or(self._read_thermal_zones, {}, "las zonas térmicas")
-            _cpu_temp_c, _gpu_temp_c = self._read_or(
-                lambda: self._read_temperatures(_zones), (0, 0), "la temperatura")
-            _gpu_usage_pct = self._read_or(self._read_gpu_usage_pct, None, "el uso de GPU")
-            _power_w = self._read_or(self._read_power_w, None, "la potencia")
+            zones = self._read_or(self._read_thermal_zones, {}, "las zonas térmicas")
+            cpu_temp_c, gpu_temp_c = self._read_or(
+                lambda: self._read_temperatures(zones), (0, 0), "la temperatura")
+            gpu_usage_pct = self._read_or(self._read_gpu_usage_pct, None, "el uso de GPU")
+            power_w = self._read_or(self._read_power_w, None, "la potencia")
 
             # nvidia-smi cuesta un proceso por llamada, así que solo se consulta si
             # el equipo no publica la GPU en sysfs. En Jetson sysfs alcanza y
             # nvidia-smi no reporta utilización.
-            _gpu = ({} if _gpu_usage_pct is not None
-                    else self._read_or(self._read_nvidia_smi, {}, "nvidia-smi"))
-            _memory = self._read_or(psutil.virtual_memory, None, "la memoria")
+            gpu = ({} if gpu_usage_pct is not None
+                   else self._read_or(self._read_nvidia_smi, {}, "nvidia-smi"))
+            memory = self._read_or(psutil.virtual_memory, None, "la memoria")
 
             return {
                 "cpu_usage_pct": self._read_or(
                     lambda: int(psutil.cpu_percent(interval=None)), 0, "el uso de CPU"),
-                "gpu_usage_pct": (_gpu_usage_pct if _gpu_usage_pct is not None
-                                  else _gpu.get("gpu_usage_pct", 0)),
-                "cpu_temp_c": _cpu_temp_c,
-                "gpu_temp_c": _gpu_temp_c or _gpu.get("gpu_temp_c", 0),
-                "ram_used_mb": 0 if _memory is None else int(_memory.used / _MB),
-                "ram_total_mb": 0 if _memory is None else int(_memory.total / _MB),
+                "gpu_usage_pct": (gpu_usage_pct if gpu_usage_pct is not None
+                                  else gpu.get("gpu_usage_pct", 0)),
+                "cpu_temp_c": cpu_temp_c,
+                "gpu_temp_c": gpu_temp_c or gpu.get("gpu_temp_c", 0),
+                "ram_used_mb": 0 if memory is None else int(memory.used / _MB),
+                "ram_total_mb": 0 if memory is None else int(memory.total / _MB),
                 "disk_free_gb": self._read_or(self._read_disk_free_gb, 0, "el disco"),
-                "power_w": _power_w if _power_w is not None else _gpu.get("power_w", 0),
+                "power_w": power_w if power_w is not None else gpu.get("power_w", 0),
                 "net_mbps": self._read_or(self._read_net_mbps, {}, "la red"),
-                "temps_c": _zones,
+                "temps_c": zones,
             }
 
     # ── Temperaturas ─────────────────────────────────────────────────────────
@@ -299,18 +299,18 @@ class SystemMonitor:
         """
         if not os.path.isdir(_THERMAL_BASE):
             return {}
-        _zones = {}
-        for _entry in sorted(os.listdir(_THERMAL_BASE)):
-            if not _entry.startswith(_ZONE_PREFIX):
+        zones = {}
+        for entry in sorted(os.listdir(_THERMAL_BASE)):
+            if not entry.startswith(_ZONE_PREFIX):
                 continue
-            _name = _read_text_file(os.path.join(_THERMAL_BASE, _entry, "type"))
-            _milli_c = _read_int_file(os.path.join(_THERMAL_BASE, _entry, "temp"))
-            if not _name or _milli_c is None:
+            name = _read_text_file(os.path.join(_THERMAL_BASE, entry, "type"))
+            milli_c = _read_int_file(os.path.join(_THERMAL_BASE, entry, "temp"))
+            if not name or milli_c is None:
                 continue
-            _temp_c = round(_milli_c / _MILLI, 1)
-            if _is_plausible_temp(_temp_c):
-                _zones[_name] = _temp_c
-        return _zones
+            temp_c = round(milli_c / _MILLI, 1)
+            if _is_plausible_temp(temp_c):
+                zones[name] = temp_c
+        return zones
 
     def _read_wmi_zones(self) -> dict:
         """
@@ -320,20 +320,20 @@ class SystemMonitor:
         administrador. El resultado se cachea `_WMI_THERMAL_TTL_S` porque la
         consulta cuesta un proceso de ~300 ms.
         """
-        _now_s = time.monotonic()
-        if self._wmi_zones_s is not None and _now_s - self._wmi_zones_s < _WMI_THERMAL_TTL_S:
+        now_s = time.monotonic()
+        if self._wmi_zones_s is not None and now_s - self._wmi_zones_s < _WMI_THERMAL_TTL_S:
             return self._wmi_zones
 
         # Todo con comillas simples: el argumento pasa por el parser de la consola
         # de Windows antes de llegar a PowerShell.
-        _stdout = self._run_probe(_WMI_THERMAL, [
+        stdout = self._run_probe(_WMI_THERMAL, [
             _POWERSHELL, "-NoProfile", "-NonInteractive", "-Command",
             f"Get-CimInstance -ClassName {_WMI_THERMAL_CLASS} | "
             f"ForEach-Object {{ $_.Name + '=' + $_.HighPrecisionTemperature }}",
         ], _WMI_THERMAL_TIMEOUT_S)
 
-        self._wmi_zones_s = _now_s
-        self._wmi_zones = {} if _stdout is None else _parse_wmi_zones(_stdout)
+        self._wmi_zones_s = now_s
+        self._wmi_zones = {} if stdout is None else _parse_wmi_zones(stdout)
         return self._wmi_zones
 
     def _read_temperatures(self, zones: dict) -> tuple[int, int]:
@@ -346,27 +346,27 @@ class SystemMonitor:
         completa nvidia-smi.
         """
         if zones:
-            _cpu_temp_c = (_best_temp(zones, _CPU_ZONE_NAMES)
-                           or _best_temp(zones, _SOC_ZONE_NAMES))
-            _gpu_temp_c = _best_temp(zones, _GPU_ZONE_NAMES)
+            cpu_temp_c = (_best_temp(zones, _CPU_ZONE_NAMES)
+                          or _best_temp(zones, _SOC_ZONE_NAMES))
+            gpu_temp_c = _best_temp(zones, _GPU_ZONE_NAMES)
             if self._is_linux:
-                _gpu_temp_c = _gpu_temp_c or _cpu_temp_c
-            elif not _cpu_temp_c:
+                gpu_temp_c = gpu_temp_c or cpu_temp_c
+            elif not cpu_temp_c:
                 # Las zonas ACPI de Windows se llaman '\_TZ.TZ00': el nombre no dice
                 # qué miden, así que se reporta la más caliente, que es con la que el
                 # firmware decide el throttling.
-                _cpu_temp_c = max(zones.values())
-            return int(_cpu_temp_c), int(_gpu_temp_c)
+                cpu_temp_c = max(zones.values())
+            return int(cpu_temp_c), int(gpu_temp_c)
 
         # psutil no expone sensores en Windows: el atributo directamente no existe.
-        _read_sensors = getattr(psutil, "sensors_temperatures", None)
-        if _read_sensors is None:
+        read_sensors = getattr(psutil, "sensors_temperatures", None)
+        if read_sensors is None:
             return 0, 0
-        _sensors = _read_sensors()
-        for _name in _PSUTIL_SENSOR_NAMES:
-            _readings = _sensors.get(_name)
-            if _readings:
-                return int(_readings[0].current), 0
+        sensors = read_sensors()
+        for name in _PSUTIL_SENSOR_NAMES:
+            readings = sensors.get(name)
+            if readings:
+                return int(readings[0].current), 0
         return 0, 0
 
     # ── GPU y potencia ───────────────────────────────────────────────────────
@@ -375,10 +375,10 @@ class SystemMonitor:
         """Uso de GPU de sysfs en %, o None si el equipo no lo publica."""
         if not self._is_linux:
             return None
-        for _path in _GPU_LOAD_PATHS:
-            _per_mille = _read_int_file(_path)
-            if _per_mille is not None:
-                return max(0, min(100, _per_mille // _GPU_LOAD_SCALE))
+        for path in _GPU_LOAD_PATHS:
+            per_mille = _read_int_file(path)
+            if per_mille is not None:
+                return max(0, min(100, per_mille // _GPU_LOAD_SCALE))
         return None
 
     def _read_power_w(self) -> float | None:
@@ -390,11 +390,11 @@ class SystemMonitor:
         """
         if not self._is_linux:
             return None
-        for _pattern, _scale in _POWER_GLOBS:
-            for _path in sorted(glob.glob(_pattern)):
-                _raw = _read_int_file(_path)
-                if _raw is not None:
-                    return round(_raw / _scale, 1)
+        for pattern, scale in _POWER_GLOBS:
+            for path in sorted(glob.glob(pattern)):
+                raw = _read_int_file(path)
+                if raw is not None:
+                    return round(raw / scale, 1)
         return None
 
     def _read_nvidia_smi(self) -> dict:
@@ -405,26 +405,26 @@ class SystemMonitor:
         """
         if self._nvidia_smi_path is None:
             return {}
-        _stdout = self._run_probe(_NVIDIA_SMI, [
+        stdout = self._run_probe(_NVIDIA_SMI, [
             self._nvidia_smi_path,
             f"--query-gpu={','.join(_NVIDIA_SMI_FIELDS)}",
             "--format=csv,noheader,nounits",
         ], _NVIDIA_SMI_TIMEOUT_S)
-        if _stdout is None:
+        if stdout is None:
             return {}
-        _lines = _stdout.strip().splitlines()
-        return _parse_nvidia_smi(_lines[0]) if _lines else {}
+        lines = stdout.strip().splitlines()
+        return _parse_nvidia_smi(lines[0]) if lines else {}
 
     # ── Disco y red ──────────────────────────────────────────────────────────
 
     def _read_disk_free_gb(self) -> int:
         """GiB libres en la partición de `system_monitor.disk_path`."""
-        _path = self._config.get("system_monitor.disk_path", _DEFAULT_DISK_PATH)
-        if not os.path.isabs(_path):
+        path = self._config.get("system_monitor.disk_path", _DEFAULT_DISK_PATH)
+        if not os.path.isabs(path):
             # Relativa a la raíz del repo, no al CWD: la métrica no puede depender
             # de desde dónde se lanzó el proceso.
-            _path = os.path.join(_PROJECT_ROOT, _path)
-        return int(psutil.disk_usage(_path).free / _GB)
+            path = os.path.join(_PROJECT_ROOT, path)
+        return int(psutil.disk_usage(path).free / _GB)
 
     def _read_net_mbps(self) -> dict:
         """
@@ -433,24 +433,24 @@ class SystemMonitor:
         La primera llamada devuelve las interfaces en 0: no hay intervalo contra
         el que dividir.
         """
-        _now_s = time.monotonic()
-        _counters = psutil.net_io_counters(pernic=True)
-        _previous, _previous_s = self._last_net_io, self._last_net_s
-        self._last_net_io, self._last_net_s = _counters, _now_s
-        _elapsed_s = _now_s - _previous_s
+        now_s = time.monotonic()
+        counters = psutil.net_io_counters(pernic=True)
+        previous, previous_s = self._last_net_io, self._last_net_s
+        self._last_net_io, self._last_net_s = counters, now_s
+        elapsed_s = now_s - previous_s
 
-        _throughput = {}
-        for _iface in self._select_interfaces(_counters):
-            _before = _previous.get(_iface)
-            _now = _counters[_iface]
-            if _before is None:
-                _throughput[_iface] = {"rx_mbps": 0.0, "tx_mbps": 0.0}
+        throughput = {}
+        for iface in self._select_interfaces(counters):
+            before = previous.get(iface)
+            now = counters[iface]
+            if before is None:
+                throughput[iface] = {"rx_mbps": 0.0, "tx_mbps": 0.0}
                 continue
-            _throughput[_iface] = {
-                "rx_mbps": _to_mbps(_now.bytes_recv - _before.bytes_recv, _elapsed_s),
-                "tx_mbps": _to_mbps(_now.bytes_sent - _before.bytes_sent, _elapsed_s),
+            throughput[iface] = {
+                "rx_mbps": _to_mbps(now.bytes_recv - before.bytes_recv, elapsed_s),
+                "tx_mbps": _to_mbps(now.bytes_sent - before.bytes_sent, elapsed_s),
             }
-        return _throughput
+        return throughput
 
     def _select_interfaces(self, counters: dict) -> list[str]:
         """
@@ -461,18 +461,18 @@ class SystemMonitor:
         saltea: los nombres no se cross-portean ('eth0' en Jetson, 'Ethernet' en
         Windows).
         """
-        _configured = self._config.get("system_monitor.net_interfaces", None) or []
-        if not _configured:
-            return [_iface for _iface in counters if not _is_loopback(_iface)]
+        configured = self._config.get("system_monitor.net_interfaces", None) or []
+        if not configured:
+            return [iface for iface in counters if not _is_loopback(iface)]
 
-        _selected = []
-        for _iface in _configured:
-            if _iface in counters:
-                _selected.append(_iface)
+        selected = []
+        for iface in configured:
+            if iface in counters:
+                selected.append(iface)
             else:
-                self._warn_once(f"la interfaz '{_iface}'",
-                                f"La interfaz '{_iface}' no existe en este equipo.")
-        return _selected
+                self._warn_once(f"la interfaz '{iface}'",
+                                f"La interfaz '{iface}' no existe en este equipo.")
+        return selected
 
     # ── Internos ─────────────────────────────────────────────────────────────
 
@@ -487,8 +487,8 @@ class SystemMonitor:
         if probe in self._disabled_probes:
             return None
         try:
-            _completed = subprocess.run(argv, capture_output=True, text=True,
-                                        check=True, timeout=timeout_s, **_NO_WINDOW)
+            completed = subprocess.run(argv, capture_output=True, text=True,
+                                       check=True, timeout=timeout_s, **_NO_WINDOW)
         except (OSError, subprocess.SubprocessError) as e:
             self._probe_failures[probe] = self._probe_failures.get(probe, 0) + 1
             logger.debug(f"[SystemMonitor] {probe} falló: {e}")
@@ -498,7 +498,7 @@ class SystemMonitor:
             return None
 
         self._probe_failures[probe] = 0
-        return _completed.stdout
+        return completed.stdout
 
     def _read_or(self, reader: Callable[[], object], fallback: object, what: str) -> object:
         """Ejecuta un lector y devuelve `fallback` si falla, sin propagar."""

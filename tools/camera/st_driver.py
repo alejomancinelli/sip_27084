@@ -51,13 +51,13 @@ _RETRIEVE_TIMEOUT_MS = 30000
 
 def _looks_like_ip(text: str) -> bool:
     """True si el texto tiene forma de IPv4. No valida que la dirección exista."""
-    _parts = text.split(".")
-    return len(_parts) == 4 and all(_p.isdigit() and int(_p) < 256 for _p in _parts)
+    parts = text.split(".")
+    return len(parts) == 4 and all(p.isdigit() and int(p) < 256 for p in parts)
 
 
 def _format_ip(packed: int) -> str:
     """Pasa a texto la IP que GenICam publica empaquetada en un uint32."""
-    return ".".join(str((packed >> _shift) & 0xFF) for _shift in (24, 16, 8, 0))
+    return ".".join(str((packed >> shift) & 0xFF) for shift in (24, 16, 8, 0))
 
 
 class StDriver(AbstractCameraDriver):
@@ -111,8 +111,8 @@ class StDriver(AbstractCameraDriver):
             )
             self._grab_thread.start()
 
-        _deadline = time.time() + _CONNECT_TIMEOUT_S
-        while not self.is_connected and time.time() < _deadline:
+        deadline = time.time() + _CONNECT_TIMEOUT_S
+        while not self.is_connected and time.time() < deadline:
             time.sleep(_CONNECT_POLL_S)
 
         if not self.is_connected:
@@ -135,8 +135,8 @@ class StDriver(AbstractCameraDriver):
         if not self._capture_enabled or not self.is_connected:
             return None
         try:
-            _frame = self._img_queue.get(timeout=timeout_ms / 1000.0)
-            return self._deliver(_frame)
+            frame = self._img_queue.get(timeout=timeout_ms / 1000.0)
+            return self._deliver(frame)
         except Empty:
             return None
         except Exception as e:
@@ -145,7 +145,7 @@ class StDriver(AbstractCameraDriver):
 
     def get_status(self) -> dict:
         """Estado para telemetría. Un 0.0 en `temperature` significa sin lectura."""
-        _status = {
+        status = {
             "connected": self.is_connected,
             "capture_enabled": self._capture_enabled,
             "temperature": 0.0,
@@ -153,8 +153,8 @@ class StDriver(AbstractCameraDriver):
         }
         if self.is_connected and self._nodemap is not None:
             try:
-                _temp_node = self._nodemap.get_node("DeviceTemperature")
-                _status["temperature"] = float(st.PyIFloat(_temp_node).value)
+                temp_node = self._nodemap.get_node("DeviceTemperature")
+                status["temperature"] = float(st.PyIFloat(temp_node).value)
                 self._temp_warned = False
             except Exception as e:
                 # Sin el latch esto inunda el log.
@@ -164,7 +164,7 @@ class StDriver(AbstractCameraDriver):
                         f"La temperatura queda en 0 (sin lectura)."
                     )
                     self._temp_warned = True
-        return _status
+        return status
 
     def _apply_capture_enabled(self):
         # Se vacía la cola para que al rehabilitar no salga un frame viejo.
@@ -203,28 +203,28 @@ class StDriver(AbstractCameraDriver):
     # ── Parámetros de cámara ─────────────────────────────────────────────────
 
     def _apply_camera_params(self, nodemap):
-        def _set_float(name: str, value: float):
+        def set_float(name: str, value: float):
             try:
                 st.PyIFloat(nodemap.get_node(name)).set_value(float(value))
             except Exception as e:
                 logger.warning(f"[StDriver] No se pudo escribir {name}: {e}")
 
-        def _set_enum(name: str, value: str):
+        def set_enum(name: str, value: str):
             try:
                 st.PyIEnumeration(nodemap.get_node(name)).set_symbolic_value(value)
             except Exception as e:
                 logger.warning(f"[StDriver] No se pudo escribir {name}={value}: {e}")
 
-        _set_enum("ExposureAuto", "Off")
-        _set_float(
+        set_enum("ExposureAuto", "Off")
+        set_float(
             "ExposureTime",
             self._acquisition.get("exposure_time_us", _DEFAULT_EXPOSURE_TIME_US),
         )
-        _set_enum("GainAuto", "Off")
-        _set_float("Gain", self._acquisition.get("gain", _DEFAULT_GAIN))
-        _set_float("AcquisitionFrameRate", self._acquisition.get("fps_limit", _DEFAULT_FPS_LIMIT))
+        set_enum("GainAuto", "Off")
+        set_float("Gain", self._acquisition.get("gain", _DEFAULT_GAIN))
+        set_float("AcquisitionFrameRate", self._acquisition.get("fps_limit", _DEFAULT_FPS_LIMIT))
         # Se fija el selector una sola vez para que get_status() solo tenga que leer.
-        _set_enum("DeviceTemperatureSelector", _TEMPERATURE_SOURCE)
+        set_enum("DeviceTemperatureSelector", _TEMPERATURE_SOURCE)
 
     # ── Loop de adquisición ──────────────────────────────────────────────────
 
@@ -235,14 +235,14 @@ class StDriver(AbstractCameraDriver):
 
         # El callback de DeviceLost no es crítico: si no está disponible, se sigue.
         try:
-            _local_map = st_device.local_port.nodemap
-            _local_map.get_node(_CALLBACK_NODE).register_callback(
+            local_map = st_device.local_port.nodemap
+            local_map.get_node(_CALLBACK_NODE).register_callback(
                 self._on_device_lost, st_device, st.EGCCallbackType.OutsideLock
             )
-            _event_selector = st.PyIEnumeration(_local_map.get_node(_EVENT_SELECTOR))
-            _event_selector.set_symbolic_value(_TARGET_EVENT)
-            _event_notification = st.PyIEnumeration(_local_map.get_node(_EVENT_NOTIFICATION))
-            _event_notification.set_symbolic_value(_EVENT_NOTIFICATION_ON)
+            event_selector = st.PyIEnumeration(local_map.get_node(_EVENT_SELECTOR))
+            event_selector.set_symbolic_value(_TARGET_EVENT)
+            event_notification = st.PyIEnumeration(local_map.get_node(_EVENT_NOTIFICATION))
+            event_notification.set_symbolic_value(_EVENT_NOTIFICATION_ON)
             st_device.start_event_acquisition()
         except Exception as e:
             logger.debug(f"[StDriver] Evento DeviceLost no disponible: {e}")
@@ -259,29 +259,29 @@ class StDriver(AbstractCameraDriver):
             f"[StDriver] {self._address} ({st_device.info.display_name}) capturando."
         )
 
-        _is_streaming = False
+        is_streaming = False
         while self._grab_active and not self._force_disconnect:
             # Deshabilitada, la cámara se para de verdad: no es un filtro de frames,
             # el cable queda libre.
             if not self._capture_enabled:
-                if _is_streaming:
+                if is_streaming:
                     self._stop_acquisition()
-                    _is_streaming = False
+                    is_streaming = False
                 time.sleep(_PAUSE_POLL_S)
                 continue
 
-            if not _is_streaming:
+            if not is_streaming:
                 self._start_acquisition()
-                _is_streaming = True
+                is_streaming = True
 
-            with self._st_datastream.retrieve_buffer(_RETRIEVE_TIMEOUT_MS) as _st_buffer:
+            with self._st_datastream.retrieve_buffer(_RETRIEVE_TIMEOUT_MS) as st_buffer:
                 if self._force_disconnect:
                     break
-                if not _st_buffer.info.is_image_present:
+                if not st_buffer.info.is_image_present:
                     continue
 
-                _frame = self._decode_buffer(_st_buffer)
-                if _frame is None:
+                frame = self._decode_buffer(st_buffer)
+                if frame is None:
                     continue
 
                 # Always-fresh: se descarta el más viejo si el consumidor va lento.
@@ -290,7 +290,7 @@ class StDriver(AbstractCameraDriver):
                         self._img_queue.get_nowait()
                     except Empty:
                         pass
-                self._img_queue.put_nowait(_frame)
+                self._img_queue.put_nowait(frame)
 
         self._stop_acquisition()
         try:
@@ -311,18 +311,18 @@ class StDriver(AbstractCameraDriver):
         abrirla, así que la traducción sale de ahí.
         """
         try:
-            _nodemap = st_interface.port.nodemap
-            _selector = st.PyIInteger(_nodemap.get_node(_DEVICE_SELECTOR_NODE))
-            _ip_node = st.PyIInteger(_nodemap.get_node(_DEVICE_IP_NODE))
+            nodemap = st_interface.port.nodemap
+            selector = st.PyIInteger(nodemap.get_node(_DEVICE_SELECTOR_NODE))
+            ip_node = st.PyIInteger(nodemap.get_node(_DEVICE_IP_NODE))
         except Exception as e:
             logger.debug(f"[StDriver] La interface no publica IPs de cámara: {e}")
             return None
 
-        for _index in range(st_interface.device_count):
+        for index in range(st_interface.device_count):
             try:
-                _selector.set_value(_index)
-                if _format_ip(_ip_node.value) == wanted_ip:
-                    return st_interface.get_device_info(_index).device_id
+                selector.set_value(index)
+                if _format_ip(ip_node.value) == wanted_ip:
+                    return st_interface.get_device_info(index).device_id
             except Exception:
                 continue
         return None
@@ -336,58 +336,58 @@ class StDriver(AbstractCameraDriver):
         primera disponible entregaría frames de otra cámara como si fueran los de la
         pedida. Solo cuando `address` viene vacío se toma la primera.
         """
-        _wanted = (self._address or "").strip()
-        if not _wanted or _wanted.lower() == "unknown":
+        wanted = (self._address or "").strip()
+        if not wanted or wanted.lower() == "unknown":
             logger.warning("[StDriver] Sin `address` en config: se toma la primera cámara.")
             return st_system.create_first_device()
 
-        _is_ip = _looks_like_ip(_wanted)
-        for _i in range(st_system.interface_count):
-            _interface = st_system.get_interface(_i)
+        is_ip = _looks_like_ip(wanted)
+        for i in range(st_system.interface_count):
+            interface = st_system.get_interface(i)
 
-            _device_id = _wanted
-            if _is_ip:
-                _device_id = self._find_device_id_by_ip(_interface, _wanted)
-                if not _device_id:
+            device_id = wanted
+            if is_ip:
+                device_id = self._find_device_id_by_ip(interface, wanted)
+                if not device_id:
                     continue
-                logger.info(f"[StDriver] {_wanted} resuelta al device_id {_device_id}")
+                logger.info(f"[StDriver] {wanted} resuelta al device_id {device_id}")
 
             try:
-                return _interface.create_device_by_id(_device_id)
+                return interface.create_device_by_id(device_id)
             except Exception:
                 continue
 
-        logger.error(f"[StDriver] No hay ninguna cámara en '{_wanted}'.")
+        logger.error(f"[StDriver] No hay ninguna cámara en '{wanted}'.")
         return None
 
     def _grab_loop(self):
         """Thread de fondo: inicializa StApi, conecta y reconecta ante pérdida."""
         try:
             st.initialize()
-            _st_system = st.create_system()
+            st_system = st.create_system()
         except Exception as e:
             logger.error(f"[StDriver] Falló la inicialización de StApi: {e}")
             return
 
-        _device_id = ""
+        device_id = ""
         while self._grab_active:
-            _st_device = None
+            st_device = None
             try:
-                if not _device_id:
-                    _st_device = self._create_configured_device(_st_system)
-                    if _st_device is not None:
-                        _device_id = _st_device.info.device_id
+                if not device_id:
+                    st_device = self._create_configured_device(st_system)
+                    if st_device is not None:
+                        device_id = st_device.info.device_id
                 else:
-                    for _i in range(_st_system.interface_count):
+                    for i in range(st_system.interface_count):
                         try:
-                            _interface = _st_system.get_interface(_i)
-                            _st_device = _interface.create_device_by_id(_device_id)
+                            interface = st_system.get_interface(i)
+                            st_device = interface.create_device_by_id(device_id)
                             break
                         except Exception:
                             continue
 
-                if _st_device:
-                    self._do_grabbing(_st_device)
+                if st_device:
+                    self._do_grabbing(st_device)
                 else:
                     logger.warning(
                         f"[StDriver] {self._address} no encontrada. "
@@ -407,45 +407,45 @@ class StDriver(AbstractCameraDriver):
 
     def _decode_buffer(self, st_buffer) -> np.ndarray | None:
         """Convierte un buffer de StApi en una imagen BGR de numpy."""
-        _st_image = st_buffer.get_image()
-        _format_info = st.get_pixel_format_info(_st_image.pixel_format)
+        st_image = st_buffer.get_image()
+        format_info = st.get_pixel_format_info(st_image.pixel_format)
 
-        if not (_format_info.is_mono or _format_info.is_bayer):
+        if not (format_info.is_mono or format_info.is_bayer):
             return None
 
-        _image_data = _st_image.get_image_data()
-        if _format_info.each_component_total_bit_count > 8:
+        image_data = st_image.get_image_data()
+        if format_info.each_component_total_bit_count > 8:
             # `astype` aloca → memoria propia.
-            _img = np.frombuffer(_image_data, np.uint16)
-            _divisor = pow(2, _format_info.each_component_valid_bit_count - 8)
-            _img = (_img / _divisor).astype(np.uint8)
-            _is_buffer_view = False
+            img = np.frombuffer(image_data, np.uint16)
+            divisor = pow(2, format_info.each_component_valid_bit_count - 8)
+            img = (img / divisor).astype(np.uint8)
+            is_buffer_view = False
         else:
             # Vista cruda sobre el buffer de StApi. Todavía no es propia.
-            _img = np.frombuffer(_image_data, np.uint8)
-            _is_buffer_view = True
+            img = np.frombuffer(image_data, np.uint8)
+            is_buffer_view = True
 
-        _img = _img.reshape(_st_image.height, _st_image.width, 1)
+        img = img.reshape(st_image.height, st_image.width, 1)
 
-        if _format_info.is_bayer:
+        if format_info.is_bayer:
             # No puede ser constante de módulo: las claves necesitan stapipy importado.
-            _bayer_map = {
+            bayer_map = {
                 st.EStPixelColorFilter.BayerRG: cv2.COLOR_BAYER_BG2BGR,
                 st.EStPixelColorFilter.BayerGR: cv2.COLOR_BAYER_GB2BGR,
                 st.EStPixelColorFilter.BayerGB: cv2.COLOR_BAYER_GR2BGR,
                 st.EStPixelColorFilter.BayerBG: cv2.COLOR_BAYER_RG2BGR,
             }
-            _bayer_code = _bayer_map.get(_format_info.get_pixel_color_filter())
-            if _bayer_code is not None:
-                _img = cv2.cvtColor(_img, _bayer_code)
-                _is_buffer_view = False
+            bayer_code = bayer_map.get(format_info.get_pixel_color_filter())
+            if bayer_code is not None:
+                img = cv2.cvtColor(img, bayer_code)
+                is_buffer_view = False
 
         # StApi recicla el buffer al salir del `with retrieve_buffer(...)`: devolver
         # una vista sobre él entregaría memoria liberada al resto de la app.
-        if _is_buffer_view:
-            _img = _img.copy()
+        if is_buffer_view:
+            img = img.copy()
 
-        return _img
+        return img
 
     def _on_device_lost(self, node=None, st_device=None):
         if node and node.is_available and st_device and st_device.is_device_lost:

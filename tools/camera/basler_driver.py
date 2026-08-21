@@ -80,20 +80,20 @@ class BaslerDriver(AbstractCameraDriver):
             return None
 
         try:
-            _grab_result = self._camera.RetrieveResult(
+            grab_result = self._camera.RetrieveResult(
                 timeout_ms, pylon.TimeoutHandling_ThrowException
             )
-            _bgr_image = None
-            if _grab_result.GrabSucceeded():
-                # `_converted` debe mantenerse vivo hasta que .copy() termine.
+            bgr_image = None
+            if grab_result.GrabSucceeded():
+                # `converted` debe mantenerse vivo hasta que .copy() termine.
                 # GetArray() devuelve una vista de memoria C++ del PylonImage;
                 # si el objeto se destruye antes del copy, el heap se corrompe.
-                _converted = self._converter.Convert(_grab_result)
-                _bgr_image = _converted.GetArray().copy()
-                del _converted
+                converted = self._converter.Convert(grab_result)
+                bgr_image = converted.GetArray().copy()
+                del converted
 
-            _grab_result.Release()
-            return self._deliver(_bgr_image) if _bgr_image is not None else None
+            grab_result.Release()
+            return self._deliver(bgr_image) if bgr_image is not None else None
         except genicam.GenericException as e:
             # Timeout o desconexión física: se marca para que el thread de captura
             # dispare su bloque de reconexión en la próxima iteración.
@@ -107,7 +107,7 @@ class BaslerDriver(AbstractCameraDriver):
 
     def get_status(self) -> dict:
         """Estado para telemetría. Un 0.0 en `temperature` significa sin lectura."""
-        _status = {
+        status = {
             "connected": self.is_connected,
             "capture_enabled": self._capture_enabled,
             "temperature": 0.0,
@@ -115,7 +115,7 @@ class BaslerDriver(AbstractCameraDriver):
         }
         if self.is_connected and self._camera:
             try:
-                _status["temperature"] = float(self._camera.DeviceTemperature.GetValue())
+                status["temperature"] = float(self._camera.DeviceTemperature.GetValue())
                 self._temp_warned = False
             except Exception as e:
                 # Sin el latch esto inunda el log.
@@ -125,7 +125,7 @@ class BaslerDriver(AbstractCameraDriver):
                         f"La temperatura queda en 0 (sin lectura)."
                     )
                     self._temp_warned = True
-        return _status
+        return status
 
     # ── Conexión ─────────────────────────────────────────────────────────────
 
@@ -144,20 +144,20 @@ class BaslerDriver(AbstractCameraDriver):
             self._converter = None
 
         try:
-            _tl_factory = pylon.TlFactory.GetInstance()
+            tl_factory = pylon.TlFactory.GetInstance()
 
-            _matched_device = None
-            for _info in _tl_factory.EnumerateDevices():
-                if (_info.GetDeviceClass() == _DEVICE_CLASS_GIGE
-                        and _info.GetIpAddress() == self._address):
-                    _matched_device = _info
+            matched_device = None
+            for info in tl_factory.EnumerateDevices():
+                if (info.GetDeviceClass() == _DEVICE_CLASS_GIGE
+                        and info.GetIpAddress() == self._address):
+                    matched_device = info
                     break
 
-            if _matched_device is None:
+            if matched_device is None:
                 logger.error(f"No ruteable: no hay hardware Basler en la dirección {self._address}")
                 return False
 
-            self._camera = pylon.InstantCamera(_tl_factory.CreateDevice(_matched_device))
+            self._camera = pylon.InstantCamera(tl_factory.CreateDevice(matched_device))
 
             self._converter = pylon.ImageFormatConverter()
             self._converter.OutputPixelFormat = pylon.PixelType_BGR8packed
@@ -203,25 +203,25 @@ class BaslerDriver(AbstractCameraDriver):
             logger.warning(f"[Basler {self._address}] No se pudo cambiar la captura: {e}")
 
     def _apply_camera_params(self):
-        def _set_node(node_name: str, value: str | float | bool):
+        def set_node(node_name: str, value: str | float | bool):
             try:
-                _node = getattr(self._camera, node_name)
-                if genicam.IsWritable(_node):
-                    _node.SetValue(value)
+                node = getattr(self._camera, node_name)
+                if genicam.IsWritable(node):
+                    node.SetValue(value)
             except Exception as e:
                 logger.warning(
                     f"No se pudo escribir {node_name} en la Basler {self._address}: {e}"
                 )
 
-        _exposure_time_us = float(
+        exposure_time_us = float(
             self._acquisition.get("exposure_time_us", _DEFAULT_EXPOSURE_TIME_US)
         )
-        _gain = float(self._acquisition.get("gain", _DEFAULT_GAIN))
-        _fps_limit = float(self._acquisition.get("fps_limit", _DEFAULT_FPS_LIMIT))
+        gain = float(self._acquisition.get("gain", _DEFAULT_GAIN))
+        fps_limit = float(self._acquisition.get("fps_limit", _DEFAULT_FPS_LIMIT))
 
-        _set_node("ExposureAuto", "Off")
-        _set_node("ExposureTime", _exposure_time_us)
-        _set_node("GainAuto", "Off")
-        _set_node("Gain", _gain)
-        _set_node("AcquisitionFrameRateEnable", True)
-        _set_node("AcquisitionFrameRate", _fps_limit)
+        set_node("ExposureAuto", "Off")
+        set_node("ExposureTime", exposure_time_us)
+        set_node("GainAuto", "Off")
+        set_node("Gain", gain)
+        set_node("AcquisitionFrameRateEnable", True)
+        set_node("AcquisitionFrameRate", fps_limit)

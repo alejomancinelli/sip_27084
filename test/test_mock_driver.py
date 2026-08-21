@@ -13,9 +13,9 @@ _FAST = {"acquisition": {"fps_limit": 200}}
 
 
 def _connected(**extra) -> MockDriver:
-    _driver = MockDriver({**_FAST, **extra})
-    _driver.connect()
-    return _driver
+    driver = MockDriver({**_FAST, **extra})
+    driver.connect()
+    return driver
 
 
 class TestCaptureEnabled:
@@ -23,59 +23,59 @@ class TestCaptureEnabled:
         assert _connected().is_capture_enabled is True
 
     def test_config_can_start_with_capture_disabled(self):
-        _driver = _connected(enabled=False)
-        assert _driver.is_capture_enabled is False
-        assert _driver.get_frame() is None
+        driver = _connected(enabled=False)
+        assert driver.is_capture_enabled is False
+        assert driver.get_frame() is None
 
     def test_disabled_capture_yields_no_frames_while_still_connected(self):
         """Deshabilitada no es lo mismo que desconectada: el consumidor las separa."""
-        _driver = _connected()
-        assert _driver.get_frame() is not None
+        driver = _connected()
+        assert driver.get_frame() is not None
 
-        _driver.set_capture_enabled(False)
-        assert _driver.get_frame() is None
-        assert _driver.is_connected is True
-        assert _driver.get_status()["connected"] is True
-        assert _driver.get_status()["capture_enabled"] is False
+        driver.set_capture_enabled(False)
+        assert driver.get_frame() is None
+        assert driver.is_connected is True
+        assert driver.get_status()["connected"] is True
+        assert driver.get_status()["capture_enabled"] is False
 
     def test_capture_can_be_re_enabled(self):
-        _driver = _connected(enabled=False)
-        _driver.set_capture_enabled(True)
-        assert _driver.get_frame() is not None
-        assert _driver.get_status()["capture_enabled"] is True
+        driver = _connected(enabled=False)
+        driver.set_capture_enabled(True)
+        assert driver.get_frame() is not None
+        assert driver.get_status()["capture_enabled"] is True
 
     def test_setting_the_same_value_is_a_no_op(self):
-        _driver = _connected()
-        _driver.set_capture_enabled(True)
-        assert _driver.get_frame() is not None
+        driver = _connected()
+        driver.set_capture_enabled(True)
+        assert driver.get_frame() is not None
 
 
 class TestMeasuredFps:
     def test_fps_is_zero_before_two_frames(self):
-        _driver = _connected()
-        assert _driver.get_status()["fps_estimated"] == 0.0
-        _driver.get_frame()
-        assert _driver.get_status()["fps_estimated"] == 0.0
+        driver = _connected()
+        assert driver.get_status()["fps_estimated"] == 0.0
+        driver.get_frame()
+        assert driver.get_status()["fps_estimated"] == 0.0
 
     def test_fps_is_measured_from_delivered_frames(self):
-        _driver = _connected()
+        driver = _connected()
         for _ in range(10):
-            _driver.get_frame()
-        assert _driver.get_status()["fps_estimated"] > 0.0
+            driver.get_frame()
+        assert driver.get_status()["fps_estimated"] > 0.0
 
     def test_disabled_capture_does_not_add_frames_to_the_measurement(self):
-        _driver = _connected()
-        _driver.set_capture_enabled(False)
+        driver = _connected()
+        driver.set_capture_enabled(False)
         for _ in range(5):
-            _driver.get_frame()
-        assert _driver.get_status()["fps_estimated"] == 0.0
+            driver.get_frame()
+        assert driver.get_status()["fps_estimated"] == 0.0
 
 
 class TestRotation:
     def test_rotation_comes_from_the_base_class(self):
-        _straight = _connected().get_frame()
-        _rotated = _connected(rotation="90cw").get_frame()
-        assert _rotated.shape[:2] == _straight.shape[:2][::-1]
+        straight = _connected().get_frame()
+        rotated = _connected(rotation="90cw").get_frame()
+        assert rotated.shape[:2] == straight.shape[:2][::-1]
 
     def test_unknown_rotation_is_ignored(self):
         assert _connected(rotation="45").get_frame().shape == _connected().get_frame().shape
