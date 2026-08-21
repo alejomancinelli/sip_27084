@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Linux setup scripts run on the Jetson. Force LF even when the repo is cloned or
+# copied from Windows: with CRLF, bash fails on the shebang line.
+*.sh text eol=lf
+
+# Windows PowerShell 5.1 expects CRLF.
+*.ps1 text eol=crlf

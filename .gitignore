@@ -399,3 +399,12 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Virtual environment
+.venv/
+
+# Packages
+[Pp]ackages/
+
+# Pytest cache
+.pytest*/
