@@ -12,6 +12,10 @@
 numpy>=1.24,<2.0
 PyYAML>=6.0
 
+# Métricas de hardware (CPU, RAM, disco, contadores de red) para system_monitor.
+# Multiplataforma: la misma API responde en Windows y en el aarch64 de la Jetson.
+psutil>=5.9
+
 # OpenCV de la misma época que numpy 1.x: los wheels 4.9+ se compilan contra la ABI
 # de numpy 2 y no cargan con numpy 1.
 #

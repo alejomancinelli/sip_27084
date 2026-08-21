@@ -17,6 +17,13 @@ ui:
   language: LANGUAGE
   dark_mode: true
 
+system_monitor:
+  # Métricas de hardware del equipo. Las fuentes cambian entre plataformas
+  # (sysfs e INA3221 en Jetson, psutil y nvidia-smi en Windows); las claves que
+  # publica el módulo, no.
+  disk_path: .                  # partición que se reporta como espacio libre; relativa a la raíz del repo
+  net_interfaces: []            # interfaces a medir, p. ej. [eth0, eth1]; [] = todas menos loopback
+
 http_video:
   # Streams MJPEG, dos por cámara: http://<ip>:<puerto>/camera_1/raw (frame de
   # cámara) y /camera_1/annotated (con anotaciones de inferencia). La ruta usa la
