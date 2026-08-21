@@ -1,0 +1,14 @@
+# Config de la prueba manual live_metrics.py, separada del config.yaml de la app.
+#
+# El script relee este archivo cada vez que cambia en disco, así que se puede
+# editar con la prueba corriendo y ver el efecto en la línea siguiente.
+
+system_monitor:
+  # Partición que se reporta como espacio libre; relativa a la raíz del repo.
+  # Probar con la ruta del dataset (./data/dataset) o con otro disco.
+  disk_path: .
+
+  # Interfaces a medir. [] = todas menos loopback, que es lo que sirve para
+  # descubrir cómo las nombra este equipo: en la Jetson son eth0 / eth1 y en
+  # Windows 'Ethernet'. Poner acá una que no exista muestra el aviso.
+  net_interfaces: []
