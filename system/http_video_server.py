@@ -40,6 +40,7 @@ from socketserver import ThreadingMixIn
 import cv2
 import numpy as np
 
+from system.config_manager import ConfigManager
 from system.logger import logger
 
 # (slot de cámara, modo): identifica un stream en todo el módulo.
@@ -327,7 +328,8 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, address: tuple[str, int], frame_store: _FrameStore,
-                 subscribers: _Subscribers, slots: tuple[str, ...], config_manager):
+                 subscribers: _Subscribers, slots: tuple[str, ...],
+                 config_manager: ConfigManager):
         self.frame_store = frame_store
         self.subscribers = subscribers
         self.slots = slots
@@ -371,8 +373,7 @@ class HttpVideoServer:
     salen sin codificar nada.
     """
 
-    def __init__(self, config_manager):
-        # TODO: anotar el tipo cuando exista system/config_manager.py
+    def __init__(self, config_manager: ConfigManager):
         self._config = config_manager
         self._store = _FrameStore()
         self._subs = _Subscribers()
