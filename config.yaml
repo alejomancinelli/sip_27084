@@ -1,0 +1,41 @@
+# Plantilla de configuración. La jerarquía espeja los módulos del repo, no las
+# pantallas de la GUI. Cada módulo lee su propia sección.
+
+project:
+  client: CLIENT_NAME
+  project_id: PROJECT_ID
+
+system:
+  app_name: APP_NAME
+  device_id: DEVICE_ID
+  log_level: INFO               # DEBUG | INFO | WARNING | ERROR
+  paths:
+    logs: ./data/logs
+    dataset: ./data/dataset
+
+ui:
+  language: LANGUAGE
+  dark_mode: true
+
+cameras:
+  # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
+  # slot: es la identidad con la que la cámara aparece en el resto del sistema.
+  camera_1:
+    name: CAMERA_NAME           # texto que muestra la UI; se puede cambiar sin romper nada
+    enabled: true               # false = conectada pero sin capturar (ver get_status)
+    brand: BRAND_NAME           # clave de CAMERA_CATALOG en camera_catalog.py
+    model: MODEL_NAME           # uno de los "models" de ese fabricante
+    driver: DRIVER_USED         # ver REGISTERED_DRIVERS en camera_factory.py
+    address: IP_ADDRESS         # IP o ID de GenTL según el driver
+    rotation: null              # null | 90cw | 90ccw | 180
+    acquisition:
+      fps_limit: 15
+      exposure_time_us: 25000
+      gain: 1.0
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 50        # brillo medio mínimo del ROI 0–100
