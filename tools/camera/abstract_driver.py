@@ -31,6 +31,10 @@ class AbstractCameraDriver(ABC):
     is_config_error = False
 
     def __init__(self, config_cam: dict | None = None):
+        # Sesión abierta con el hardware. Lo sostiene cada implementación; quien
+        # captura lo lee para saber si tiene que llamar a connect().
+        self.is_connected = False
+
         config = config_cam or {}
         self._rotation = config.get("rotation")
         # `enabled: false` deja la cámara sin capturar sin borrarla del config.

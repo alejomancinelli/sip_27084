@@ -12,6 +12,10 @@
 numpy>=1.24,<2.0
 PyYAML>=6.0
 
+# GUI y hilos de Qt: los QThread de system/threads dependen de esto aunque no haya
+# ventana, porque las señales son el cableado entre subsistemas.
+PySide6>=6.5,<7
+
 # Métricas de hardware (CPU, RAM, disco, contadores de red) para system_monitor.
 # Multiplataforma: la misma API responde en Windows y en el aarch64 de la Jetson.
 psutil>=5.9
@@ -36,6 +40,12 @@ pypylon>=2.1.0
 #   Linux:   setup/cameras/linux/sentech.sh
 # Se deja asentado acá porque es una dependencia real de la app, aunque pip no la
 # pueda resolver.
+
+# Backends de telemetría (system/backends). Los dos son opcionales: sin la
+# librería instalada el backend degrada a no-op y lo avisa por `status`, así que
+# se pueden sacar de acá en una instalación que no publique hacia afuera.
+influxdb-client>=1.36
+paho-mqtt>=1.6,<3
 
 # Tests
 pytest>=7.4

@@ -59,6 +59,26 @@ image_collector:
     history_len: 5              # guardados contra los que se compara
     hamming_threshold: 5        # 0–64 bits de diferencia; menos = más estricto
 
+telemetry:
+  # Salida de datos hacia afuera del equipo. Cada backend es independiente: se
+  # pueden usar los dos, uno o ninguno.
+  influxdb:
+    # Serie temporal para dashboards e históricos (InfluxDB 2.x).
+    # El token NO va acá: se lee de la variable de entorno INFLUXDB_TOKEN.
+    enabled: false
+    url: http://localhost:8086
+    org: ORG_NAME
+    bucket: BUCKET_NAME
+  mqtt:
+    # Un mensaje por measurement, publicado en <topic_base>/<measurement>.
+    # La password NO va acá: se lee de la variable de entorno MQTT_PASSWORD.
+    enabled: false
+    host: ''                    # IP o nombre del broker
+    port: 0                     # 0 = 1883, o 8883 si tls está en true
+    tls: false
+    user: ''                    # vacío = sin autenticación
+    topic_base: PROJECT_ID      # prefijo de todos los tópicos del equipo
+
 cameras:
   # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
   # slot: es la identidad con la que la cámara aparece en el resto del sistema.
