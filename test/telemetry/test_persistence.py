@@ -12,15 +12,14 @@ import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.persistence as pers
-from system.backends import (
+import system.telemetry.persistence as pers
+from system.telemetry.backends import (
     STATUS_CONNECTED,
     STATUS_DISABLED,
     AbstractTelemetryBackend,
 )
-from system.persistence import PersistenceThread
+from system.telemetry.persistence import PersistenceThread
 
 _WAIT_TIMEOUT_MS = 3000
 _FIELDS = {"temperature": 41.2}

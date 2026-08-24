@@ -9,7 +9,6 @@ import threading
 import pytest
 import yaml
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from system.config_manager import ConfigManager, _default_config_path
 

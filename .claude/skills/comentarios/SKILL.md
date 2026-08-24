@@ -111,7 +111,7 @@ firma con anotaciones.
 
 - **Docstring de módulo**: solo en subsistemas complejos. Incluir diagrama ASCII
   cuando hay una cadena de timers, señales o flujo entre hilos (ver
-  `system/capture_scheduler.py`).
+  `system/camera/capture_scheduler.py`).
 
 ## Comentarios inline
 

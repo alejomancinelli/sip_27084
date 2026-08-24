@@ -20,9 +20,9 @@ diagonal entre pares del mismo nivel.
 | Nivel | Qué es | Archivos | Puede importar |
 |---|---|---|---|
 | 0 | Infraestructura | `system/logger.py`, `system/paths.py`, `system/config_manager.py` | nada del repo |
-| 1 | Módulos puros (sin Qt, sin protocolo, sin I/O) | `camera_health`, `com_status`, `system_status`, `modbus_schema`, `image_collector_conditions` | nivel 0 |
-| 2 | Implementaciones detrás de una interfaz | `tools/camera/*`, `system/backends/*` | 0–1 |
-| 3 | Subsistemas (QThread / QObject) | `capture_thread`, `inference_engine`, `modbus_server`, `capture_scheduler`, `persistence`, `image_collector`, `rtsp_server`, `http_video_server`, `gpio_control` | 0–2 |
+| 1 | Módulos puros (sin Qt, sin protocolo, sin I/O) | `formats/camera_health`, `formats/com_status`, `formats/system_status`, `modbus/schema`, `image_collector/conditions` | nivel 0 |
+| 2 | Implementaciones detrás de una interfaz | `tools/camera/*`, `system/telemetry/backends/*` | 0–1 |
+| 3 | Subsistemas (QThread / QObject) | `camera/capture_thread`, `camera/capture_scheduler`, `inference/engine`, `modbus/server`, `telemetry/persistence`, `image_collector/collector`, `video/http_server`, `video/rtsp_server`, `gpio_control` | 0–2 |
 | 4 | GUI | `ui/` | 0–1 + datos ya normalizados |
 | 5 | Cableado (composition root) | `main.py` | todo |
 
@@ -34,8 +34,8 @@ Reglas duras:
    cablean en `main.py` por señales. Un `QThread` que importa otro `QThread` es
    un error de diseño, no un atajo.
 3. **Única excepción:** una *constante con dueño único* se puede importar hacia
-   arriba de nivel (`modbus_registers` importa `MAX_MESH_SLOTS` de
-   `inference_engine`). Constantes sí; comportamiento no. Nunca duplicar el
+   arriba de nivel (`modbus/registers` importa `MAX_MESH_SLOTS` de
+   `inference/engine`). Constantes sí; comportamiento no. Nunca duplicar el
    valor "para no importar".
 4. **`ui/` solo lo importa `ui/` y `main.py`.** Ningún módulo de `system/` o
    `tools/` sabe que existe una GUI.
@@ -60,7 +60,7 @@ if cfg["driver"] == "sentech":
 
 - Agregar un driver = implementar `AbstractCameraDriver` + registrarlo en
   `camera_factory.py`. Ningún otro archivo se toca.
-- Agregar un backend de telemetría = implementarlo en `system/backends/` y
+- Agregar un backend de telemetría = implementarlo en `system/telemetry/backends/` y
   engancharlo en `PersistenceThread`. Nadie más lo ve.
 - Si falta una dependencia de sistema (GStreamer, `gpiod`, `stapipy`), el módulo
   degrada a no-op **adentro** y expone la misma API. El llamador no pone
@@ -73,8 +73,8 @@ físicos (%, °C, ms, bool) y pide la codificación.
 
 - **Direcciones Modbus: nunca literales.** Se piden por nombre —
   `SCHEMA.addr("roi_coverage")`, `CLASS_FRACTION_ADDRS`— y el mapa vive solo en
-  `system/modbus_registers.py`.
-- **Escalas y saturación** (`% x10`, uint16) son de `modbus_schema.to_uint16`, no
+  `system/modbus/registers.py`.
+- **Escalas y saturación** (`% x10`, uint16) son de `modbus/schema.to_uint16`, no
   de cada llamador.
 - **Bitfields** los arma su propio módulo: `camera_health.pack(...)`,
   `com_status.pack(...)`, `pack_di_bitfield(...)`. Nadie corre bits afuera.
@@ -99,8 +99,8 @@ módulo nuevo se piensa en dos mitades y, si la parte específica es una tabla o
 conjunto de valores, se separa en archivos:
 
 ```
-modbus_schema.py     maquinaria reutilizable — no conoce ningún registro puntual
-modbus_registers.py  el mapa concreto — específico del modelo, no se cross-portea
+modbus/schema.py     maquinaria reutilizable — no conoce ningún registro puntual
+modbus/registers.py  el mapa concreto — específico del modelo, no se cross-portea
 ```
 
 - El docstring dice de qué lado está: *"maquinaria genérica (reutilizable entre

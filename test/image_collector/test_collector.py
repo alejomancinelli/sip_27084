@@ -17,17 +17,16 @@ import cv2
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.image_collector as ic
-from system.image_collector import (
+import system.image_collector.collector as ic
+from system.image_collector.collector import (
     ImageCollector,
     _compute_phash,
     _get_free_space_gb,
     _hamming_distance,
     _write_image,
 )
-from system.image_collector_conditions import field_truthy_condition, min_confidence_condition
+from system.image_collector.conditions import field_truthy_condition, min_confidence_condition
 
 _STATS_KEYS = {
     "mode", "active", "running", "images", "saved", "skipped",

@@ -14,10 +14,9 @@ import cv2
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.http_video_server as hvs
-from system.http_video_server import (
+import system.video.http_server as hvs
+from system.video.http_server import (
     HttpVideoServer,
     _FrameStore,
     _Subscribers,

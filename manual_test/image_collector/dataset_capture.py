@@ -73,10 +73,10 @@ if _REPO_ROOT is None:
     raise SystemExit("No se encontró la raíz del repo: ningún directorio padre tiene system/.")
 sys.path.insert(0, str(_REPO_ROOT))
 
-import system.image_collector as ic                                     # noqa: E402
+import system.image_collector.collector as ic                                     # noqa: E402
 from system.config_manager import ConfigManager                         # noqa: E402
-from system.image_collector import ImageCollector                       # noqa: E402
-from system.image_collector_conditions import min_confidence_condition  # noqa: E402
+from system.image_collector.collector import ImageCollector                       # noqa: E402
+from system.image_collector.conditions import min_confidence_condition  # noqa: E402
 from system.logger import logger                                        # noqa: E402
 from system.paths import resolve                                        # noqa: E402
 

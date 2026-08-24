@@ -49,7 +49,7 @@ if _REPO_ROOT is None:
     raise SystemExit("No se encontró la raíz del repo: ningún directorio padre tiene system/.")
 sys.path.insert(0, str(_REPO_ROOT))
 
-from system.http_video_server import (  # noqa: E402
+from system.video.http_server import (  # noqa: E402
     HttpVideoServer,
     _MODE_ANNOTATED,
     _MODE_RAW,

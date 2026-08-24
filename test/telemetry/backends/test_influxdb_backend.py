@@ -10,10 +10,9 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.backends.influxdb_backend as ib
-from system.backends.influxdb_backend import InfluxDBBackend
+import system.telemetry.backends.influxdb_backend as ib
+from system.telemetry.backends.influxdb_backend import InfluxDBBackend
 
 _URL = "http://influx:8086"
 _ORG = "ORG"

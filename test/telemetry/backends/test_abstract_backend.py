@@ -9,9 +9,8 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from system.backends import (
+from system.telemetry.backends import (
     STATUS_CONNECTED,
     STATUS_CONNECTING,
     STATUS_DISABLED,

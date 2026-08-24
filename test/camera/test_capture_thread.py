@@ -15,10 +15,9 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.threads.capture_thread as ct
-from system.threads.capture_thread import CaptureThread
+import system.camera.capture_thread as ct
+from system.camera.capture_thread import CaptureThread
 from tools.camera.abstract_driver import AbstractCameraDriver
 
 _SLOT = "camera_1"

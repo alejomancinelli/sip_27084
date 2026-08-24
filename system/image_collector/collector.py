@@ -40,7 +40,7 @@ nombre es texto de UI y puede cambiar sin romper nada, el slot es la identidad.
 
 Tres filtros deciden qué llega a disco, en este orden, en los dos modos:
   - `save_conditions`: predicados sobre el dict de inferencia (ver
-    image_collector_conditions). Lista vacía = pasa todo.
+    conditions). Lista vacía = pasa todo.
   - dedup por hash perceptual: descarta el frame casi idéntico a uno de los últimos
     guardados de esa cámara.
   - guardia de disco: por debajo de `min_free_space_gb` se hace lugar borrando lo más

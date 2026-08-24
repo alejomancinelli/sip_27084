@@ -30,7 +30,7 @@ Ningún backend propaga errores: los deja en `status` y en el log. Quien produce
 telemetría no puede caerse porque un destino no esté.
 
 Agregar un destino —SQL, otro broker, un archivo— es implementar esta interfaz en
-`system/backends/` y sumarlo a la lista de PersistenceThread. Ningún otro archivo
+`system/telemetry/backends/` y sumarlo a la lista de PersistenceThread. Ningún otro archivo
 se toca.
 """
 

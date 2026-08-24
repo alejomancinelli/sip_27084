@@ -41,7 +41,7 @@ import time
 
 from PySide6.QtCore import QThread
 
-from system.backends import (
+from .backends import (
     AbstractTelemetryBackend,
     InfluxDBBackend,
     MqttBackend,
@@ -51,7 +51,7 @@ from system.config_manager import ConfigManager
 from system.logger import logger
 
 # Backends que se arman si el llamador no pasa una lista. Sumar un destino nuevo
-# —SQL, otro broker— es implementarlo en system/backends/ y agregarlo acá.
+# —SQL, otro broker— es implementarlo en system/telemetry/backends/ y sumarlo acá.
 _DEFAULT_BACKEND_CLASSES = (InfluxDBBackend, MqttBackend)
 
 _QUEUE_MAXSIZE = 100      # puntos en vuelo; llena, se descarta el que llega

@@ -12,10 +12,9 @@ import types
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import system.backends.mqtt_backend as mb
-from system.backends.mqtt_backend import MqttBackend, _build_client
+import system.telemetry.backends.mqtt_backend as mb
+from system.telemetry.backends.mqtt_backend import MqttBackend, _build_client
 
 _HOST = "broker.local"
 _TOPIC_BASE = "planta/linea_1"

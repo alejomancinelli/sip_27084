@@ -18,8 +18,8 @@ siempre en inglés**, incluso los internos y los de los tests.
 
 | Elemento | Convención | Ejemplo |
 |---|---|---|
-| Módulo / archivo | `snake_case`, sustantivo, singular | `camera_health.py`, `modbus_schema.py` |
-| Paquete / carpeta | `snake_case`, minúscula | `tools/camera/`, `system/backends/` |
+| Módulo / archivo | `snake_case`, sustantivo, singular | `camera_health.py`, `capture_thread.py` |
+| Paquete / carpeta | `snake_case`, minúscula | `tools/camera/`, `system/telemetry/backends/` |
 | Clase | `PascalCase`, sustantivo | `CaptureThread`, `ConfigManager` |
 | Clase abstracta | `PascalCase`, prefijo `Abstract` | `AbstractCameraDriver` |
 | Excepción | `PascalCase`, sufijo `Error` | `CameraTimeoutError` |

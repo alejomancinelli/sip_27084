@@ -12,7 +12,7 @@
 numpy>=1.24,<2.0
 PyYAML>=6.0
 
-# GUI y hilos de Qt: los QThread de system/threads dependen de esto aunque no haya
+# GUI y hilos de Qt: los QThread de system/ dependen de esto aunque no haya
 # ventana, porque las señales son el cableado entre subsistemas.
 PySide6>=6.5,<7
 
@@ -41,7 +41,7 @@ pypylon>=2.1.0
 # Se deja asentado acá porque es una dependencia real de la app, aunque pip no la
 # pueda resolver.
 
-# Backends de telemetría (system/backends). Los dos son opcionales: sin la
+# Backends de telemetría (system/telemetry/backends). Los dos son opcionales: sin la
 # librería instalada el backend degrada a no-op y lo avisa por `status`, así que
 # se pueden sacar de acá en una instalación que no publique hacia afuera.
 influxdb-client>=1.36

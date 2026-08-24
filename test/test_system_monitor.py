@@ -15,7 +15,6 @@ from collections import namedtuple
 import psutil
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import system.system_monitor as sm
 from system.system_monitor import (

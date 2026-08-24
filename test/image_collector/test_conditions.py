@@ -7,10 +7,9 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from system import image_collector_conditions as conditions
-from system.image_collector_conditions import (
+from system.image_collector import conditions
+from system.image_collector.conditions import (
     field_at_least_condition,
     field_truthy_condition,
     min_confidence_condition,
