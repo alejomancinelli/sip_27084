@@ -1,0 +1,37 @@
+# Config de la prueba manual dataset_capture.py, separada del config.yaml de la app.
+#
+# El script relee este archivo cada vez que cambia en disco, así que se puede mover la
+# ventana de intervalo con la prueba corriendo. Al releer se pierden los cambios que
+# hicieron las teclas (recolección y guardia de disco), que son solo en memoria.
+
+system:
+  paths:
+    # Relativa a la raíz del repo. Aparte del dataset de la app a propósito: esta
+    # prueba llena y vacía la carpeta, y se puede borrar entera sin pensar.
+    dataset: ./data/manual_test_dataset
+
+image_collector:
+  enabled: true
+
+  # interval: el recolector guarda por su cuenta un frame por cámara cada tanto.
+  # on_demand: solo guarda cuando el script se lo pide con la tecla. Se cambia en
+  # caliente con `m`, que reinicia el recolector.
+  mode: interval
+
+  # Ventana corta a propósito, para ver varios guardados en una corrida. Iguales =
+  # guardado periódico.
+  interval_min_s: 3
+  interval_max_s: 10
+
+  # Tope bajo a propósito: con doce imágenes ya se ve el borrado del más viejo.
+  max_images: 12
+  min_free_space_gb: 30
+
+  save_original: true
+  save_annotated: true
+  save_inference_json: true
+
+  dedup:
+    enabled: true
+    history_len: 5
+    hamming_threshold: 5
