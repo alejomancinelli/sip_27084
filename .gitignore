@@ -403,8 +403,15 @@ FodyWeavers.xsd
 # Virtual environment
 .venv/
 
-# Packages
-[Pp]ackages/
+# Packages — vendor wheels: the folder is versioned, its contents are not.
+# The pattern has to be `dir/*` and not `dir/`: with the trailing slash git skips the
+# directory entirely and the exception below never gets a chance to match.
+[Pp]ackages/*
+![Pp]ackages/.gitkeep
 
 # Pytest cache
 .pytest*/
+
+# Dataset and logger — same as above: the folder is versioned, its contents are not.
+data/*
+!data/.gitkeep
