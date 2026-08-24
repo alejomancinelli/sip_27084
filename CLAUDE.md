@@ -46,7 +46,9 @@ Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
           influxdb_backend.py InfluxDB 2.x
           mqtt_backend.py     paho-mqtt
       video/
+        abstract_video_server.py  el contrato: modos, status y gating por cliente
         http_server.py        streams MJPEG: uno crudo y uno anotado por cámara
+        rtsp_server.py        los mismos streams por RTSP, con GStreamer
 
     tools/                    librerías portables; no conocen la app
       camera/
@@ -75,6 +77,8 @@ Son punteros: el contrato vive en el archivo, no acá.
   las claves estables de `get_status()`.
 - **Backend de telemetría** — `system/telemetry/backends/abstract_backend.py`: la
   forma del registro (`measurement`, `tags`, `fields`, `time`) y los `STATUS_*`.
+- **Servidor de video** — `system/video/abstract_video_server.py`: un stream por
+  cámara y modo, el vocabulario de `status` y el gating por cliente conectado.
 - **Configuración** — `system/config_manager.py`: rutas punteadas, copias en la
   entrega, config de rescate.
 - **Señales de Qt** — cada una documenta su payload y su frecuencia donde se declara.
@@ -93,6 +97,10 @@ Lo que no se deduce leyendo un archivo suelto:
 - Un hilo por cámara, y el ritmo lo pone la cámara (free-run). Si alguna vez se
   captura por trigger, el ritmo y el orden de los disparos son de quien orqueste
   la captura, no del hilo.
+- El video sale por dos caminos y no compiten: MJPEG por HTTP es el stream liviano
+  para mirar en el navegador, y RTSP es el de resolución completa para un NVR o un
+  reproductor. El RTSP se publica por interfaz (`video.rtsp.net_interfaces`), y
+  necesita GStreamer instalado en el equipo.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
   instante en que se midió, no con el de la escritura.
 - Un módulo al que le falta su librería de sistema degrada a no-op adentro y expone
@@ -103,7 +111,7 @@ Lo que no se deduce leyendo un archivo suelto:
 
 - **`main.py`**: no hay composition root; hoy nadie cablea los subsistemas entre sí.
 - `system/modbus/` (servidor, schema, mapa de registros), `system/formats/`
-  (bitfields de estado), `system/inference/`, `system/video/rtsp_server.py`, `ui/`.
+  (bitfields de estado), `system/inference/`, `ui/`.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
 

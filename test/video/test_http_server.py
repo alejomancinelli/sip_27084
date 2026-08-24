@@ -38,14 +38,14 @@ _ALL_KEYS = (_RAW_1, _ANNOTATED_1, _RAW_2, _ANNOTATED_2)
 class _MockConfig:
     """ConfigManager mínimo: `get` y `set` con clave punteada, sin archivo ni Lock."""
 
-    # `http_video.log_connections` queda afuera a propósito: así los tests que no lo
+    # `video.http.log_connections` queda afuera a propósito: así los tests que no lo
     # fijan pasan por el default del módulo.
     def __init__(self, **overrides):
         self._values = {
-            "http_video.enabled": True,
-            "http_video.port": 0,          # 0 = puerto libre elegido por el SO
-            "http_video.jpeg_quality": 80,
-            "http_video.frame_width_px": 960,
+            "video.http.enabled": True,
+            "video.http.port": 0,          # 0 = puerto libre elegido por el SO
+            "video.http.jpeg_quality": 80,
+            "video.http.frame_width_px": 960,
             "cameras": {"camera_1": {}, "camera_2": {}},
         }
         self._values.update(overrides)
@@ -493,13 +493,13 @@ class TestPushGating:
         assert server._store.get(("camera_9", "raw"))[0] is None
 
     def test_frame_width_comes_from_config(self):
-        server = _watched_server(_RAW_1, **{"http_video.frame_width_px": 0})
+        server = _watched_server(_RAW_1, **{"video.http.frame_width_px": 0})
         server.push_raw("camera_1", _frame())
         assert _decoded_size(server._store.get(_RAW_1)[0]) == (1920, 1200)
 
     def test_jpeg_quality_comes_from_config(self):
-        high = _watched_server(_RAW_1, **{"http_video.jpeg_quality": 95})
-        low = _watched_server(_RAW_1, **{"http_video.jpeg_quality": 20})
+        high = _watched_server(_RAW_1, **{"video.http.jpeg_quality": 95})
+        low = _watched_server(_RAW_1, **{"video.http.jpeg_quality": 20})
         high.push_raw("camera_1", _frame())
         low.push_raw("camera_1", _frame())
         assert len(low._store.get(_RAW_1)[0]) < len(high._store.get(_RAW_1)[0])
@@ -542,7 +542,7 @@ class TestSlots:
 class TestLifecycle:
     def test_disabled_in_config_does_not_listen(self, monkeypatch):
         monkeypatch.setattr(hvs, "_HOST", _LOOPBACK)
-        server = HttpVideoServer(_MockConfig(**{"http_video.enabled": False}))
+        server = HttpVideoServer(_MockConfig(**{"video.http.enabled": False}))
         server.start()
         assert server.status == "disabled"
         assert server._server is None
@@ -584,7 +584,7 @@ class TestLifecycle:
             taken.bind((_LOOPBACK, 0))
             taken.listen(1)
             server = HttpVideoServer(
-                _MockConfig(**{"http_video.port": taken.getsockname()[1]})
+                _MockConfig(**{"video.http.port": taken.getsockname()[1]})
             )
             server.start()
         assert server.status == "error"
@@ -726,7 +726,7 @@ class TestConnectionLogging:
 
     def test_nothing_is_logged_when_disabled(self, monkeypatch, caplog):
         monkeypatch.setattr(hvs, "_HOST", _LOOPBACK)
-        server = HttpVideoServer(_MockConfig(**{"http_video.log_connections": False}))
+        server = HttpVideoServer(_MockConfig(**{"video.http.log_connections": False}))
         server.start()
         try:
             with caplog.at_level(logging.INFO):
@@ -742,7 +742,7 @@ class TestConnectionLogging:
             sock = _open_stream(server, "/camera_1/raw")
             assert _wait_until(lambda: _logged(caplog, "Cliente conectado"))
 
-            server._config.set("http_video.log_connections", False)
+            server._config.set("video.http.log_connections", False)
             _reset(sock)
             assert _wait_until(lambda: not server.has_raw_clients("camera_1"))
             time.sleep(0.2)
@@ -752,7 +752,7 @@ class TestConnectionLogging:
         """Que el servidor arrancó y se detuvo se dice siempre: no es ruido por cliente."""
         monkeypatch.setattr(hvs, "_HOST", _LOOPBACK)
         with caplog.at_level(logging.INFO):
-            server = HttpVideoServer(_MockConfig(**{"http_video.log_connections": False}))
+            server = HttpVideoServer(_MockConfig(**{"video.http.log_connections": False}))
             server.start()
             server.stop()
         assert _logged(caplog, "Servidor activo")

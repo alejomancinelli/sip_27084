@@ -24,15 +24,33 @@ system_monitor:
   disk_path: .                  # partición que se reporta como espacio libre; relativa a la raíz del repo
   net_interfaces: []            # interfaces a medir, p. ej. [eth0, eth1]; [] = todas menos loopback
 
-http_video:
-  # Streams MJPEG, dos por cámara: http://<ip>:<puerto>/camera_1/raw (frame de
-  # cámara) y /camera_1/annotated (con anotaciones de inferencia). La ruta usa la
-  # clave del slot, no el `name`. Sin nadie mirando un stream no se codifica nada.
-  enabled: true
-  port: 8091
-  jpeg_quality: 80              # 0–100; menos calidad = menos bytes por frame
-  frame_width_px: 960           # ancho al que se reduce antes de codificar; 0 = nativo
-  log_connections: true         # una línea de log por cliente que entra o sale del stream
+video:
+  # Publicación del video hacia afuera. Los dos servidores sirven los mismos
+  # streams —uno crudo y uno anotado por cámara, con la clave del slot en la ruta y
+  # no el `name`— y son independientes: se pueden usar los dos, uno o ninguno.
+  # Ninguno codifica un stream que nadie esté mirando.
+  http:
+    # MJPEG: http://<ip>:<puerto>/camera_1/raw y /camera_1/annotated. Es el stream
+    # liviano, el que abre una pestaña del navegador sin instalar nada.
+    enabled: true
+    port: 8091
+    jpeg_quality: 80            # 0–100; menos calidad = menos bytes por frame
+    frame_width_px: 960         # ancho al que se reduce antes de codificar; 0 = nativo
+    log_connections: true       # una línea de log por cliente que entra o sale del stream
+  rtsp:
+    # RTSP: rtsp://<ip>:<puerto>/camera_1/raw y /camera_1/annotated. Es el video de
+    # resolución completa, para un NVR o un reproductor. Necesita GStreamer con
+    # gst-rtsp-server instalado en el equipo: sin eso no levanta nada y lo avisa.
+    enabled: false
+    port: 8554
+    codec: h264_sw              # h264_sw | h264_hw | h265_sw | h265_hw | mjpeg
+    fps: 15                     # ritmo del stream; el de la cámara o más bajo
+    frame_width_px: 0           # ancho al que se escala antes de codificar; 0 = nativo
+    net_interfaces: []          # interfaces por las que se publica; [] = todas
+    log_connections: true       # una línea de log cuando un stream se abre y se cierra
+    # Los codecs `_hw` usan el encoder de la Jetson (nvv4l2*) y no existen en un
+    # x86. Los `_sw` codifican por CPU: son los que andan en cualquier equipo, y los
+    # que hacen que convenga bajar `fps` o `frame_width_px` con varias cámaras.
 
 image_collector:
   # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:

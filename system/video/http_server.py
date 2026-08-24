@@ -19,7 +19,7 @@ Cualquier cliente MJPEG los consume: el navegador abriendo la URL,
 Tres cosas cuidan el CPU y el ancho de banda, y las tres importan porque el feed
 crudo llega al ritmo de la cámara y la codificación corre en el hilo que empuja:
   - Sin clientes en un stream no se codifica nada: `push_*` sale enseguida.
-  - Cada frame se reduce a `http_video.frame_width_px` antes de codificar.
+  - Cada frame se reduce a `video.http.frame_width_px` antes de codificar.
   - Cada cliente recibe como máximo un frame cada `_SEND_PERIOD_S`.
 
 Es video de visualización, no de medición: lo que se mide se calcula sobre el
@@ -42,15 +42,19 @@ import numpy as np
 
 from system.config_manager import ConfigManager
 from system.logger import logger
-
-# (slot de cámara, modo): identifica un stream en todo el módulo.
-_StreamKey = tuple[str, str]
+from system.video.abstract_video_server import (
+    MODE_ANNOTATED,
+    MODE_RAW,
+    MODES,
+    STATUS_ACTIVE,
+    STATUS_DISABLED,
+    STATUS_ERROR,
+    AbstractVideoServer,
+    StreamKey,
+)
 
 _HOST = "0.0.0.0"
 _INFO_PATH = "/"
-_MODE_RAW = "raw"
-_MODE_ANNOTATED = "annotated"
-_MODES = (_MODE_RAW, _MODE_ANNOTATED)
 _BOUNDARY = "frame"             # separador multipart del stream MJPEG
 
 _DEFAULT_PORT = 8091
@@ -111,7 +115,7 @@ def _build_info_html(slots: tuple[str, ...]) -> bytes:
     """Página con un link por stream disponible."""
     links = "\n".join(
         f'<a href="/{slot}/{mode}">/{slot}/{mode}</a>'
-        for slot in slots for mode in _MODES
+        for slot in slots for mode in MODES
     ) or "<p>No hay cámaras configuradas.</p>"
     return f"""\
 <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -137,15 +141,15 @@ class _Subscribers:
     """
 
     def __init__(self):
-        self._leases: dict[_StreamKey, dict[int, float]] = {}
+        self._leases: dict[StreamKey, dict[int, float]] = {}
         self._lock = threading.Lock()
 
-    def touch(self, key: _StreamKey, token: int):
+    def touch(self, key: StreamKey, token: int):
         """Registra un cliente nuevo o renueva el lease de uno existente."""
         with self._lock:
             self._leases.setdefault(key, {})[token] = time.monotonic()
 
-    def unregister(self, key: _StreamKey, token: int) -> int:
+    def unregister(self, key: StreamKey, token: int) -> int:
         """Da de baja el lease. Devuelve los clientes que quedan en `key`."""
         with self._lock:
             leases = self._leases.get(key)
@@ -157,7 +161,7 @@ class _Subscribers:
                 return 0
             return self._count_locked(key)
 
-    def count(self, key: _StreamKey) -> int:
+    def count(self, key: StreamKey) -> int:
         with self._lock:
             return self._count_locked(key)
 
@@ -165,7 +169,7 @@ class _Subscribers:
         with self._lock:
             return sum(self._count_locked(key) for key in list(self._leases))
 
-    def _count_locked(self, key: _StreamKey) -> int:
+    def _count_locked(self, key: StreamKey) -> int:
         leases = self._leases.get(key)
         if not leases:
             return 0
@@ -186,8 +190,8 @@ class _FrameStore:
     """
 
     def __init__(self):
-        self._jpegs: dict[_StreamKey, bytes] = {}
-        self._seqs: dict[_StreamKey, int] = {}
+        self._jpegs: dict[StreamKey, bytes] = {}
+        self._seqs: dict[StreamKey, int] = {}
         self._is_closed = False
         self._cond = threading.Condition()
 
@@ -196,7 +200,7 @@ class _FrameStore:
         with self._cond:
             return self._is_closed
 
-    def update(self, key: _StreamKey, frame_bgr: np.ndarray, *,
+    def update(self, key: StreamKey, frame_bgr: np.ndarray, *,
                jpeg_quality: int = _DEFAULT_JPEG_QUALITY,
                frame_width_px: int = _DEFAULT_FRAME_WIDTH_PX):
         """Codifica el frame reducido y despierta a los clientes que esperan."""
@@ -211,18 +215,18 @@ class _FrameStore:
             self._seqs[key] = self._seqs.get(key, 0) + 1
             self._cond.notify_all()
 
-    def get(self, key: _StreamKey) -> tuple[bytes | None, int]:
+    def get(self, key: StreamKey) -> tuple[bytes | None, int]:
         """Último JPEG del stream y su número de secuencia."""
         with self._cond:
             return self._jpegs.get(key), self._seqs.get(key, 0)
 
-    def wait_for_change(self, key: _StreamKey, last_seq: int, timeout_s: float):
+    def wait_for_change(self, key: StreamKey, last_seq: int, timeout_s: float):
         """Duerme hasta que el stream tenga algo más nuevo que `last_seq`, o venza el timeout."""
         with self._cond:
             if self._seqs.get(key, 0) == last_seq and not self._is_closed:
                 self._cond.wait(timeout_s)
 
-    def clear(self, key: _StreamKey):
+    def clear(self, key: StreamKey):
         """Descarta el último JPEG del stream: sin clientes no hay para quién guardarlo."""
         with self._cond:
             self._jpegs.pop(key, None)
@@ -246,7 +250,7 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             self._send_info()
             return
         parts = self.path.strip("/").split("/")
-        if len(parts) == 2 and parts[0] in self.server.slots and parts[1] in _MODES:
+        if len(parts) == 2 and parts[0] in self.server.slots and parts[1] in MODES:
             self._send_stream((parts[0], parts[1]))
         else:
             self.send_error(404)
@@ -259,7 +263,7 @@ class _StreamingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html)
 
-    def _send_stream(self, key: _StreamKey):
+    def _send_stream(self, key: StreamKey):
         token = threading.get_ident()
         subs: _Subscribers = self.server.subscribers
         store: _FrameStore = self.server.frame_store
@@ -296,7 +300,7 @@ class _StreamingHandler(BaseHTTPRequestHandler):
                 f"— quedan {remaining} en este stream."
             )
 
-    def _pump_frames(self, key: _StreamKey, token: int):
+    def _pump_frames(self, key: StreamKey, token: int):
         """Envía frames hasta que el cliente corta o el servidor se detiene."""
         subs: _Subscribers = self.server.subscribers
         store: _FrameStore = self.server.frame_store
@@ -344,7 +348,7 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         La opción se lee en el momento: con varias pestañas reconectando, estas
         líneas tapan el resto del log, y apagarlas no tiene que exigir reiniciar.
         """
-        if self._config.get("http_video.log_connections", True):
+        if self._config.get("video.http.log_connections", True):
             logger.info(f"[HttpVideo] {message}")
 
     def handle_error(self, request: socket.socket, client_address: tuple):
@@ -361,68 +365,41 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         logger.exception(f"[HttpVideo] Error atendiendo a {client_address[0]}")
 
 
-class HttpVideoServer:
+class HttpVideoServer(AbstractVideoServer):
     """
     Publica los streams MJPEG de video por HTTP, en un hilo daemon propio.
 
-    Un stream por cámara y modo: `raw` es el frame de la cámara y `annotated` el
-    que dibuja la inferencia. Los slots salen de la sección `cameras` del config.
-
-    `push_raw` y `push_annotated` son thread-safe y están pensados para llamarse
-    desde los hilos de captura e inferencia: si nadie está mirando ese stream
-    salen sin codificar nada.
+    Implementa `AbstractVideoServer`: de ahí salen los modos, el vocabulario de
+    `status` y el gating por cliente. Acá está el transporte —un hilo por conexión—
+    y la codificación, que la paga el hilo que empuja el frame.
     """
 
     def __init__(self, config_manager: ConfigManager):
-        self._config = config_manager
+        super().__init__(config_manager)
         self._store = _FrameStore()
         self._subs = _Subscribers()
         self._server: _ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._is_active = False
-        self._status = "disabled"
-
-    @property
-    def status(self) -> str:
-        """Estado del servidor: 'disabled' | 'active' | 'error'."""
-        return self._status
-
-    # ── Publicación de frames ────────────────────────────────────────────────
-
-    def push_raw(self, camera_slot: str, frame_bgr: np.ndarray | None):
-        """Publica el frame crudo de una cámara. Llega al ritmo de la cámara."""
-        self._push((camera_slot, _MODE_RAW), frame_bgr)
-
-    def push_annotated(self, camera_slot: str, frame_bgr: np.ndarray | None):
-        """Publica el frame anotado de una cámara. Llega por ciclo de inferencia."""
-        self._push((camera_slot, _MODE_ANNOTATED), frame_bgr)
-
-    def has_raw_clients(self, camera_slot: str) -> bool:
-        """True si alguien está mirando el feed crudo de esa cámara."""
-        return self._subs.count((camera_slot, _MODE_RAW)) > 0
-
-    def has_annotated_clients(self, camera_slot: str) -> bool:
-        """
-        True si alguien está mirando el feed anotado de esa cámara.
-
-        Sirve para no dibujar las anotaciones cuando nadie las va a ver: eso cuesta
-        más que codificar el JPEG, y el push no puede evitarlo por sí solo.
-        """
-        return self._subs.count((camera_slot, _MODE_ANNOTATED)) > 0
 
     def get_client_count(self) -> int:
         """Clientes conectados, sumando todos los streams."""
         return self._subs.count_all()
 
-    def _push(self, key: _StreamKey, frame_bgr: np.ndarray | None):
+    # ── Publicación de frames ────────────────────────────────────────────────
+
+    def _is_watched(self, key: StreamKey) -> bool:
+        return self._subs.count(key) > 0
+
+    def _push(self, key: StreamKey, frame_bgr: np.ndarray | None):
         if not self._is_active or frame_bgr is None:
             return
         # El chequeo de clientes va antes de leer el config: esto corre por frame de
         # cámara, así que sin nadie mirando tiene que salir lo más barato posible.
-        if self._subs.count(key) == 0:
+        if not self._is_watched(key):
             return
-        jpeg_quality = self._config.get("http_video.jpeg_quality", _DEFAULT_JPEG_QUALITY)
-        frame_width_px = self._config.get("http_video.frame_width_px",
+        jpeg_quality = self._config.get("video.http.jpeg_quality", _DEFAULT_JPEG_QUALITY)
+        frame_width_px = self._config.get("video.http.frame_width_px",
                                           _DEFAULT_FRAME_WIDTH_PX)
         self._store.update(key, frame_bgr,
                            jpeg_quality=jpeg_quality, frame_width_px=frame_width_px)
@@ -431,13 +408,13 @@ class HttpVideoServer:
 
     def start(self):
         """Levanta el servidor si está habilitado. No propaga errores: los deja en `status`."""
-        if not self._config.get("http_video.enabled", False):
+        if not self._config.get("video.http.enabled", False):
             logger.info("[HttpVideo] Deshabilitado en configuración.")
-            self._status = "disabled"
+            self._status = STATUS_DISABLED
             return
 
-        slots = self._read_camera_slots()
-        if not slots:
+        self._slots = self._read_camera_slots()
+        if not self._slots:
             logger.warning("[HttpVideo] No hay cámaras en el config: no hay streams que servir.")
 
         # Estado por corrida: los hilos de la corrida anterior siguen apuntando a los
@@ -445,12 +422,12 @@ class HttpVideoServer:
         self._store = _FrameStore()
         self._subs = _Subscribers()
 
-        port = self._config.get("http_video.port", _DEFAULT_PORT)
+        port = self._config.get("video.http.port", _DEFAULT_PORT)
         try:
             server = _ThreadingHTTPServer((_HOST, port), self._store, self._subs,
-                                          slots, self._config)
+                                          self._slots, self._config)
         except OSError as e:
-            self._status = "error"
+            self._status = STATUS_ERROR
             logger.error(f"[HttpVideo] No se pudo iniciar en puerto {port}: {e}")
             return
 
@@ -462,10 +439,10 @@ class HttpVideoServer:
         )
         self._thread.start()
         self._is_active = True
-        self._status = "active"
+        self._status = STATUS_ACTIVE
         logger.info(f"[HttpVideo] Servidor activo en http://{_HOST}:{port}")
-        for slot in slots:
-            logger.info(f"[HttpVideo]   /{slot}/{_MODE_RAW} y /{slot}/{_MODE_ANNOTATED}")
+        for slot in self._slots:
+            logger.info(f"[HttpVideo]   /{slot}/{MODE_RAW} y /{slot}/{MODE_ANNOTATED}")
 
     def stop(self):
         """Detiene el servidor, corta los streams abiertos y libera el puerto. Idempotente."""
@@ -487,16 +464,5 @@ class HttpVideoServer:
             self._thread.join(timeout=_STOP_TIMEOUT_S)
             self._thread = None
 
-        self._status = "disabled"
+        self._status = STATUS_DISABLED
         logger.info("[HttpVideo] Servidor detenido.")
-
-    def _read_camera_slots(self) -> tuple[str, ...]:
-        """
-        Slots de la sección `cameras`, en el orden del archivo.
-
-        La clave del slot es la identidad de la cámara en todo el sistema, así que es
-        lo que va en la ruta. Van todos, habilitados o no: `enabled` cambia en
-        caliente y la ruta del stream no puede aparecer y desaparecer con eso.
-        """
-        cameras = self._config.get("cameras", {}) or {}
-        return tuple(cameras)
