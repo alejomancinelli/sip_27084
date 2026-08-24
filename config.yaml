@@ -34,6 +34,31 @@ http_video:
   frame_width_px: 960           # ancho al que se reduce antes de codificar; 0 = nativo
   log_connections: true         # una línea de log por cliente que entra o sale del stream
 
+image_collector:
+  # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:
+  # el frame de cámara en original/, el anotado en annotated/ y la metadata de
+  # inferencia en un .json al lado del anotado.
+  enabled: false                # se prende y se apaga en caliente
+  # on_demand: cada guardado lo pide el llamador con save_now(), que es lo que sirve
+  # cuando la inferencia corre cada varios minutos y la luz se enciende solo para la
+  # captura. interval: el recolector guarda por su cuenta un frame por cámara cada
+  # tanto, para los proyectos que infieren de continuo. Cambiar el modo exige
+  # reiniciar el recolector.
+  mode: on_demand               # on_demand | interval
+  interval_min_s: 60            # solo en modo interval: ventana al azar entre guardados
+  interval_max_s: 600           # iguales al mínimo = guardado periódico
+  max_images: 10000             # tope por cámara; al llegar se borra el guardado más viejo
+  min_free_space_gb: 5          # por debajo de esto se hace lugar y, si no alcanza, no se guarda
+  save_original: true
+  save_annotated: false
+  save_inference_json: true
+  dedup:
+    # Descarta el frame casi idéntico a uno de los últimos guardados de esa cámara,
+    # comparando el hash perceptual de la escena.
+    enabled: true
+    history_len: 5              # guardados contra los que se compara
+    hamming_threshold: 5        # 0–64 bits de diferencia; menos = más estricto
+
 cameras:
   # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
   # slot: es la identidad con la que la cámara aparece en el resto del sistema.
