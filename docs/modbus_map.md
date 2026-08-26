@@ -1,0 +1,25 @@
+# Mapa de registros Modbus
+
+Generado por `python -m system.modbus.export_map` desde `system/modbus/register_map.yaml`. No editar a mano: los cambios se hacen en el YAML y se vuelve a generar.
+
+Holding registers de sólo lectura (FC03), direccionamiento base-1: el registro N es el que el PLC lee como 4000N.
+
+Los valores con escala viajan multiplicados por ella: un registro con escala x10 y valor 415 son 41,5 en su unidad.
+
+| Registro | PLC | Nombre | Descripción | Unidad | Escala | Origen |
+|---|---|---|---|---|---|---|
+| 1 | 40001 | system_status_bitfield | Estado del sistema (bitfield) | - | - | health |
+| 2 | 40002 | com_status_bitfield | Canales de comunicación (bitfield) | - | - | health |
+| 51 | 40051 | camera_1_state_bitfield | Estado de la cámara 1 (bitfield) | - | - | health |
+| 52 | 40052 | camera_1_temperature_c | Temperatura de la cámara 1 | °C | x10 | health |
+| 53 | 40053 | camera_1_fps | Frames por segundo medidos de la cámara 1 | fps | x10 | health |
+| 54 | 40054 | camera_1_illumination_pct | Brillo medio del ROI de la cámara 1 | % | - | inference |
+| 81 | 40081 | heartbeat | Heartbeat / watchdog — cambia en cada ciclo mientras la app viva | - | - | health |
+| 82 | 40082 | cpu_usage_pct | CPU en uso | % | - | health |
+| 83 | 40083 | gpu_usage_pct | GPU en uso | % | - | health |
+| 84 | 40084 | ram_used_mb | RAM usada | MB | - | health |
+| 85 | 40085 | ram_total_mb | RAM total del equipo | MB | - | health |
+| 86 | 40086 | disk_free_gb | Espacio libre en disco | GB | x10 | health |
+| 87 | 40087 | cpu_temp_c | Temperatura de CPU | °C | x10 | health |
+| 88 | 40088 | gpu_temp_c | Temperatura de GPU | °C | x10 | health |
+| 89 | 40089 | power_w | Consumo estimado | W | x10 | health |

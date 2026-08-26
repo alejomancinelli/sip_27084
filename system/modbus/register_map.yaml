@@ -1,0 +1,139 @@
+# Mapa de registros Modbus — específico de la instalación.
+#
+# Es la fuente ÚNICA de verdad del mapa: de acá salen la tabla de la UI, la
+# documentación para el integrador (`python -m system.modbus.export_map`) y las
+# direcciones que el código pide por nombre con `SCHEMA.addr("...")`. Ninguna
+# dirección se escribe como literal en otro archivo.
+#
+# Direccionamiento BASE-1: el registro 1 es el primer holding register, el que el
+# PLC lee como 40001. Regla única: **reg N ⇔ 4000N**, sin off-by-one que traducir
+# entre el código, la documentación y el integrador.
+#
+# Campos de cada entrada (ver `system/modbus/schema.py`):
+#   addr      dirección base-1, única
+#   name      id corto y único; es el nombre con el que el código lo pide
+#   desc      texto humano; va a la UI y a la doc del integrador
+#   producer  inference | health | config — quién escribe el registro
+#   scale     registro = round(valor * scale). El productor entrega el valor
+#             físico y el esquema escala; nadie multiplica por su cuenta.
+#   unit      unidad del valor SIN escalar, para la doc
+#   is_bool   codifica como 0/1
+#
+# Las filas `config` son un espejo R/W que el PLC puede escribir; este mapa no
+# declara ninguna, porque en el template la configuración se edita sólo en el
+# equipo. Los campos config_key / default / apply / mirror_from_config sólo
+# aplican a esas filas.
+#
+# Este archivo es lo que cambia en cada fork. La maquinaria que lo lee, no.
+
+# ── Palabras de estado (1-2) ─────────────────────────────────────────────────
+- addr: 1
+  name: system_status_bitfield
+  desc: Estado del sistema (bitfield)
+  producer: health
+
+- addr: 2
+  name: com_status_bitfield
+  desc: Canales de comunicación (bitfield)
+  producer: health
+
+# ── Resultados de inferencia (3-50) ──────────────────────────────────────────
+# Rango reservado, sin filas: qué publica la inferencia es lo más específico de
+# cada proyecto y todavía no hay `system/inference/` en el template. El fork
+# agrega acá sus filas con `producer: inference`.
+#
+# Al hacerlo, mantener INMUTABLE el mapeo posición → registro: si el resultado son
+# fracciones por clase, el registro reporta siempre el mismo slot, y renombrar una
+# clase o mover un umbral no cambia qué registro la transporta. El PLC no se
+# reprograma porque en el equipo se haya editado un nombre.
+
+# ── Cámaras (51-80) ──────────────────────────────────────────────────────────
+# Bloque de 4 registros por cámara, con paso fijo: `camera_N` arranca en
+# 51 + 4*(N-1) — camera_1 en 51, camera_2 en 55, camera_3 en 59, y así hasta
+# camera_7 en 75. Abajo va sólo camera_1 como ejemplo: el fork copia el bloque y
+# corre las direcciones para las cámaras que tenga declaradas en `cameras` del
+# config.yaml.
+- addr: 51
+  name: camera_1_state_bitfield
+  desc: Estado de la cámara 1 (bitfield)
+  producer: health
+
+- addr: 52
+  name: camera_1_temperature_c
+  desc: Temperatura de la cámara 1
+  producer: health
+  unit: °C
+  scale: 10
+
+- addr: 53
+  name: camera_1_fps
+  desc: Frames por segundo medidos de la cámara 1
+  producer: health
+  unit: fps
+  scale: 10
+
+- addr: 54
+  name: camera_1_illumination_pct
+  desc: Brillo medio del ROI de la cámara 1
+  producer: inference
+  unit: '%'
+
+# ── Salud del equipo (81-99) ─────────────────────────────────────────────────
+# Las claves espejan las de `SystemMonitor.get_metrics()`, para que el productor
+# no tenga que traducir nombres en el camino.
+- addr: 81
+  name: heartbeat
+  desc: Heartbeat / watchdog — cambia en cada ciclo mientras la app viva
+  producer: health
+
+- addr: 82
+  name: cpu_usage_pct
+  desc: CPU en uso
+  producer: health
+  unit: '%'
+
+- addr: 83
+  name: gpu_usage_pct
+  desc: GPU en uso
+  producer: health
+  unit: '%'
+
+- addr: 84
+  name: ram_used_mb
+  desc: RAM usada
+  producer: health
+  unit: MB
+
+- addr: 85
+  name: ram_total_mb
+  desc: RAM total del equipo
+  producer: health
+  unit: MB
+
+- addr: 86
+  name: disk_free_gb
+  desc: Espacio libre en disco
+  producer: health
+  unit: GB
+  scale: 10
+
+- addr: 87
+  name: cpu_temp_c
+  desc: Temperatura de CPU
+  producer: health
+  unit: °C
+  scale: 10
+
+- addr: 88
+  name: gpu_temp_c
+  desc: Temperatura de GPU
+  producer: health
+  unit: °C
+  scale: 10
+
+- addr: 89
+  name: power_w
+  desc: Consumo estimado
+  producer: health
+  unit: W
+  scale: 10

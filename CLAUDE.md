@@ -36,9 +36,19 @@ Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+      formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
+        camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
+        com_status.py         un bit por canal de salida que está andando
+        system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
         conditions.py         módulo puro: predicados sobre el dict de inferencia
+      modbus/
+        schema.py             nivel 1 — maquinaria del mapa: carga, escalas, espejo R/W
+        register_map.yaml     el mapa concreto; es lo que cambia en cada instalación
+        registers.py          carga el YAML al importar y expone el SCHEMA validado
+        server.py             servidor esclavo TCP + RTU sobre un datastore en RAM
+        export_map.py         genera docs/modbus_map.{md,csv} desde el YAML
       telemetry/
         persistence.py        junta puntos en una ventana y los escribe en batch
         backends/
@@ -64,6 +74,7 @@ Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
     manual_test/              pruebas con hardware, cada una con su config.yaml
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
+    docs/                     documentos con público propio; hoy, el mapa Modbus generado
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -79,6 +90,11 @@ Son punteros: el contrato vive en el archivo, no acá.
   forma del registro (`measurement`, `tags`, `fields`, `time`) y los `STATUS_*`.
 - **Servidor de video** — `system/video/abstract_video_server.py`: un stream por
   cámara y modo, el vocabulario de `status` y el gating por cliente conectado.
+- **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
+  el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
+  El mapa concreto es `system/modbus/register_map.yaml`.
+- **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
+  documenta qué significa cada bit. Nadie corre bits afuera.
 - **Configuración** — `system/config_manager.py`: rutas punteadas, copias en la
   entrega, config de rescate.
 - **Señales de Qt** — cada una documenta su payload y su frecuencia donde se declara.
@@ -103,6 +119,21 @@ Lo que no se deduce leyendo un archivo suelto:
   necesita GStreamer instalado en el equipo.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
   instante en que se midió, no con el de la escritura.
+- **El mapa Modbus es un archivo de datos, no código.** Vive en
+  `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
+  es fuente única: la tabla que lee el integrador se genera con
+  `python -m system.modbus.export_map` y no se edita a mano. Direccionamiento
+  base-1, regla única **reg N ⇔ 4000N**, y ninguna dirección se escribe como
+  literal fuera de `system/modbus/`: se pide con `SCHEMA.addr("nombre")`.
+- El mapa se sirve de **sólo lectura**: el PLC lee con FC03 y la app escribe desde
+  adentro. Las demás funciones se rechazan con 0x02 en vez de contestar un valor
+  que parezca una medición. El bloque de configuración escribible por el PLC existe
+  en la maquinaria pero el template no lo usa.
+- Las escalas son del esquema, no del productor: quien mide entrega el valor físico
+  a `SCHEMA.encode()` y el registro sale escalado y saturado a uint16.
+- Modbus TCP y RTU comparten el datastore y son independientes: el que no levanta
+  deja el motivo en su `status` y no tumba al otro. El RTU es el que se apaga por
+  defecto, porque necesita el puerto serie libre.
 - Un módulo al que le falta su librería de sistema degrada a no-op adentro y expone
   la misma API. El llamador no pregunta si está disponible.
 - `ui/` no lo importa nadie de `system/` ni de `tools/`.
@@ -110,8 +141,10 @@ Lo que no se deduce leyendo un archivo suelto:
 ## Qué todavía no existe
 
 - **`main.py`**: no hay composition root; hoy nadie cablea los subsistemas entre sí.
-- `system/modbus/` (servidor, schema, mapa de registros), `system/formats/`
-  (bitfields de estado), `system/inference/`, `ui/`.
+  Es lo que falta para que el Modbus publique algo: el servidor y el mapa están,
+  pero nadie llena los registros todavía.
+- `system/inference/` y `ui/`. Por eso el rango 3-50 del mapa de registros está
+  reservado y vacío: qué publica la inferencia es lo más específico de cada fork.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
 
@@ -119,8 +152,8 @@ Lo que no se deduce leyendo un archivo suelto:
 
 - El contrato de un módulo → su docstring, en la misma edición que el código.
 - El mapa, las decisiones y lo que falta → este archivo.
-- Un documento con público propio —mapa de registros Modbus, notas de puesta en
-  marcha— → `docs/`, que nace con su primer documento.
+- Un documento con público propio —notas de puesta en marcha, un protocolo nuevo—
+  → `docs/`. El mapa de registros ya vive ahí, y es generado: se edita el YAML.
 - Convenciones → las skills. No se copian acá.
 
 Un subsistema gana carpeta propia cuando tiene más de un archivo; hasta entonces es

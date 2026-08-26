@@ -97,6 +97,29 @@ telemetry:
     user: ''                    # vacío = sin autenticación
     topic_base: PROJECT_ID      # prefijo de todos los tópicos del equipo
 
+modbus:
+  # Servidor esclavo de sólo lectura: el PLC lee los holding registers con FC03 y
+  # la app los escribe desde adentro. Los dos transportes comparten el mismo
+  # datastore, así que el PLC ve los mismos valores por el cable que sea, y son
+  # independientes: se pueden usar los dos, uno o ninguno.
+  #
+  # El mapa de registros NO va acá: vive en system/modbus/register_map.yaml, que es
+  # el archivo que cambia en cada instalación. La copia para el integrador se genera
+  # con `python -m system.modbus.export_map`.
+  slave_id: 1                   # 1–247; el único unit id al que contesta el equipo
+  register_count: 100           # registros expuestos: 1–N, o 40001–4000N para el PLC
+  tcp:
+    enabled: true
+    host: 0.0.0.0               # interfaz por la que escucha; 0.0.0.0 = todas
+    port: 502                   # por debajo de 1024 Linux pide privilegios
+  rtu:
+    # RS-485. Necesita el puerto serie libre: si no levanta, el TCP sigue solo.
+    enabled: false
+    port: COM1                  # COM1 en Windows, /dev/ttyS0 en Linux
+    baudrate: 115200
+    parity: N                   # N | E | O
+    stop_bits: 1
+
 cameras:
   # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
   # slot: es la identidad con la que la cámara aparece en el resto del sistema.

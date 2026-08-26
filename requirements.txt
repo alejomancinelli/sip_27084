@@ -41,6 +41,17 @@ pypylon>=2.1.0
 # Se deja asentado acá porque es una dependencia real de la app, aunque pip no la
 # pueda resolver.
 
+# Servidor Modbus esclavo (system/modbus). Por debajo de la 3.8 el contexto del
+# servidor se arma con `slaves=` en vez de `devices=`, y en la 4.0 desaparece
+# ModbusSimulatorContext a favor de SimData/SimDevice: las dos puntas del rango
+# están fijadas por la API que usa system/modbus/server.py.
+pymodbus>=3.8,<4
+
+# pymodbus no declara ninguna dependencia dura: el soporte de puerto serie es un
+# extra. Sin pyserial el servidor Modbus RTU falla al arrancar —el TCP no lo
+# necesita— y el motivo que se lee en el log es la librería faltante, no el puerto.
+pyserial>=3.5
+
 # Backends de telemetría (system/telemetry/backends). Los dos son opcionales: sin la
 # librería instalada el backend degrada a no-op y lo avisa por `status`, así que
 # se pueden sacar de acá en una instalación que no publique hacia afuera.
