@@ -38,9 +38,9 @@
   producer: health
 
 # ── Resultados de inferencia (3-50) ──────────────────────────────────────────
-# Rango reservado, sin filas: qué publica la inferencia es lo más específico de
-# cada proyecto y todavía no hay `system/inference/` en el template. El fork
-# agrega acá sus filas con `producer: inference`.
+# Rango reservado, sin filas: el motor de inferencia ya corre, pero qué publica es lo
+# más específico de cada proyecto y sale de `metrics.compute_metrics`, que se escribe
+# en cada fork. El fork agrega acá sus filas con `producer: inference`.
 #
 # Al hacerlo, mantener INMUTABLE el mapeo posición → registro: si el resultado son
 # fracciones por clase, el registro reporta siempre el mismo slot, y renombrar una

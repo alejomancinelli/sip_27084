@@ -51,6 +51,88 @@ video:
     # Los codecs `_hw` usan el encoder de la Jetson (nvv4l2*) y no existen en un
     # x86. Los `_sw` codifican por CPU: son los que andan en cualquier equipo, y los
     # que hacen que convenga bajar `fps` o `frame_width_px` con varias cámaras.
+  display:
+    # Ajuste de imagen para que la vea una persona (tools/image/enhance.py). Va sólo en el
+    # camino de visualización —los dos streams y la UI—: el modelo y el dataset siguen
+    # recibiendo el frame crudo, porque el dataset es con lo que se reentrena. Si lo que se
+    # busca es que el modelo vea la imagen ajustada, eso es el `preprocessor` del motor.
+    gamma: 1.0                  # <1 levanta las sombras, >1 las hunde; 1.0 = sin cambio
+    clahe_clip: 0.0             # contraste local 0–8; 0 = apagado, cuesta bastante más que gamma
+
+process:
+  # Parámetros de lo que se mide en ESTA instalación: escalas, umbrales, límites. Es la
+  # sección que se reescribe entera en cada fork y la única cuya forma cambia entre
+  # proyectos.
+  #
+  # Ningún módulo de la maquinaria la lee: la lee `main.py` y se la pasa al analyzer
+  # (system/inference/metrics.py) y a los annotators (system/inference/annotations.py), que
+  # así se siguen testeando con tres números y sin archivo. Un valor obligatorio que falte
+  # tiene que frenar el arranque: publicar milímetros calculados con una escala inventada
+  # es peor que no arrancar.
+  #
+  # Los valores por cámara van como mapas con la clave del slot. Un proyecto con más de un
+  # proceso abre una sub-sección por proceso —`process.<nombre>`— y cada analyzer recibe
+  # la suya.
+  scale_px_per_mm: {}           # {camera_1: 3.2} — calibración; sin esto no hay medidas físicas
+  max_load_y_px: {}             # {camera_1: 430} — altura del límite de carga de la cinta
+  min_load_pct: 0               # por debajo de esto la carga se reporta como insuficiente
+
+inference:
+  # Un hilo por pipeline: todas las cámaras de un mismo pipeline lo comparten, así que
+  # los pesos se cargan una sola vez y el acceso a la GPU queda serializado. Dos
+  # pipelines distintos son dos hilos y sí corren en paralelo.
+  #
+  # EL ORDEN DE LAS ETAPAS NO ESTÁ ACÁ: el pipeline se programa en
+  # system/inference/pipeline.py, porque encadenar dos modelos es lógica del proceso —qué
+  # recorta el segundo, qué hace con lo que encontró el primero—. Acá va de dónde sale
+  # cada modelo y qué cámaras entran a cada pipeline.
+  #
+  # El ROI y el mínimo de iluminación son de la cámara y viven en su sección: se recorta
+  # y se mide antes de gastar una pasada del modelo.
+  overlay:
+    # Dibujado del resultado sobre el frame. Sale una sola vez y el mismo array viaja a
+    # la UI, al stream `annotated` y al dataset.
+    enabled: true
+    draw_boxes: true
+    draw_masks: true            # sólo hace algo si el modelo devuelve máscaras
+    draw_labels: true           # nombre de clase y confianza sobre cada caja
+    draw_summary: true          # panel con tiempo de inferencia, confianza, detecciones y métricas
+    draw_roi: true              # recuadro de la zona que se analizó
+    draw_timestamp: true
+    font_scale: 0.6
+    thickness: 2
+    class_colors_bgr: []        # [[B,G,R], ...] por índice de clase; [] = paleta del módulo
+  pipelines:
+    # Una entrada por pipeline, numeradas pipeline_1 … pipeline_N. La clave es el slot:
+    # es la identidad con la que el pipeline aparece en el resto del sistema.
+    pipeline_1:
+      enabled: true
+      cameras: [camera_1]       # cámaras que entran a este hilo; [] = todas las que le pusheen
+      interval_s: 0.0           # período mínimo entre frames de una misma cámara; 0 = todos
+      # Umbrales del resultado completo, no de cada detección: por debajo, el resultado se
+      # emite igual pero marcado como no confiable, y sus números no se publican como
+      # medición. El descarte por detección es del modelo (`min_confidence_pct`).
+      min_detections: 0         # menos detecciones que esto = resultado no confiable
+      min_result_confidence_pct: 0   # confianza media por debajo de esto = resultado no confiable
+      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame
+      # El motor no lee `frames_per_cycle`: emite un resultado por frame y no promedia. Lo
+      # lee quien orquesta el ciclo —hoy main.py, mañana el scheduler de captura—, que junta
+      # esos N resultados y los agrega con `analysis.summarize_metrics` (media, desvío y
+      # rango) y `analysis.pick_representative` (qué frame se guarda y se muestra).
+  models:
+    # Una entrada por modelo, numeradas model_1 … model_N. El slot es el nombre con el que
+    # el pipeline pide el modelo en `model_slots`.
+    model_1:
+      type: mock                # ver REGISTERED_MODELS en model_factory.py
+      path: ''                  # pesos del modelo; relativo a la raíz del repo
+      device: auto              # auto | cpu | cuda
+      min_confidence_pct: 50    # descarta la detección; lo aplica el modelo, no el llamador
+      max_side_px: 0            # lado mayor al que se reduce antes de inferir; 0 = nativo
+      class_names: []           # nombre por índice de clase; [] = 'class_<i>'
+      params: {}                # extras propios del framework
+      # En un proyecto que cuenta cientos de objetos `min_confidence_pct` va bajo a
+      # propósito: el que juzga si el conjunto sirve es el umbral del pipeline, sobre la
+      # confianza promediada.
 
 image_collector:
   # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:
@@ -142,3 +224,10 @@ cameras:
       width_px: 0
       height_px: 0
     illumination_min: 50        # brillo medio mínimo del ROI 0–100
+    calibration:
+      # Intrínsecos del lente, para corregir la distorsión (tools/image/undistort.py). Son
+      # del lente y del montaje, no del proceso. Con esto declarado, main.py le pasa al
+      # motor el preprocessor y la imagen corregida pasa a ser el frame de referencia: la
+      # que ve el modelo, la que se anota y la que define el espacio del ROI.
+      camera_matrix: []         # 3x3; [] = sin corrección
+      dist_coeffs: []           # 4, 5, 8, 12 o 14 coeficientes
