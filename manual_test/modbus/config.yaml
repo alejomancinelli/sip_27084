@@ -1,0 +1,28 @@
+# Config de las dos pruebas manuales de Modbus, separada del config.yaml de la app.
+#
+# Un solo archivo para las dos porque cada transporte tiene su propia sección: la
+# prueba de TCP lee `modbus.tcp` y la de RTU lee `modbus.rtu`. Las dos secciones
+# quedan en `enabled: true` y cada script apaga en memoria la del otro transporte
+# antes de levantar el servidor, así que no hay que editar nada para pasar de una
+# prueba a la otra.
+#
+# El puerto TCP va distinto al de la app a propósito: así la prueba se puede correr
+# con el sistema andando, sin pelearse por el 502 —que además en Linux pide
+# privilegios.
+
+modbus:
+  slave_id: 1                   # el unit id que hay que pedirle desde el cliente
+  register_count: 100           # registros expuestos: 1–100, o 40001–40100 para el PLC
+  tcp:
+    enabled: true
+    host: 0.0.0.0               # 127.0.0.1 para que no salga del equipo
+    port: 5502                  # > 1024: no pide privilegios en Linux
+  rtu:
+    enabled: true
+    # En un equipo sin PLC hace falta un par de puertos serie virtuales:
+    #   Windows: com0com crea COM10 <-> COM11; el script toma uno y el cliente el otro
+    #   Linux:   socat -d -d pty,raw,echo=0 pty,raw,echo=0
+    port: COM10                 # /dev/ttyS0 o el pty que devuelva socat, en Linux
+    baudrate: 115200
+    parity: N                   # N | E | O
+    stop_bits: 1
