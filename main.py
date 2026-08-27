@@ -50,17 +50,18 @@ Lo que **no** hace, y por qué:
     valores físicos.
   - **No dibuja.** El overlay es del motor; las referencias de la planta son annotators.
 
-Los cinco puntos de extensión del motor, y de dónde sale cada uno:
+Los seis puntos de extensión del motor, y de dónde sale cada uno:
 
     preprocessor    `tools/image/undistort.py`, si alguna cámara declara calibración
     pipeline        `system/inference/pipeline.py`, que el fork reescribe
+    classifier      qué detecciones cuentan y con qué clase, compuesto abajo con `process:`
     analyzer        `system/inference/metrics.py`, que el fork reescribe
     annotator       `system/inference/annotations.py`, compuesto abajo con `process:`
     annotate_gate   acá: se dibuja si lo mira la UI o un cliente del stream anotado
 
-**Qué toca el fork.** Los tres métodos del bloque «Lo que cambia en cada fork»: qué mira
-el operador, qué se dibuja además del resultado, y con qué parámetros se cuenta. El resto
-es cableado genérico y se cross-portea sin editar.
+**Qué toca el fork.** Los cuatro métodos del bloque «Lo que cambia en cada fork»: qué mira
+el operador, qué detecciones cuentan, qué se dibuja además del resultado, y con qué
+parámetros se cuenta. El resto es cableado genérico y se cross-portea sin editar.
 
 Cómo llegan los números al PLC: se publican los registros de salud —heartbeat, hardware,
 estado por cámara, palabras de estado— y, de las métricas del analyzer, **las que tengan
@@ -429,6 +430,7 @@ class Application(QObject):
         # el hilo, así los pesos se cargan una vez y el acceso a la GPU queda
         # serializado por construcción.
         preprocessor = self._build_preprocessor()
+        classifier = self._build_classifier()
         analyzer = self._build_analyzer()
         annotator = self._build_annotator()
         self._engines: list[InferenceThread] = []
@@ -439,6 +441,7 @@ class Application(QObject):
             engine = InferenceThread(
                 config, Pipeline(config, pipeline_slot),
                 preprocessor=preprocessor,
+                classifier=classifier,
                 analyzer=analyzer,
                 annotator=annotator,
                 annotate_gate=self._is_annotated_watched,
@@ -472,9 +475,10 @@ class Application(QObject):
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
-    # Tres decisiones del proyecto, juntas y marcadas para que un diff las muestre de
-    # una: qué mira el operador, con qué parámetros se cuenta, y qué se dibuja además
-    # del resultado. Todo lo demás de este archivo es cableado genérico.
+    # Cuatro decisiones del proyecto, juntas y marcadas para que un diff las muestre de
+    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta, y
+    # qué se dibuja además del resultado. Todo lo demás de este archivo es cableado
+    # genérico.
 
     def _build_monitor_content(self) -> QWidget:
         """
@@ -491,6 +495,21 @@ class Application(QObject):
         from ui.widgets.camera_grid import CameraGrid
 
         return CameraGrid(self._config)
+
+    def _build_classifier(self):
+        """
+        Qué detecciones cuentan y con qué clase. El template no filtra ni reetiqueta.
+
+        Es donde va lo que depende de la cámara y el modelo no puede saber, porque es uno
+        solo para todas las del pipeline: una escala de píxel, un filtro de tamaño, una
+        clase que sale de la medida. Recibe `(detections, camera_slot)` y devuelve las que
+        quedan; lo que descarte no cuenta para la confianza ni para `min_detections`, y la
+        clase que deje en `class_index` es la que colorea el overlay.
+
+        Se arma con los mismos valores de `process:` que el analyzer, leídos una sola vez,
+        para que lo que se dibuja y lo que se mide no puedan discrepar.
+        """
+        return None
 
     def _build_analyzer(self):
         """

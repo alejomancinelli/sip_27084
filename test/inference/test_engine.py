@@ -383,6 +383,78 @@ class TestPreprocessor:
 
 # ── Validez del resultado ────────────────────────────────────────────────────
 
+class TestClassifier:
+    def test_without_a_classifier_the_detections_pass_through(self):
+        result = _process_one(_engine(_FakePipeline([(0, 90.0, (0, 0, 5, 5))])), _frame())
+        assert result.detection_count == 1
+
+    def test_it_receives_the_camera_slot(self):
+        """Es la identidad que el modelo no tiene: uno solo sirve a todas las cámaras."""
+        seen = []
+
+        def classifier(detections, camera_slot):
+            seen.append(camera_slot)
+            return detections
+
+        _process_one(_engine(_FakePipeline(), classifier=classifier), _frame(), _OTHER_SLOT)
+        assert seen == [_OTHER_SLOT]
+
+    def test_it_receives_the_detections_in_reference_frame_space(self):
+        """Está calibrado en ese espacio: recibirlas en el del ROI las movería."""
+        config = _MockConfig(**{f"cameras.{_SLOT}.roi": {
+            "enabled": True, "x_px": 20, "y_px": 10, "width_px": 60, "height_px": 40}})
+        seen = []
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 5, 5))]), config,
+                         classifier=lambda detections, slot: seen.append(
+                             detections[0].bbox_px) or detections)
+        _process_one(engine, _frame())
+        assert seen == [(20, 10, 25, 15)]
+
+    def test_what_it_drops_does_not_reach_the_result(self):
+        pipeline = _FakePipeline([(0, 90.0, (0, 0, 5, 5)), (1, 90.0, (6, 6, 10, 10))])
+        engine = _engine(pipeline, classifier=lambda detections, slot: detections[:1])
+        assert _process_one(engine, _frame()).detection_count == 1
+
+    def test_what_it_drops_does_not_drag_the_confidence(self):
+        """Filtrar después del promedio dejaría la confianza de detecciones descartadas."""
+        pipeline = _FakePipeline([(0, 90.0, (0, 0, 5, 5)), (1, 10.0, (6, 6, 10, 10))])
+        engine = _engine(pipeline, classifier=lambda detections, slot: detections[:1])
+        assert _process_one(engine, _frame()).confidence_pct == 90.0
+
+    def test_what_it_drops_does_not_count_for_min_detections(self):
+        config = _MockConfig(**{f"inference.pipelines.{_PIPELINE}.min_detections": 2})
+        pipeline = _FakePipeline([(0, 90.0, (0, 0, 5, 5)), (1, 90.0, (6, 6, 10, 10))])
+        engine = _engine(pipeline, config, classifier=lambda detections, slot: detections[:1])
+        result = _process_one(engine, _frame())
+        assert (result.is_valid, result.invalid_reason) == (False, REASON_FEW_DETECTIONS)
+
+    def test_the_class_it_stamps_travels_in_the_result(self):
+        """Es lo que después colorea el overlay y cuenta `analysis.count_by_class`."""
+        def classifier(detections, camera_slot):
+            for detection in detections:
+                detection.class_index = 3
+                detection.class_name = "coarse"
+            return detections
+
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 5, 5))]), classifier=classifier)
+        detection = _process_one(engine, _frame()).detections[0]
+        assert (detection.class_index, detection.class_name) == (3, "coarse")
+
+    def test_dropping_everything_leaves_no_detections(self):
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 5, 5))]),
+                         classifier=lambda detections, slot: None)
+        assert _process_one(engine, _frame()).detections == []
+
+    def test_a_failing_classifier_does_not_break_the_result(self):
+        def broken_classifier(detections, camera_slot):
+            raise ValueError("escala sin configurar")
+
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 5, 5))]),
+                         classifier=broken_classifier)
+        result = _process_one(engine, _frame())
+        assert (result.is_valid, result.detection_count) == (True, 1)
+
+
 class TestValidity:
     def test_a_full_result_is_valid(self):
         result = _process_one(_engine(_FakePipeline([(0, 90.0, (0, 0, 10, 10))])), _frame())

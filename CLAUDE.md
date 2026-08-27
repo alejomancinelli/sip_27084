@@ -144,6 +144,9 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Preprocessor** — `system/inference/engine.py`: `(frame, camera_slot) -> frame`, y lo
   que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
   está en `tools/image/undistort.py`.
+- **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
+  entre el pipeline y el promedio de confianza. Es donde entra lo calibrado por cámara, que
+  el modelo no puede aplicar porque es uno solo para todas las del pipeline.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
@@ -333,8 +336,8 @@ cross-portea; si describe qué se mide en esta planta, es del fork.**
 - **Todo lo demás es maquinaria.** Si hay que editarla para que el fork funcione,
   el límite está mal puesto: lo que falta es un punto de extensión, no un parche.
 
-Los cuatro puntos de extensión del motor de inferencia —`pipeline`, `analyzer`,
-`annotator`, `annotate_gate`— entran por su constructor y los cablea `main.py`.
+Los cinco puntos de extensión del motor de inferencia —`pipeline`, `classifier`,
+`analyzer`, `annotator`, `annotate_gate`— entran por su constructor y los cablea `main.py`.
 La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
