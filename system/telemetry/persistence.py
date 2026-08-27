@@ -14,10 +14,12 @@ los backends:
     measurement : str    nombre de la serie
     tags        : dict   etiquetas
     fields      : dict   valores medidos
-    time        : float  epoch en segundos, sellado al encolar
+    time        : float  epoch en segundos: el del `push_data()`, o el que se le pase
 
 El sello es el del `push_data()` y no el de la escritura: el valor vale por cuándo
-se midió, y entre las dos cosas puede pasar una ventana entera.
+se midió, y entre las dos cosas puede pasar una ventana entera. Quien publique un
+punto que midió antes —un ciclo que agrega varios resultados y sale por un timer—
+pasa el instante real en `time_s` en vez de dejar el del llamado.
 
 Un backend es cualquier AbstractTelemetryBackend; el contrato está en su módulo.
 Por defecto se arman los del repo —InfluxDB y MQTT—, que se deshabilitan solos si
@@ -81,14 +83,20 @@ class PersistenceThread(QThread):
 
     # ── API pública ──────────────────────────────────────────────────────────
 
-    def push_data(self, measurement: str, fields: dict, *, tags: dict | None = None):
+    def push_data(self, measurement: str, fields: dict, *, tags: dict | None = None,
+                  time_s: float | None = None):
         """
         Encola un punto de telemetría, sellado con la hora de este llamado.
+
+        `time_s` sella el punto con otro instante, para cuando el que publica no es el que
+        midió: un ciclo que junta varios resultados y sale por un timer sellaría todo con
+        la hora del timer, corriendo el dato hasta una ventana entera. Con el instante de
+        la medición, la serie queda donde corresponde.
 
         No bloquea ni levanta: con la cola llena el punto se descarta.
         """
         record = {"measurement": measurement, "tags": tags or {}, "fields": fields,
-                  "time": time.time()}
+                  "time": time.time() if time_s is None else float(time_s)}
         try:
             self._queue.put_nowait(record)
         except queue.Full:

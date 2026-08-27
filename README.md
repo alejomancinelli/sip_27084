@@ -18,13 +18,79 @@ El intérprete del proyecto es el del venv, **no** el `python` del PATH:
     .venv\Scripts\python.exe -m pytest -q          # Windows
     .venv/bin/python -m pytest -q                  # Linux
 
+Y la aplicación, con o sin ventana:
+
+    .venv\Scripts\python.exe main.py                    # con interfaz
+    .venv/bin/python main.py --headless                 # sin ventana
+    .venv/bin/python main.py otro-config.yaml           # otro archivo de config
+
+El modo headless también se fija con `ui.enabled: false` en el config —el flag manda sobre
+la clave— y es el de un equipo en gabinete, un servicio del sistema o un contenedor sin
+X11. Cablea exactamente lo mismo: Qt hace falta igual porque las señales son el vínculo
+entre los hilos.
+
 Python 3.10 de 64 bits. La suite completa corre sin hardware, sin GUI y sin red. Lo que
 sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su `config.yaml` al lado.
 
+## Cómo se crea el repo del proyecto
+
+Una aclaración de vocabulario antes: en este repo y en `CLAUDE.md`, **«fork» significa
+proyecto derivado** —la instalación de una planta—, y no el fork de GitHub. Son cosas
+distintas, y justamente el fork de GitHub es el que **no** conviene usar.
+
+**No con un fork de GitHub**, por dos razones: GitHub no deja forkear un repo a la misma
+cuenta que ya lo tiene, y —la que importa— **el fork de un repo público es público y no se
+puede volver privado**, así que el `config.yaml`, el mapa de registros y los parámetros de
+la planta del cliente quedarían expuestos.
+
+Dos formas que sí sirven, y la diferencia entre las dos es la historia:
+
+| | «Use this template» | Copia espejo |
+|---|---|---|
+| Cómo | Settings → General → ✅ *Template repository*, después el botón «Use this template» | los comandos de abajo |
+| Historia | **un solo commit inicial** | **completa** |
+| `git merge template/main` | falla: *refusing to merge unrelated histories* | funciona |
+| Traer maquinaria nueva | sólo cherry-pick, a mano | merge normal |
+
+Esa fila de la historia decide: sin ancestro común, cada mejora del template se cross-portea
+a mano para siempre. **Copia espejo**, entonces:
+
+```bash
+# 1. En GitHub: crear el repo del proyecto VACÍO (sin README, sin .gitignore, sin licencia)
+
+# 2. Copia espejo del template al repo nuevo
+git clone --bare https://github.com/alejomancinelli/cv_projects_template.git
+cd cv_projects_template.git
+git push --mirror https://github.com/<cuenta>/<mi-proyecto>.git
+cd .. && rm -rf cv_projects_template.git
+
+# 3. Clonar el proyecto y enganchar el template como remoto
+git clone https://github.com/<cuenta>/<mi-proyecto>.git
+cd <mi-proyecto>
+git remote add template https://github.com/alejomancinelli/cv_projects_template.git
+git fetch template
+```
+
+Queda `origin` = el proyecto y `template` = de dónde vino. Los dos sentidos —traer
+maquinaria nueva y devolver una mejora— están en «Cómo devolver una mejora al template».
+
+### Lo que no viene en el clon
+
+El `.gitignore` versiona tres carpetas pero no su contenido, así que un clon limpio no
+trae:
+
+- **`packages/`** — sólo el `.gitkeep`. El wheel de stapipy **no está en el repo**: hay que
+  copiarlo ahí antes de correr `setup/cameras/{windows,linux}/sentech.*`. Ojo con la
+  arquitectura: el `cp310-win_amd64` no sirve en la Jetson, que necesita el de aarch64.
+- **`.venv/`** — se crea y se instala con `requirements.txt`.
+- **`data/`** — logs y dataset se generan en runtime.
+
 ## Cómo se arranca un fork
 
-1. **Fork del repo** y `pip install -r requirements.txt` en un venv nuevo. Los SDK de
-   cámara se instalan con los scripts de `setup/cameras/{windows,linux}/`.
+1. **Crear el repo** como arriba, `pip install -r requirements.txt` en un venv nuevo y
+   copiar el wheel de stapipy a `packages/`. Los SDK de cámara se instalan con los scripts
+   de `setup/cameras/{windows,linux}/`. Cambiar la identidad del proyecto:
+   `project.project_id` y `system.app_name` en el config, y `system/version.py`.
 2. **`config.yaml`**: `project`, `system`, y una entrada en `cameras` por cámara física
    —marca, modelo, driver, IP, adquisición, ROI, mínimo de iluminación—. Verificar con
    `manual_test/cameras/camera_live_view.py`.
@@ -45,12 +111,12 @@ sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su `config.yam
    telemetría y en los registros.
 8. **`register_map.yaml`**: las filas `producer: inference` en el rango 3-50, y después
    `python -m system.modbus.export_map` para regenerar la tabla del integrador.
-9. **`main.py`**: cablear los subsistemas por señales, leer la sección `process` y pasarle
-   al motor el pipeline, el analyzer y —si hacen falta— el preprocessor que corrige el
-   lente y los annotators de la planta.
-10. **La vista de operador**: escribir el widget del área central del monitor y
-    pasárselo con `window.monitor_view.set_content(...)`. Para el caso normal ya está
-    `ui/widgets/camera_grid.py` y no hay nada que escribir. Los textos nuevos van a
+9. **`main.py`**: ya cablea todo. Se completan sus tres métodos marcados —
+   `_build_monitor_content()`, `_build_analyzer()` y `_build_annotator()`—, que son los
+   que leen `process:` y le pasan al motor lo del proyecto. El preprocessor del lente sale
+   solo de la calibración del config.
+10. **La vista de operador**, si la grilla de cámaras no alcanza: el widget propio se
+    devuelve desde `_build_monitor_content()` de `main.py`. Los textos nuevos van a
     `ui/strings.py`, con su clave en inglés y una columna por idioma; el resto de la UI
     —ocho pestañas de configuración, cuatro de diagnóstico, temas y widgets— viene
     andando. Ver [docs/ui.md](docs/ui.md).
@@ -70,6 +136,7 @@ es maquinaria y se cross-portea; si describe qué se mide en esta planta, es del
 | `system/inference/pipeline.py` | el orden de las etapas y sus cortocircuitos |
 | `system/inference/metrics.py` | la cuenta del proceso |
 | `system/version.py` | la versión del fork; se sube en cada release |
+| `main.py` | **sólo el bloque «Lo que cambia en cada fork»**: el widget del monitor, el analyzer y los annotators. El resto es cableado genérico |
 | `CLAUDE.md` | el mapa y las decisiones del fork |
 | `README.md` | esta guía, reemplazada por la del proyecto |
 
@@ -77,7 +144,6 @@ es maquinaria y se cross-portea; si describe qué se mide en esta planta, es del
 
 | Archivo | Cuándo |
 |---|---|
-| `main.py` | siempre: es el cableado, y todavía no existe en el template |
 | `system/inference/<mi_modelo>.py` | el modelo del proyecto, más **una línea** en `model_factory.py` |
 | `system/inference/annotations.py` | referencias de la planta: un límite de carga, una zona |
 | `tools/camera/<mi_driver>.py` | una cámara de otro fabricante, más **una línea** en `camera_factory.py` |
@@ -139,6 +205,36 @@ extensión.* Dos ejemplos reales de este repo:
 
 Ninguno de los dos se parcheó en un fork. Los dos entraron al template.
 
+### Traer maquinaria nueva al proyecto
+
+El sentido que se usa más seguido. Con la copia espejo hay ancestro común, así que es un
+merge de verdad y no un cherry-pick:
+
+```bash
+git fetch template
+git merge template/main
+```
+
+Qué esperar:
+
+- **Lo que nunca tocaste entra limpio**, y es la mayoría: toda la tabla de maquinaria.
+- **Los archivos que el fork reescribió conflictúan**, y no es una falla: `config.yaml`,
+  `register_map.yaml`, `pipeline.py`, `metrics.py`, `version.py`, `CLAUDE.md` y
+  `README.md` son las mismas rutas con contenido distinto a propósito.
+- **Las dos fábricas** conflictúan en la línea de registro. Se resuelve dejando las dos.
+
+**No se resuelven en automático con «la mía».** Git mergea por bloques, así que un cambio
+del template en una parte del `config.yaml` que no tocaste entra solo —y eso normalmente
+es lo que uno quiere: una clave nueva con su comentario—. Lo que hay que leer es si la
+mejora de maquinaria vino con una clave de config nueva; si se descarta el bloque, el
+código nuevo arranca sin ella:
+
+```bash
+git diff template/main -- config.yaml    # qué claves nuevas trae el template
+```
+
+Y conviene mergear seguido: diez merges chicos cuestan menos que uno de un año.
+
 ### La disciplina, y arranca el primer día
 
 **Los commits de maquinaria van separados de los del proyecto.** Es lo único que hace
@@ -150,18 +246,26 @@ sí.
 ### El flujo
 
 ```bash
-git remote add template https://github.com/alejomancinelli/cv_projects_template.git
 git fetch template
 
 # La rama sale del template, NO de tu trabajo: así el PR no arrastra tu config.yaml,
 # tu metrics.py ni tu register_map.yaml.
 git checkout -b mejora-engine template/main
 # ...sólo archivos de la tabla «maquinaria»...
-git push origin mejora-engine        # y el PR va contra el template
 
-# Cuando se mergea, vuelve al fork:
+# Con permiso de escritura en el template —el caso normal si el template es tuyo—:
+# la rama se empuja al template y el PR se abre ahí, rama -> main.
+git push template mejora-engine
+
+# Cuando se mergea, vuelve al proyecto:
 git fetch template && git merge template/main
 ```
+
+**Sin permiso de escritura en el template** hay que pasar por un fork de GitHub: los pull
+requests entre repos distintos sólo existen dentro de una misma red de forks, así que un
+repo creado por copia espejo no puede abrir uno. Se forkea el template en GitHub, se
+empuja la rama a ese fork y el PR sale de ahí. El fork es sólo el vehículo del PR: el
+proyecto sigue en su propio repo.
 
 ### Qué tiene que traer el PR
 

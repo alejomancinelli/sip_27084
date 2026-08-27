@@ -1,6 +1,19 @@
+# Config de la prueba manual de la interfaz. NO es el de la app: lo lee sólo
+# `ui_app.py`, que está al lado, y el panel de configuración de la prueba escribe acá.
+#
+# Está poblado a propósito con los casos que hacen visible el comportamiento de la UI:
+# cuatro cámaras en tres estados distintos, dos pipelines —uno prendido y uno apagado—,
+# dos modelos —uno registrado en la fábrica y uno que no— y todas las secciones con
+# valores realistas para que las siete pestañas tengan algo que mostrar.
+#
+# OJO: guardar desde la pantalla reescribe este archivo y **se pierden estos
+# comentarios**, porque `ConfigManager.save()` vuelca el diccionario en memoria y el YAML
+# no los conserva. La copia comentada es la que está en git.
+
 project:
   client: Prueba Manual
   project_id: ui_demo
+
 system:
   app_name: Prueba de interfaz
   device_id: banco_de_pruebas
@@ -8,20 +21,28 @@ system:
   paths:
     logs: ./data/logs
     dataset: ./data/dataset_ui_demo
+
 ui:
-  language: es
+  language: es                  # es | en | pt — cambiarlo acá o desde la pestaña Sistema
   dark_mode: true
+
 system_monitor:
   disk_path: .
-  net_interfaces: []
+  net_interfaces: []            # [] = todas menos loopback; el chip se arma por interfaz
+
 video:
   http:
+    # La prueba levanta este servidor de verdad: las URLs que muestra la pestaña Video
+    # se abren en el navegador y el contador de clientes se mueve.
     enabled: true
-    port: 8099
+    port: 8099                  # 8099 y no 8091 para no chocar con la app si está corriendo
     jpeg_quality: 80
     frame_width_px: 960
     log_connections: true
   rtsp:
+    # Apagado: necesita GStreamer. Es el único servicio que la prueba no levanta, así
+    # que su chip queda en "Deshabilitado". Prendido sin GStreamer instalado, el chip
+    # pasa a error, que también vale la pena ver una vez.
     enabled: false
     port: 8554
     codec: h264_sw
@@ -32,10 +53,15 @@ video:
   display:
     gamma: 1.0
     clahe_clip: 0.0
+
 process:
+  # Parámetros del proceso. En esta prueba no se usan —el analyzer del template no los
+  # necesita—, pero la sección va igual porque es la que el fork reescribe y conviene
+  # verla en el archivo.
   scale_px_per_mm: {}
   max_load_y_px: {}
   min_load_pct: 0
+
 inference:
   overlay:
     enabled: true
@@ -51,17 +77,16 @@ inference:
   pipelines:
     pipeline_1:
       enabled: true
-      cameras:
-      - camera_1
-      - camera_2
-      interval_s: 0.5
+      cameras: [camera_1, camera_2]
+      interval_s: 0.5           # una inferencia cada medio segundo por cámara
       min_detections: 0
       min_result_confidence_pct: 0
       frames_per_cycle: 1
     pipeline_2:
+      # Apagado: la prueba no le levanta hilo. Está para que la pestaña Inferencia
+      # muestre dos pipelines y se vea cómo se ve uno deshabilitado.
       enabled: false
-      cameras:
-      - camera_3
+      cameras: [camera_3]
       interval_s: 0.0
       min_detections: 0
       min_result_confidence_pct: 0
@@ -72,20 +97,21 @@ inference:
       path: ''
       min_confidence_pct: 40
       max_side_px: 0
-      class_names:
-      - grueso
-      - medio
-      - fino
+      class_names: [grueso, medio, fino]
       params:
-        detection_count: 8
-        with_masks: true
+        detection_count: 8      # extras del mock: cuántas detecciones sintéticas inventa
+        with_masks: true        # con máscaras, para que el anotado se vea completo
     model_2:
+      # `type` a propósito NO registrado en la fábrica: sirve para comprobar que el
+      # panel de configuración conserva un valor que no está entre sus opciones en vez
+      # de reemplazarlo por el primero de la lista. Ver el docstring de `ui_app.py`.
       type: yolov8_seg
       path: models/no_existe.pt
       min_confidence_pct: 55
       max_side_px: 1280
       class_names: []
       params: {}
+
 image_collector:
   enabled: false
   mode: on_demand
@@ -100,7 +126,13 @@ image_collector:
     enabled: true
     history_len: 5
     hamming_threshold: 5
+
 telemetry:
+  # Cada cuánto se MIDE una muestra de las series de salud, no cada cuánto se escribe:
+  # la escritura sale en batch cada 10 s (`_PUBLISH_INTERVAL_S` de persistence.py).
+  # Los dos apagados: el hilo de telemetría se levanta igual y sus backends quedan en
+  # `disabled`, que es lo que dicen los chips. Prendiendo InfluxDB y reiniciando la
+  # prueba, el mismo chip pasa a informar si conectó o no.
   influxdb:
     enabled: false
     url: http://localhost:8086
@@ -113,20 +145,30 @@ telemetry:
     tls: false
     user: ''
     topic_base: ui_demo
+
 modbus:
+  # La prueba levanta el servidor de verdad y le escribe los registros que muestra la
+  # pestaña Modbus, así que un poller externo los puede leer mientras corre. Para probar
+  # el transporte a fondo —excepciones, rangos inválidos, RTU sobre RS-485— está
+  # `manual_test/modbus/`.
   slave_id: 1
   register_count: 100
   tcp:
     enabled: true
     host: 0.0.0.0
-    port: 5502
+    port: 5502                  # 5502 y no 502 para no chocar con la app si está corriendo
   rtu:
+    # Apagado: necesita el puerto serie libre. Su chip queda en "Deshabilitado", que no
+    # es lo mismo que en error.
     enabled: false
     port: COM1
     baudrate: 115200
     parity: N
     stop_bits: 1
+
 cameras:
+  # Cuatro cámaras en tres estados, para ver que la grilla muestra siempre todas las
+  # configuradas y no sólo las que andan.
   camera_1:
     name: Cinta entrada
     enabled: true
@@ -172,6 +214,8 @@ cameras:
       camera_matrix: []
       dist_coeffs: []
   camera_3:
+    # `enabled: false`: conectada pero sin capturar. El chip tiene que decir
+    # "Deshabilitada" en ámbar, que no es lo mismo que una cámara caída.
     name: Descarga (deshabilitada)
     enabled: false
     brand: mock
@@ -194,6 +238,14 @@ cameras:
       camera_matrix: []
       dist_coeffs: []
   camera_4:
+    # `driver` inexistente a propósito: la fábrica devuelve un NullDriver y el panel
+    # queda en "SIN SEÑAL" con el chip en "Mal configurada" y el motivo en el tooltip.
+    # Es el caso que hay que poder mirar sin desenchufar una cámara de verdad.
+    #
+    # `brand` también fuera del catálogo, y por una razón: el `driver` lo deriva el
+    # panel de configuración desde la marca, así que con `brand: mock` cualquier
+    # guardado le "arreglaría" el driver y se perdería el caso de prueba. Con una marca
+    # que el catálogo no conoce, el panel conserva las tres claves como están.
     name: Tolva (sin driver)
     enabled: true
     brand: marca_fuera_del_catalogo

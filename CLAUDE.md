@@ -30,6 +30,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
 
 ## Mapa
 
+    main.py                   nivel 5 — el cableado: instancia todo y conecta las señales
+
     system/                   la app: subsistemas propios, con Qt y con I/O
       config_manager.py       nivel 0 — singleton thread-safe sobre config.yaml
       logger.py               nivel 0 — logger único; nadie crea otro
@@ -109,7 +111,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       ui/                     levanta la app entera con cámaras mock; hace de main.py
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
-    docs/                     documentos con público propio: el mapa Modbus generado y ui.md
+    docs/                     documentos con público propio: el mapa Modbus generado,
+                              ui.md y influxdb.md (la estructura de las series)
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -240,7 +243,13 @@ Lo que no se deduce leyendo un archivo suelto:
   con el dataset corregido, o corregir después de anotar y aceptar que las etiquetas se
   deformen con la imagen—; lo que no se hace es medir en un espacio y dibujar en otro.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
-  instante en que se midió, no con el de la escritura.
+  instante en que se midió, no con el de la escritura. El hilo drena la cola de continuo,
+  así que el ritmo no lo limita la cola —medido: 50 puntos/s sin descartar—: lo que se
+  achica al publicar más seguido es el margen ante un backend trabado (100 puntos de cola
+  = 100/N segundos a N puntos/s) y el volumen que queda guardado por día. Aun así se
+  publica **por tick y no por evento**, porque una serie de salud por evento no agrega
+  información. La estructura de las series —measurements, tags y nombres de campo— es un
+  contrato con los dashboards y está en `docs/influxdb.md`.
 - **El mapa Modbus es un archivo de datos, no código.** Vive en
   `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
   es fuente única: la tabla que lee el integrador se genera con
@@ -258,6 +267,22 @@ Lo que no se deduce leyendo un archivo suelto:
   defecto, porque necesita el puerto serie libre.
 - Un módulo al que le falta su librería de sistema degrada a no-op adentro y expone
   la misma API. El llamador no pregunta si está disponible.
+- **Una métrica llega al PLC si tiene una fila con su mismo nombre en el mapa.** El
+  cableado publica los registros de salud y, del dict del analyzer, las claves que existen
+  como registro; una que no existe no se publica y se avisa una vez. Así el nombre de la
+  métrica es el contrato con el integrador y no hay una tabla de traducción que mantener.
+  Dos cámaras que publican la misma métrica se pisan: ahí el nombre lleva el slot adelante.
+- **El latido no espera al hardware.** La primera lectura del monitor de sistema bloquea
+  unos segundos, así que el ciclo de registros publica el heartbeat y las palabras de
+  estado desde el primer tick y agrega las métricas de hardware cuando llegan: un PLC que
+  vigila el latido no puede quedarse esperando al primer `nvidia-smi`.
+- **La app corre sin ventana con `--headless` o `ui.enabled: false`**, y el cableado no
+  cambia: Qt hace falta igual porque las señales son el vínculo entre los hilos, así que
+  se arma un `QCoreApplication` y la interfaz la reemplaza un no-op con la misma API —el
+  mismo recurso que `NullDriver`—. `main.py` no pregunta en ningún método si hay ventana,
+  y en headless el widget del monitor no se construye ni se importa. Sin nadie mirando, el
+  gate del anotado queda en manos de los clientes de los streams: sin ninguno, el overlay
+  no se dibuja.
 - `ui/` no lo importa nadie de `system/` ni de `tools/`.
 - **La UI no tiene colores ni textos propios repartidos.** Los colores de los widgets
   estándar están en el QSS de los dos temas y los de lo que se dibuja con QPainter en
@@ -293,11 +318,14 @@ cross-portea; si describe qué se mide en esta planta, es del fork.**
 - **Se reescriben**: `config.yaml` —sección `process:` incluida—,
   `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
   `system/inference/metrics.py`, este archivo y el `README.md`.
-- **Se agregan sin editar lo que ya está**: `main.py`, el modelo del proyecto en
+- **Se agregan sin editar lo que ya está**: el modelo del proyecto en
   `system/inference/` (+1 línea en la fábrica), `annotations.py`, un driver nuevo
   en `tools/camera/` (+1 línea en su fábrica), el widget del área central del monitor
-  (+1 línea de `set_content()` en `main.py`), y lo que corresponda en `test/`,
+  (lo devuelve `_build_monitor_content()` de `main.py`), y lo que corresponda en `test/`,
   `manual_test/` y `docs/`.
+- **De `main.py` se completan tres métodos**, los del bloque marcado: el widget del
+  monitor, el analyzer y los annotators. El resto del archivo es cableado y se
+  cross-portea.
 - **De `ui/` sólo se agrega**: el widget del monitor, los textos que ese widget necesite
   en `strings.py`, y —si el fork quiere editar `process:` desde la pantalla— una pestaña
   en `views/config/` con +1 línea en `_TAB_CLASSES`. Las pestañas genéricas, los widgets,
@@ -311,10 +339,9 @@ La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
 
-- **`main.py`**: no hay composition root; hoy nadie cablea los subsistemas entre sí.
-  Es lo que falta para que el Modbus publique algo: el servidor y el mapa están,
-  pero nadie llena los registros todavía. También es donde se instancian el pipeline
-  y el motor de inferencia, y donde se le pasan el analyzer y el gate del anotado.
+- Del template ya no falta el cableado: `main.py` instancia todo y conecta las señales,
+  y de sus tres métodos marcados sale lo del fork —el widget del monitor, el analyzer y
+  los annotators—. Lo que sigue faltando es el contenido: qué se mide y qué se publica.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y

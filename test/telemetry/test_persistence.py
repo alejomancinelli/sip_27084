@@ -173,6 +173,13 @@ class TestPushData:
         thread.push_data("camera_1", _FIELDS)
         assert before_s <= thread._queue.get_nowait()["time"] <= time.time()
 
+    def test_an_explicit_stamp_replaces_the_time_of_the_push(self):
+        """Quien mide antes de publicar sella con el instante de la medición."""
+        thread = _thread(_FakeBackend())
+        measured_s = time.time() - 30
+        thread.push_data("camera_1", _FIELDS, time_s=measured_s)
+        assert thread._queue.get_nowait()["time"] == measured_s
+
     def test_pushing_never_blocks_when_the_queue_is_full(self):
         thread = _thread(_FakeBackend())
         for index in range(pers._QUEUE_MAXSIZE + 10):

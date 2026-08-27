@@ -4,6 +4,10 @@ Pestaña de telemetría: la sección `telemetry:` — InfluxDB y MQTT.
 Las credenciales no están en el formulario porque no están en el config: el token de
 InfluxDB sale de `INFLUXDB_TOKEN` y la password de MQTT de `MQTT_PASSWORD`. Las dos
 notas al pie lo dicen en pantalla, que es donde alguien va a buscar el campo que falta.
+
+El muestreo de la telemetría no está en esta pantalla: es un punto por segundo, fijo en
+`main.py`, porque no hay instalación que quiera otro. La estructura de las series está en
+`docs/influxdb.md`.
 """
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget

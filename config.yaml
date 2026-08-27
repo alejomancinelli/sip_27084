@@ -15,10 +15,15 @@ system:
 
 ui:
   # La interfaz. Los textos que ve el operador salen de ui/strings.py, que es la tabla
-  # de idiomas; `language` elige la columna. Estas dos claves son las únicas que la UI
-  # aplica sin reiniciar la app.
+  # de idiomas; `language` elige la columna. `language` y `dark_mode` son las únicas dos
+  # claves que la UI aplica sin reiniciar la app.
+  enabled: true                 # false = sin ventana (headless), igual que `main.py --headless`
   language: es                  # es | en | pt
   dark_mode: true
+  # En headless se cablea todo igual —Qt hace falta para las señales entre hilos— pero se
+  # arma un QCoreApplication y la interfaz la reemplaza un no-op. Es el modo de un equipo
+  # en gabinete, de un servicio del sistema y de un contenedor sin X11. El flag de línea
+  # de comandos manda sobre esta clave.
 
 system_monitor:
   # Métricas de hardware del equipo. Las fuentes cambian entre plataformas
@@ -194,6 +199,16 @@ image_collector:
 telemetry:
   # Salida de datos hacia afuera del equipo. Cada backend es independiente: se
   # pueden usar los dos, uno o ninguno.
+  #
+  # La estructura de las series —measurements, tags y nombres de campo— es el contrato
+  # con los dashboards y está en docs/influxdb.md.
+  # El muestreo no se configura: es un punto por segundo por serie, fijo en main.py. Más
+  # fino no agrega información y más grueso pierde el detalle de un pico.
+  #
+  # Y no confundirlo con `_PUBLISH_INTERVAL_S` de system/telemetry/persistence.py, que son
+  # 10 s y es otra cosa: cada cuánto SALE la escritura al backend. Entre los dos, cada
+  # batch lleva diez muestras de cada serie y el dashboard las ve hasta 10 s después de
+  # medidas; cada punto igual viaja con el instante en que se midió.
   influxdb:
     # Serie temporal para dashboards e históricos (InfluxDB 2.x).
     # El token NO va acá: se lee de la variable de entorno INFLUXDB_TOKEN.
