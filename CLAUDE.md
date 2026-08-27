@@ -329,6 +329,10 @@ La tabla completa, archivo por archivo, está en `README.md`.
   fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
+- Las próximas líneas de trabajo —visuales de configuración, protección del entregable
+  (hash del modelo, licencia por hardware, compilar) y rendimiento/despliegue
+  (optimización en Jetson, Docker)— están en `.claude/plans/roadmap.md`, con qué hay que
+  averiguar antes de empezar cada una. Ninguna está decidida.
 
 ## Dónde va lo que se escribe
 
@@ -339,6 +343,9 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - Cómo se tocan los atributos de la interfaz —colores, textos, medidas, una pestaña
   nueva— → `docs/ui.md`. No se repite en los docstrings de `ui/`: ellos apuntan ahí.
 - Convenciones → las skills. No se copian acá.
+- Cómo devolver una mejora de maquinaria al template —cuándo es un punto de extensión y
+  cuándo un PR, y por qué los commits de maquinaria van separados desde el primer día—
+  → la sección «Cómo devolver una mejora al template» del `README.md`.
 
 Un subsistema gana carpeta propia cuando tiene más de un archivo; hasta entonces es
 un archivo suelto en `system/`.

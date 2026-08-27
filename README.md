@@ -115,6 +115,80 @@ cada uno cuando el fork agrega una implementación. Eso es registro, no lógica.
 `docs/modbus_map.md` y `docs/modbus_map.csv` salen de
 `python -m system.modbus.export_map`. La fuente única es `register_map.yaml`.
 
+## Cómo devolver una mejora al template
+
+La tabla de arriba dice qué no se edita, no que la maquinaria sea intocable. La pregunta
+no es *si* se puede mejorar sino **dónde va el cambio**, y hay tres respuestas distintas:
+
+| Qué estás haciendo | Dónde va |
+|---|---|
+| La maquinaria no puede hacer algo que tu fork necesita | **Un punto de extensión en el template**, no un parche en el fork |
+| Una mejora de la maquinaria que sirve a todos los forks | **El template**, por pull request |
+| Cambiar qué se mide en esta planta | **Tu fork**, y no vuelve nunca |
+
+La primera fila es la que se confunde. La regla completa es: *si hay que editar maquinaria
+para que el fork funcione, el límite está mal puesto y lo que falta es un punto de
+extensión.* Dos ejemplos reales de este repo:
+
+- `CameraGrid` mostraba siempre todas las cámaras de `cameras:`. Un proyecto que quería
+  tres por pantalla no necesitaba editar la grilla: necesitaba que la grilla aceptara
+  **qué** cámaras mostrar. Salió un parámetro opcional `camera_slots`, compatible hacia
+  atrás, y lo aprovechan todos los forks.
+- El panel de configuración no se podía recargar cuando el `config.yaml` cambiaba por
+  afuera. Salió `ConfigView.reload()`, público y documentado.
+
+Ninguno de los dos se parcheó en un fork. Los dos entraron al template.
+
+### La disciplina, y arranca el primer día
+
+**Los commits de maquinaria van separados de los del proyecto.** Es lo único que hace
+posible el pull request más adelante: si una mejora de `engine.py` queda en el mismo
+commit que tu `metrics.py`, extraerla después es cirugía manual. Decidir «esto es
+maquinaria o es mío» al momento de comitear no cuesta nada; reconstruirlo a los seis meses
+sí.
+
+### El flujo
+
+```bash
+git remote add template https://github.com/alejomancinelli/cv_projects_template.git
+git fetch template
+
+# La rama sale del template, NO de tu trabajo: así el PR no arrastra tu config.yaml,
+# tu metrics.py ni tu register_map.yaml.
+git checkout -b mejora-engine template/main
+# ...sólo archivos de la tabla «maquinaria»...
+git push origin mejora-engine        # y el PR va contra el template
+
+# Cuando se mergea, vuelve al fork:
+git fetch template && git merge template/main
+```
+
+### Qué tiene que traer el PR
+
+- **Un test.** `test/` espeja el árbol y la suite corre **sin hardware, sin GUI y sin
+  red**: todo lo externo se reemplaza por dobles dentro del propio archivo de test.
+- **Las convenciones.** `.claude/skills/` —`nomenclatura`, `comentarios`, `modularidad`—.
+  Un PR que las ignora se va en revisar nombres y comentarios en vez del cambio.
+- **El contrato actualizado.** Si cambia lo que un módulo promete, su docstring cambia en
+  la misma edición.
+- **La versión, si corresponde.** `system/version.py`: MINOR si agrega una clave de config
+  con default, MAJOR si rompe hacia afuera —el mapa de registros, una clave obligatoria,
+  el formato del JSON del dataset—.
+
+### Lo que ya sabemos que va a chocar
+
+`model_factory.py` y `camera_factory.py` reciben una línea de registro por fork. Dos forks
+que agregan al mismo diccionario conflictúan ahí, y se resuelve en una línea. Es el precio
+de que agregar un modelo o un driver no toque nada más.
+
+### Qué cuesta no hacerlo
+
+Un archivo de maquinaria divergente en el fork cuesta dos cosas. La visible es el merge:
+duele en proporción a cuánto se parezca tu edición a lo que después cambie el template. La
+peor es la otra: **se rompe el modelo mental compartido.** Quien depure tu fork —incluido
+vos en un año— va a suponer que `engine.py` se comporta como el del template. Un parche
+local silencioso es justo donde esa suposición muerde.
+
 ## La interfaz
 
 `ui/` viene armada y andando: tres vistas —monitor, configuración, diagnóstico—, ocho
