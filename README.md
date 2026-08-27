@@ -43,17 +43,44 @@ cuenta que ya lo tiene, y —la que importa— **el fork de un repo público es 
 puede volver privado**, así que el `config.yaml`, el mapa de registros y los parámetros de
 la planta del cliente quedarían expuestos.
 
-Dos formas que sí sirven, y la diferencia entre las dos es la historia:
+Dos formas que sí sirven. Lo único que las separa es la historia, y de eso depende que
+traer una mejora del template sea un `git merge` o un cherry-pick a mano:
 
-| | «Use this template» | Copia espejo |
+| | «Use this template» + injerto | Copia espejo |
 |---|---|---|
-| Cómo | Settings → General → ✅ *Template repository*, después el botón «Use this template» | los comandos de abajo |
-| Historia | **un solo commit inicial** | **completa** |
-| `git merge template/main` | falla: *refusing to merge unrelated histories* | funciona |
-| Traer maquinaria nueva | sólo cherry-pick, a mano | merge normal |
+| Cómo | el botón de GitHub, y el injerto de acá abajo | los comandos de más abajo |
+| Historia del repo del proyecto | arranca en un commit inicial propio | la del template, completa |
+| Ancestro común con el template | lo crea el injerto | viene de fábrica |
+| `git merge template/main` | funciona, después del injerto | funciona |
+| `git log` de un archivo de maquinaria | desde el injerto | desde que se escribió |
 
-Esa fila de la historia decide: sin ancestro común, cada mejora del template se cross-portea
-a mano para siempre. **Copia espejo**, entonces:
+**Con el botón, entonces**, que es el camino corto. Para que aparezca, el template tiene que
+estar marcado como tal: en su repo, Settings → General → ✅ *Template repository*. Después
+«Use this template» → *Create a new repository*, privado.
+
+Lo que el botón **no** copia es la historia: el repo nuevo arranca con un solo commit, sin
+ancestro común con el template, y ahí `git merge template/main` falla con *refusing to merge
+unrelated histories*. Se arregla una sola vez, con un injerto:
+
+```bash
+git clone https://github.com/<cuenta>/<mi-proyecto>.git
+cd <mi-proyecto>
+git remote add template https://github.com/alejomancinelli/cv_projects_template.git
+git fetch template
+git merge template/main --allow-unrelated-histories -m "engancho la historia del template"
+git push
+```
+
+**El injerto va antes de escribir una línea del proyecto.** En ese momento los archivos son
+idénticos a los del template, así que el merge no tiene nada que resolver y entra solo. El
+commit que deja tiene dos padres, y con eso `git merge-base main template/main` ya devuelve
+un ancestro de verdad: de ahí en adelante, traer maquinaria nueva es el merge normal de
+«Traer maquinaria nueva al proyecto». Hecho más tarde, el mismo comando conflictúa en todo
+lo que el fork ya reescribió.
+
+**Copia espejo** es la otra forma, y sirve cuando interesa tener la historia del template
+adentro del repo del proyecto: `git log` y `git blame` sobre un archivo de maquinaria
+cuentan por qué quedó así, en vez de arrancar en el injerto.
 
 ```bash
 # 1. En GitHub: crear el repo del proyecto VACÍO (sin README, sin .gitignore, sin licencia)
@@ -71,8 +98,13 @@ git remote add template https://github.com/alejomancinelli/cv_projects_template.
 git fetch template
 ```
 
-Queda `origin` = el proyecto y `template` = de dónde vino. Los dos sentidos —traer
-maquinaria nueva y devolver una mejora— están en «Cómo devolver una mejora al template».
+Por cualquiera de los dos caminos queda `origin` = el proyecto y `template` = de dónde vino,
+con ancestro común. Los dos sentidos —traer maquinaria nueva y devolver una mejora— están en
+«Cómo devolver una mejora al template».
+
+**Y si el injerto no se hizo a tiempo** no hay nada perdido: cada mejora del template se trae
+con `git cherry-pick <commit>`, o se aplica el `git diff` como parche. Funciona, pero es a
+mano y no acumula — cada actualización vuelve a ser la misma tarea.
 
 ### Lo que no viene en el clon
 
@@ -207,8 +239,8 @@ Ninguno de los dos se parcheó en un fork. Los dos entraron al template.
 
 ### Traer maquinaria nueva al proyecto
 
-El sentido que se usa más seguido. Con la copia espejo hay ancestro común, así que es un
-merge de verdad y no un cherry-pick:
+El sentido que se usa más seguido. Con el injerto o con la copia espejo hay ancestro común,
+así que es un merge de verdad y no un cherry-pick:
 
 ```bash
 git fetch template
@@ -262,8 +294,9 @@ git fetch template && git merge template/main
 ```
 
 **Sin permiso de escritura en el template** hay que pasar por un fork de GitHub: los pull
-requests entre repos distintos sólo existen dentro de una misma red de forks, así que un
-repo creado por copia espejo no puede abrir uno. Se forkea el template en GitHub, se
+requests entre repos distintos sólo existen dentro de una misma red de forks, y el repo del
+proyecto no está en la del template por ninguno de los dos caminos —ni el botón ni la copia
+espejo crean un fork de GitHub—. Se forkea el template en GitHub, se
 empuja la rama a ese fork y el PR sale de ahí. El fork es sólo el vehículo del PR: el
 proyecto sigue en su propio repo.
 
