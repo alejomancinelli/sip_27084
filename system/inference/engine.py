@@ -301,9 +301,10 @@ class InferenceThread(QThread):
 
         result.is_valid = not reason
         result.invalid_reason = reason
+        # Antes del analyzer: es parte del resultado que el analyzer recibe.
+        result.inference_time_ms = (time.perf_counter() - started_s) * 1000
         if result.is_valid:
             result.metrics = self._run_analyzer(result)
-        result.inference_time_ms = (time.perf_counter() - started_s) * 1000
         result.annotated_bgr = self._annotate(result)
 
         self._publish(result)

@@ -481,6 +481,14 @@ class TestAnalyzer:
         result = _process_one(engine, _frame())
         assert (result.is_valid, result.metrics) == (True, {})
 
+    def test_the_analyzer_sees_the_inference_time(self):
+        """Un proyecto que publica el tiempo al PLC publicaría un cero medido."""
+        pipeline = _FakePipeline([(0, 90.0, (0, 0, 5, 5))], delay_s=0.02)
+        engine = _engine(pipeline,
+                         analyzer=lambda result: {"elapsed_ms": result.inference_time_ms})
+        result = _process_one(engine, _frame())
+        assert result.metrics["elapsed_ms"] >= 20.0
+
 
 # ── Frame anotado ────────────────────────────────────────────────────────────
 
