@@ -1,0 +1,139 @@
+"""
+Panel de configuración: el cascarón que junta las pestañas y persiste una sola vez.
+
+No conoce ninguna clave del config. Cada pestaña de `ui/views/config/` es dueña de su
+sección y sabe cargarla y guardarla; esta vista sólo las arma, las recorre y llama al
+`save()` del ConfigManager cuando todas escribieron. Agregar una sección al config es
+un archivo nuevo y una línea en `_TAB_CLASSES`.
+
+Guardar es atómico para el usuario: si una pestaña levanta una excepción se avisa y no
+se persiste nada, así el config.yaml no queda con la mitad de los cambios.
+"""
+
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget,
+)
+
+from system.config_manager import ConfigManager
+from system.logger import logger
+
+from ui.strings import tr
+from ui.views.config.cameras_tab import CamerasTab
+from ui.views.config.collector_tab import CollectorTab
+from ui.views.config.inference_tab import InferenceTab
+from ui.views.config.modbus_tab import ModbusTab
+from ui.views.config.process_tab import ProcessTab
+from ui.views.config.system_tab import SystemTab
+from ui.views.config.telemetry_tab import TelemetryTab
+from ui.views.config.video_tab import VideoTab
+from ui.widgets.form import wrap_in_card
+
+# Pestañas en el orden en que se muestran. Es la única lista que se toca al agregar
+# una sección al config.
+_TAB_CLASSES = (
+    CamerasTab,
+    VideoTab,
+    InferenceTab,
+    ProcessTab,      # vacía en el template: la llena cada fork
+    CollectorTab,
+    TelemetryTab,
+    ModbusTab,
+    SystemTab,
+)
+
+
+class ConfigView(QWidget):
+    """Panel de configuración. Emite `config_saved` recién cuando el archivo se escribió."""
+
+    config_saved = Signal()               # el config.yaml se persistió sin errores
+    open_roi_requested = Signal(str)      # slot de la cámara cuyo ROI hay que dibujar
+
+    def __init__(self, config_manager: ConfigManager, parent=None):
+        super().__init__(parent)
+        self._config = config_manager
+        self._tabs: list = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        title = QLabel(tr("config_title"))
+        title.setObjectName("viewTitle")
+        layout.addWidget(title)
+
+        tab_widget = QTabWidget()
+        for tab_class in _TAB_CLASSES:
+            tab = tab_class(self._config)
+            self._tabs.append(tab)
+            # Todas con scroll: una pestaña más alta que la pantalla estiraría el
+            # stack y le cortaría los botones de guardar.
+            tab_widget.addTab(wrap_in_card(tab, scroll=True), tr(tab.TITLE_KEY))
+        layout.addWidget(tab_widget, stretch=1)
+
+        cameras_tab = self._get_cameras_tab()
+        if cameras_tab is not None:
+            cameras_tab.open_roi_requested.connect(self.open_roi_requested)
+
+        layout.addLayout(self._build_button_row())
+
+    # ── API pública ──────────────────────────────────────────────────────────
+
+    def reload(self):
+        """
+        Recarga todas las pestañas desde el config, descartando lo que se haya editado.
+
+        Es lo que hace el botón de descartar, y también lo que hay que llamar cuando el
+        `config.yaml` cambió por afuera de la aplicación.
+        """
+        for tab in self._tabs:
+            tab.load()
+
+    def refresh_roi_fields(self, camera_slot: str):
+        """Recarga los campos de ROI de una cámara tras cerrarse el diálogo interactivo."""
+        cameras_tab = self._get_cameras_tab()
+        if cameras_tab is not None:
+            cameras_tab.refresh_roi_fields(camera_slot)
+
+    # ── Internos ─────────────────────────────────────────────────────────────
+
+    def _build_button_row(self) -> QHBoxLayout:
+        discard_button = QPushButton(tr("config_discard"))
+        discard_button.setObjectName("discardButton")
+        discard_button.clicked.connect(self._on_discard_clicked)
+
+        save_button = QPushButton(tr("config_save"))
+        save_button.setObjectName("saveButton")
+        save_button.clicked.connect(self._on_save_clicked)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(discard_button)
+        row.addWidget(save_button)
+        return row
+
+    def _get_cameras_tab(self) -> CamerasTab | None:
+        for tab in self._tabs:
+            if isinstance(tab, CamerasTab):
+                return tab
+        return None
+
+    def _on_discard_clicked(self):
+        self.reload()
+
+    def _on_save_clicked(self):
+        try:
+            for tab in self._tabs:
+                tab.save()
+        except Exception as error:
+            logger.error(f"[UI] No se pudo armar la configuración a guardar: {error}")
+            QMessageBox.warning(self, tr("config_saved_title"), tr("config_save_error"))
+            return
+
+        if not self._config.save():
+            QMessageBox.warning(self, tr("config_saved_title"), tr("config_save_error"))
+            return
+
+        logger.info("[UI] Configuración guardada.")
+        self.config_saved.emit()
+        QMessageBox.information(self, tr("config_saved_title"), tr("config_saved_body"))

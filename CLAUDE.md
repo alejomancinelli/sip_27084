@@ -24,9 +24,9 @@ Python 3.10 de 64 bits, fijado por el wheel cp310 de stapipy. La suite completa
 corre sin hardware, sin GUI y sin red: todo lo externo se reemplaza por dobles
 dentro del propio archivo de test.
 
-Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
-`config.yaml` al lado. La instalación de los SDK de cámara está en
-`setup/cameras/{windows,linux}/`.
+Lo que sí necesita hardware —o una pantalla, como la prueba de la interfaz— vive en
+`manual_test/<tema>/`, cada uno con su `config.yaml` al lado. La instalación de los
+SDK de cámara está en `setup/cameras/{windows,linux}/`.
 
 ## Mapa
 
@@ -34,6 +34,7 @@ Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
       config_manager.py       nivel 0 — singleton thread-safe sobre config.yaml
       logger.py               nivel 0 — logger único; nadie crea otro
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
+      version.py              nivel 0 — la versión del programa; va en código, no en config
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
@@ -87,11 +88,28 @@ Lo que sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su
         enhance.py            gamma y contraste local para el camino de visualización
         undistort.py          corrección de lente; va en el preprocessor del motor
 
+    ui/                       nivel 4 — presentación; no la importa nadie de system/ ni tools/
+      strings.py              tabla de textos por idioma (es/en/pt); nadie escribe un literal
+      theme.py                único dueño de los colores; el QSS y las paletas de lo que se dibuja
+      service_status.py       estado de un servicio -> texto y color de su chip
+      main_window.py          header, las tres vistas y la barra de estado
+      views/
+        monitor_view.py       barra lateral + área central VACÍA; la llena el fork
+        config_view.py        cascarón: arma las pestañas y persiste una sola vez
+        diagnostics_view.py   cascarón: reparte a las pestañas lo que le llega
+        config/               una pestaña por sección del config; +1 línea para agregar otra
+        diagnostics/          hardware, Modbus, video y logs
+      widgets/                form, status_chip, log_table, realtime_chart,
+                              camera_panel (una cámara), camera_grid (N, con foco)
+      dialogs/                roi_dialog, gpio_dialog
+      styles/                 dark.qss y light.qss, espejados regla por regla
+
     test/                     espeja el árbol de arriba; conftest.py en la raíz
-    manual_test/              pruebas con hardware, cada una con su config.yaml
+    manual_test/              pruebas con hardware o pantalla, con su config.yaml al lado
+      ui/                     levanta la app entera con cámaras mock; hace de main.py
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
-    docs/                     documentos con público propio; hoy, el mapa Modbus generado
+    docs/                     documentos con público propio: el mapa Modbus generado y ui.md
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -130,6 +148,12 @@ Son punteros: el contrato vive en el archivo, no acá.
   documenta qué significa cada bit. Nadie corre bits afuera.
 - **Configuración** — `system/config_manager.py`: rutas punteadas, copias en la
   entrega, config de rescate.
+- **Pestaña de configuración** — `ui/views/config/abstract_tab.py`: `TITLE_KEY`,
+  `load()` y `save()`, y la regla de que `save()` no persiste el archivo.
+- **Área central del monitor** — `ui/views/monitor_view.py`: `set_content()` es el punto
+  de extensión de la vista de operador; el resto de la UI no conoce ese widget.
+- **Textos de la UI** — `ui/strings.py`: la clave es estable y en inglés, el texto sale
+  por `tr()` en el idioma de `ui.language`.
 - **Señales de Qt** — cada una documenta su payload y su frecuencia donde se declara.
 
 ## Decisiones vigentes
@@ -140,9 +164,14 @@ Lo que no se deduce leyendo un archivo suelto:
   las pantallas de la UI.
 - Las credenciales nunca van al config: salen del entorno (`INFLUXDB_TOKEN`,
   `MQTT_PASSWORD`).
+- **La versión del programa va en código** (`system/version.py`), no en `config.yaml`: el
+  config declara lo que cambia entre instalaciones y la versión cambia cuando cambia el
+  código. En el config, una planta podría decir que corre una versión que no corre, y ese
+  número es justo el que el operador lee por teléfono cuando algo anda mal. Se muestra
+  abajo a la derecha, junto al `project_id`, y se sube en el commit que cierra el cambio.
 - **En las cámaras no se ajusta nada en caliente.** Exposición, ganancia, fps y
-  `enabled` se cambian en `config.yaml` y se reinicia la app. Cuando exista la UI,
-  la config se va a editar solo desde ahí.
+  `enabled` se cambian en `config.yaml` —desde la UI o a mano— y se reinicia la app. Lo
+  único que la UI aplica sin reiniciar son el idioma y el tema.
 - Un hilo por cámara, y el ritmo lo pone la cámara (free-run). Si alguna vez se
   captura por trigger, el ritmo y el orden de los disparos son de quien orqueste
   la captura, no del hilo.
@@ -230,6 +259,31 @@ Lo que no se deduce leyendo un archivo suelto:
 - Un módulo al que le falta su librería de sistema degrada a no-op adentro y expone
   la misma API. El llamador no pregunta si está disponible.
 - `ui/` no lo importa nadie de `system/` ni de `tools/`.
+- **La UI no tiene colores ni textos propios repartidos.** Los colores de los widgets
+  estándar están en el QSS de los dos temas y los de lo que se dibuja con QPainter en
+  `ui/theme.py`; los textos, en `ui/strings.py`, con la clave en inglés y una columna por
+  idioma. Un color o un texto en dos archivos es el bug que este límite evita. La única
+  excepción de estilo inline es una animación, porque el QSS no interpola colores.
+- **La vista de monitor viene vacía y es a propósito.** Qué se mira mientras la línea
+  trabaja es lo más específico de cada instalación: el template trae la barra lateral
+  —los seis canales de salida y el log— y el fork le pasa su widget con `set_content()`.
+  Para el caso normal ya está `camera_grid`, que muestra **todas** las cámaras
+  configuradas —una caída queda con «SIN SEÑAL» en su lugar, para que se vea que falta— y
+  no elige qué frame entra: publica el modo crudo/anotado y lo resuelve el cableado. Una
+  disposición distinta —tres cámaras por pantalla— no se edita en la grilla: se le pasa
+  `camera_slots` y se arman varias dentro del widget del fork, que conserva la misma API
+  por slot para que el cableado no cambie.
+- **Un valor del config que no está entre las opciones de un combo no se pierde.** Se
+  agrega como opción y vuelve al archivo tal como estaba: `setCurrentText()` sobre un
+  combo no editable es un no-op silencioso, así que sin eso abrir el panel de
+  configuración y guardar alcanzaba para cambiar la marca de una cámara o el tipo de un
+  modelo que la fábrica todavía no registra. Lo hace `set_combo_value()`, y los mapeos de
+  rotación, modo y codec devuelven el valor crudo cuando no lo conocen en vez de caer a
+  un default.
+- **La UI no arma direcciones ni rutas de protocolo.** Las URLs de los streams le llegan
+  hechas por `set_stream_urls()` desde el cableado, que las pide a cada servidor: la
+  forma de la ruta es del servidor de video, y componerla en la UI la dejaría definida en
+  dos lugares.
 
 ## Qué se toca en un fork
 
@@ -241,8 +295,13 @@ cross-portea; si describe qué se mide en esta planta, es del fork.**
   `system/inference/metrics.py`, este archivo y el `README.md`.
 - **Se agregan sin editar lo que ya está**: `main.py`, el modelo del proyecto en
   `system/inference/` (+1 línea en la fábrica), `annotations.py`, un driver nuevo
-  en `tools/camera/` (+1 línea en su fábrica), y lo que corresponda en `test/`,
+  en `tools/camera/` (+1 línea en su fábrica), el widget del área central del monitor
+  (+1 línea de `set_content()` en `main.py`), y lo que corresponda en `test/`,
   `manual_test/` y `docs/`.
+- **De `ui/` sólo se agrega**: el widget del monitor, los textos que ese widget necesite
+  en `strings.py`, y —si el fork quiere editar `process:` desde la pantalla— una pestaña
+  en `views/config/` con +1 línea en `_TAB_CLASSES`. Las pestañas genéricas, los widgets,
+  los temas y las tres vistas son maquinaria: ver `docs/ui.md`.
 - **Todo lo demás es maquinaria.** Si hay que editarla para que el fork funcione,
   el límite está mal puesto: lo que falta es un punto de extensión, no un parche.
 
@@ -256,8 +315,15 @@ La tabla completa, archivo por archivo, está en `README.md`.
   Es lo que falta para que el Modbus publique algo: el servidor y el mapa están,
   pero nadie llena los registros todavía. También es donde se instancian el pipeline
   y el motor de inferencia, y donde se le pasan el analyzer y el gate del anotado.
-- `ui/`. El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya
-  corre, pero qué publica es lo más específico de cada fork y se declara al escribirlo.
+- El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
+  pero qué publica es lo más específico de cada fork y se declara al escribirlo.
+- **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
+  andando —tres vistas, siete pestañas de configuración, cuatro de diagnóstico— salvo dos
+  huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
+  `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
+  `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
+  espera, y el botón del header aparece sólo cuando se lo inyecta). Cómo se toca todo eso
+  está en `docs/ui.md`.
 - El modelo del proyecto. El template trae el mock —detecciones sintéticas, sin
   framework— y el fork agrega el suyo en `system/inference/` registrándolo en la
   fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.
@@ -270,6 +336,8 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - El mapa, las decisiones y lo que falta → este archivo.
 - Un documento con público propio —notas de puesta en marcha, un protocolo nuevo—
   → `docs/`. El mapa de registros ya vive ahí, y es generado: se edita el YAML.
+- Cómo se tocan los atributos de la interfaz —colores, textos, medidas, una pestaña
+  nueva— → `docs/ui.md`. No se repite en los docstrings de `ui/`: ellos apuntan ahí.
 - Convenciones → las skills. No se copian acá.
 
 Un subsistema gana carpeta propia cuando tiene más de un archivo; hasta entonces es

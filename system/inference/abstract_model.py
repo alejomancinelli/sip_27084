@@ -77,7 +77,6 @@ _TASK_ALIASES = {
 }
 
 _DEFAULT_MIN_CONFIDENCE_PCT = 50.0
-_DEFAULT_DEVICE = "auto"        # auto | cpu | cuda
 
 
 def normalize_task(name: str) -> str:
@@ -201,10 +200,6 @@ class AbstractModel(ABC):
         """
         raw_path = str(self._get_option("path", "") or "").strip()
         return resolve(raw_path, "") if raw_path else ""
-
-    def _get_device(self) -> str:
-        """Dispositivo pedido en el config: 'auto', 'cpu' o 'cuda'."""
-        return str(self._get_option("device", _DEFAULT_DEVICE) or _DEFAULT_DEVICE).strip().lower()
 
     def _get_max_side_px(self) -> int:
         """Lado mayor al que reducir antes de inferir; 0 = resolución nativa."""

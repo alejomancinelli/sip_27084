@@ -1,0 +1,217 @@
+project:
+  client: Prueba Manual
+  project_id: ui_demo
+system:
+  app_name: Prueba de interfaz
+  device_id: banco_de_pruebas
+  log_level: INFO
+  paths:
+    logs: ./data/logs
+    dataset: ./data/dataset_ui_demo
+ui:
+  language: es
+  dark_mode: true
+system_monitor:
+  disk_path: .
+  net_interfaces: []
+video:
+  http:
+    enabled: true
+    port: 8099
+    jpeg_quality: 80
+    frame_width_px: 960
+    log_connections: true
+  rtsp:
+    enabled: false
+    port: 8554
+    codec: h264_sw
+    fps: 15
+    frame_width_px: 0
+    net_interfaces: []
+    log_connections: true
+  display:
+    gamma: 1.0
+    clahe_clip: 0.0
+process:
+  scale_px_per_mm: {}
+  max_load_y_px: {}
+  min_load_pct: 0
+inference:
+  overlay:
+    enabled: true
+    draw_boxes: true
+    draw_masks: true
+    draw_labels: true
+    draw_summary: true
+    draw_roi: true
+    draw_timestamp: true
+    font_scale: 0.6
+    thickness: 2
+    class_colors_bgr: []
+  pipelines:
+    pipeline_1:
+      enabled: true
+      cameras:
+      - camera_1
+      - camera_2
+      interval_s: 0.5
+      min_detections: 0
+      min_result_confidence_pct: 0
+      frames_per_cycle: 1
+    pipeline_2:
+      enabled: false
+      cameras:
+      - camera_3
+      interval_s: 0.0
+      min_detections: 0
+      min_result_confidence_pct: 0
+      frames_per_cycle: 1
+  models:
+    model_1:
+      type: mock
+      path: ''
+      min_confidence_pct: 40
+      max_side_px: 0
+      class_names:
+      - grueso
+      - medio
+      - fino
+      params:
+        detection_count: 8
+        with_masks: true
+    model_2:
+      type: yolov8_seg
+      path: models/no_existe.pt
+      min_confidence_pct: 55
+      max_side_px: 1280
+      class_names: []
+      params: {}
+image_collector:
+  enabled: false
+  mode: on_demand
+  interval_min_s: 60
+  interval_max_s: 600
+  max_images: 500
+  min_free_space_gb: 5
+  save_original: true
+  save_annotated: false
+  save_inference_json: true
+  dedup:
+    enabled: true
+    history_len: 5
+    hamming_threshold: 5
+telemetry:
+  influxdb:
+    enabled: false
+    url: http://localhost:8086
+    org: iea
+    bucket: ui_demo
+  mqtt:
+    enabled: false
+    host: ''
+    port: 0
+    tls: false
+    user: ''
+    topic_base: ui_demo
+modbus:
+  slave_id: 1
+  register_count: 100
+  tcp:
+    enabled: true
+    host: 0.0.0.0
+    port: 5502
+  rtu:
+    enabled: false
+    port: COM1
+    baudrate: 115200
+    parity: N
+    stop_bits: 1
+cameras:
+  camera_1:
+    name: Cinta entrada
+    enabled: true
+    brand: mock
+    model: mock
+    driver: mock
+    address: ''
+    rotation: null
+    acquisition:
+      fps_limit: 10
+      exposure_time_us: 25000
+      gain: 1.0
+    roi:
+      enabled: true
+      x_px: 700
+      y_px: 300
+      width_px: 600
+      height_px: 500
+    illumination_min: 10
+    calibration:
+      camera_matrix: []
+      dist_coeffs: []
+  camera_2:
+    name: Cinta salida
+    enabled: true
+    brand: mock
+    model: mock
+    driver: mock
+    address: ''
+    rotation: null
+    acquisition:
+      fps_limit: 6
+      exposure_time_us: 25000
+      gain: 1.0
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 10
+    calibration:
+      camera_matrix: []
+      dist_coeffs: []
+  camera_3:
+    name: Descarga (deshabilitada)
+    enabled: false
+    brand: mock
+    model: mock
+    driver: mock
+    address: ''
+    rotation: null
+    acquisition:
+      fps_limit: 10
+      exposure_time_us: 25000
+      gain: 1.0
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 10
+    calibration:
+      camera_matrix: []
+      dist_coeffs: []
+  camera_4:
+    name: Tolva (sin driver)
+    enabled: true
+    brand: marca_fuera_del_catalogo
+    model: modelo_desconocido
+    driver: driver_que_no_existe
+    address: 192.168.0.44
+    rotation: null
+    acquisition:
+      fps_limit: 10
+      exposure_time_us: 25000
+      gain: 1.0
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 10
+    calibration:
+      camera_matrix: []
+      dist_coeffs: []

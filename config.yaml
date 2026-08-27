@@ -14,7 +14,10 @@ system:
     dataset: ./data/dataset
 
 ui:
-  language: LANGUAGE
+  # La interfaz. Los textos que ve el operador salen de ui/strings.py, que es la tabla
+  # de idiomas; `language` elige la columna. Estas dos claves son las únicas que la UI
+  # aplica sin reiniciar la app.
+  language: es                  # es | en | pt
   dark_mode: true
 
 system_monitor:
@@ -70,12 +73,33 @@ process:
   # tiene que frenar el arranque: publicar milímetros calculados con una escala inventada
   # es peor que no arrancar.
   #
-  # Los valores por cámara van como mapas con la clave del slot. Un proyecto con más de un
-  # proceso abre una sub-sección por proceso —`process.<nombre>`— y cada analyzer recibe
-  # la suya.
+  # Los valores por cámara van como mapas con la clave del slot.
   scale_px_per_mm: {}           # {camera_1: 3.2} — calibración; sin esto no hay medidas físicas
   max_load_y_px: {}             # {camera_1: 430} — altura del límite de carga de la cinta
   min_load_pct: 0               # por debajo de esto la carga se reporta como insuficiente
+  #
+  # VARIOS PROCESOS. Una instalación con más de un proceso —cuatro cintas iguales, cada
+  # una con su calibración— abre una sub-sección por proceso y declara qué cámaras mide
+  # cada uno, con la misma forma que `inference.pipelines.<slot>.cameras`:
+  #
+  #   process:
+  #     belt_1:
+  #       cameras: [camera_1, camera_2]
+  #       scale_px_per_mm: {camera_1: 3.2, camera_2: 3.1}
+  #       min_load_pct: 60
+  #     belt_2:
+  #       cameras: [camera_3, camera_4]
+  #       ...
+  #
+  # La pertenencia va explícita y NO se deduce de las claves de los mapas: un parámetro
+  # uniforme —`min_load_pct`— no tiene mapa por cámara, y un error de tipeo en una clave
+  # movería una cámara de proceso en silencio.
+  #
+  # Proceso y pipeline son cosas distintas. El pipeline es una agrupación de cómputo —qué
+  # modelo corre en qué hilo—; el proceso es una agrupación de planta —qué se mide—. Cuatro
+  # cintas con el mismo modelo son UN pipeline con las cuatro cámaras (los pesos se cargan
+  # una vez) y CUATRO procesos. El motor recibe un solo analyzer, así que con varios
+  # procesos ese analyzer reparte por `result.camera_slot`.
 
 inference:
   # Un hilo por pipeline: todas las cámaras de un mismo pipeline lo comparten, así que
@@ -93,11 +117,15 @@ inference:
     # Dibujado del resultado sobre el frame. Sale una sola vez y el mismo array viaja a
     # la UI, al stream `annotated` y al dataset.
     enabled: true
+    # Estas cuatro no están en la pantalla de configuración: apagarlas deja un stream
+    # anotado que no muestra nada, así que van siempre. La clave sigue acá porque el
+    # motor la lee, para el proyecto que de verdad necesite apagar alguna.
     draw_boxes: true
     draw_masks: true            # sólo hace algo si el modelo devuelve máscaras
     draw_labels: true           # nombre de clase y confianza sobre cada caja
-    draw_summary: true          # panel con tiempo de inferencia, confianza, detecciones y métricas
     draw_roi: true              # recuadro de la zona que se analizó
+    # Estas dos sí se editan desde la pantalla: tapan parte de la imagen.
+    draw_summary: true          # panel con tiempo de inferencia, confianza, detecciones y métricas
     draw_timestamp: true
     font_scale: 0.6
     thickness: 2
@@ -114,7 +142,9 @@ inference:
       # medición. El descarte por detección es del modelo (`min_confidence_pct`).
       min_detections: 0         # menos detecciones que esto = resultado no confiable
       min_result_confidence_pct: 0   # confianza media por debajo de esto = resultado no confiable
-      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame
+      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame.
+                                # No está en la pantalla de configuración porque el motor
+                                # no lo lee: lo usa quien orquesta el ciclo de medición.
       # El motor no lee `frames_per_cycle`: emite un resultado por frame y no promedia. Lo
       # lee quien orquesta el ciclo —hoy main.py, mañana el scheduler de captura—, que junta
       # esos N resultados y los agrega con `analysis.summarize_metrics` (media, desvío y
@@ -125,7 +155,9 @@ inference:
     model_1:
       type: mock                # ver REGISTERED_MODELS en model_factory.py
       path: ''                  # pesos del modelo; relativo a la raíz del repo
-      device: auto              # auto | cpu | cuda
+      # El dispositivo no se configura: la implementación usa la GPU si hay CUDA
+      # disponible y cae a CPU si no. Elegirlo a mano sólo servía para dejar la
+      # inferencia en CPU sin darse cuenta.
       min_confidence_pct: 50    # descarta la detección; lo aplica el modelo, no el llamador
       max_side_px: 0            # lado mayor al que se reduce antes de inferir; 0 = nativo
       class_names: []           # nombre por índice de clase; [] = 'class_<i>'
@@ -189,7 +221,10 @@ modbus:
   # el archivo que cambia en cada instalación. La copia para el integrador se genera
   # con `python -m system.modbus.export_map`.
   slave_id: 1                   # 1–247; el único unit id al que contesta el equipo
-  register_count: 100           # registros expuestos: 1–N, o 40001–4000N para el PLC
+  register_count: 100           # registros expuestos: 1–N, o 40001–4000N para el PLC.
+                                # No se edita desde la UI: lo decide el tamaño del mapa.
+                                # Tiene que cubrir la dirección más alta de
+                                # register_map.yaml, o esos registros no se publican.
   tcp:
     enabled: true
     host: 0.0.0.0               # interfaz por la que escucha; 0.0.0.0 = todas
