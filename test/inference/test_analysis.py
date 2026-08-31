@@ -196,3 +196,27 @@ class TestAverageMetrics:
 
     def test_without_results_it_is_empty(self):
         assert analysis.average_metrics([]) == {}
+
+
+class TestSummaryKeys:
+    """Qué claves inventa `summarize_metrics`, para que el consumidor las separe."""
+
+    def test_the_sample_count_is_a_summary_key(self):
+        assert analysis.is_summary_key(analysis.SAMPLE_COUNT_KEY)
+
+    @pytest.mark.parametrize("suffix", analysis.SUMMARY_SUFFIXES)
+    def test_every_statistic_is_recognised(self, suffix):
+        assert analysis.is_summary_key(f"load_pct{suffix}")
+
+    def test_a_process_metric_is_not(self):
+        assert not analysis.is_summary_key("load_pct")
+        assert not analysis.is_summary_key("camera_1_class_1_pct")
+
+    def test_everything_summarize_metrics_adds_is_recognised(self):
+        """Evita que agregar un estadístico nuevo deje de reconocerse y vuelva a llenar
+        el log del cableado con avisos de métricas sin fila."""
+        summary = analysis.summarize_metrics([_result({"load_pct": 10.0}),
+                                              _result({"load_pct": 20.0})])
+        derived = set(summary) - {"load_pct"}
+        assert derived
+        assert all(analysis.is_summary_key(key) for key in derived)
