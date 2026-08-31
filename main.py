@@ -813,7 +813,7 @@ class Application(QObject):
 
         # Un solo `encode_batch` para los dos consumidores —el datastore que lee el PLC y
         # la tabla que mira el operador—: codificar dos veces los deja divergir.
-        registers = SCHEMA.encode_batch(values)
+        registers = SCHEMA.encode_batch(self._mapped_only(values))
         self._modbus.update_block(registers)
         self._ui.update_modbus_values(registers)
 
@@ -954,6 +954,29 @@ class Application(QObject):
         logger.info("[Main] config.yaml guardado desde la interfaz.")
 
     # ── Traducción al esquema de registros ───────────────────────────────────
+
+    def _mapped_only(self, values: dict) -> dict:
+        """
+        Deja pasar los valores que tienen fila en el mapa y avisa una vez por el resto.
+
+        El mapa de cada instalación declara lo que ese PLC lee, y no tiene por qué
+        declarar todo lo que el cableado sabe medir: una que no reporta la RAM total
+        simplemente no pone la fila —y ese valor igual se usa, por ejemplo para la escala
+        del gráfico de RAM—. Sin este filtro `encode_batch` levanta `KeyError` y el ciclo
+        de registros se cae entero por un valor de más.
+        """
+        mapped = {}
+        for name, value in values.items():
+            if name in _REGISTER_NAMES:
+                mapped[name] = value
+            elif name not in self._unmapped_metrics:
+                self._unmapped_metrics.add(name)
+                # A nivel DEBUG y no INFO: los nombres que llegan acá son los del bloque
+                # de salud, que están escritos en este archivo y no pueden estar mal
+                # tipeados. Que un mapa no declare uno es una decisión de la instalación,
+                # no algo que el operador tenga que ir a corregir.
+                logger.debug(f"[Main] '{name}' no tiene fila en el mapa: no se publica.")
+        return mapped
 
     def _build_camera_registers(self) -> dict:
         """
