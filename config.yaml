@@ -147,13 +147,24 @@ inference:
       # medición. El descarte por detección es del modelo (`min_confidence_pct`).
       min_detections: 0         # menos detecciones que esto = resultado no confiable
       min_result_confidence_pct: 0   # confianza media por debajo de esto = resultado no confiable
-      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame.
-                                # No está en la pantalla de configuración porque el motor
-                                # no lo lee: lo usa quien orquesta el ciclo de medición.
-      # El motor no lee `frames_per_cycle`: emite un resultado por frame y no promedia. Lo
-      # lee quien orquesta el ciclo —hoy main.py, mañana el scheduler de captura—, que junta
-      # esos N resultados y los agrega con `analysis.summarize_metrics` (media, desvío y
-      # rango) y `analysis.pick_representative` (qué frame se guarda y se muestra).
+      # ── El ciclo de medición ──────────────────────────────────────────────
+      # El motor no lee ninguna de estas cuatro: emite un resultado por frame y no
+      # promedia. Las lee `system/camera/capture_scheduler.py`, que junta los N resultados
+      # y los agrega con `analysis.summarize_metrics` (media, desvío y rango) y
+      # `analysis.pick_representative` (qué frame se guarda y se muestra).
+      #
+      # Con `frames_per_cycle: 1` el scheduler es un pass-through y las otras tres no
+      # hacen nada: una aplicación en tiempo real no tiene ciclo que orquestar.
+      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame
+      cycle_interval_s: 0.0     # espera entre rondas; 0 = la siguiente arranca al terminar
+      capture_timeout_s: 30     # un frame pedido que no vuelve en esto se da por perdido
+      idle_cameras_between_cycles: false
+      # Apagar la captura entre mediciones libera el ancho de banda del bus y el CPU del
+      # hilo de captura, y en una ronda de varias cámaras deja el enlace para la que está
+      # midiendo. El costo es que el stream crudo y la vista del operador se quedan sin
+      # imagen mientras tanto, así que viene apagado. Al prenderlo, `capture_timeout_s`
+      # tiene que cubrir lo que la cámara tarda en rearmar la adquisición: si el primer
+      # frame llega después del timeout, la ronda se queda esperando algo que no salió.
   models:
     # Una entrada por modelo, numeradas model_1 … model_N. El slot es el nombre con el que
     # el pipeline pide el modelo en `model_slots`.
