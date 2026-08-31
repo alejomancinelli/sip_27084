@@ -126,7 +126,7 @@ trae:
 2. **`config.yaml`**: `project`, `system`, y una entrada en `cameras` por cámara física
    —marca, modelo, driver, IP, adquisición, ROI, mínimo de iluminación—. Verificar con
    `manual_test/cameras/camera_live_view.py`.
-3. **El modelo**: implementar `AbstractModel` en un archivo nuevo de `system/inference/` y
+3. **El modelo**: implementar `AbstractModel` en un archivo nuevo de `system/inference/models/` y
    registrarlo con una línea en `model_factory.py`. Una clase por tarea —clasificación,
    detección, segmentación—, porque lo que cambia entre ellas es cómo se decodifica la
    salida. Los pesos afinados no son una clase nueva: son `path` en el config.
@@ -176,7 +176,7 @@ es maquinaria y se cross-portea; si describe qué se mide en esta planta, es del
 
 | Archivo | Cuándo |
 |---|---|
-| `system/inference/<mi_modelo>.py` | el modelo del proyecto, más **una línea** en `model_factory.py` |
+| `system/inference/models/<mi_modelo>.py` | el modelo del proyecto, más **una línea** en `model_factory.py` |
 | `system/inference/annotations.py` | referencias de la planta: un límite de carga, una zona |
 | `tools/camera/<mi_driver>.py` | una cámara de otro fabricante, más **una línea** en `camera_factory.py` |
 | `tools/camera/camera_catalog.py` | un modelo de cámara que falte en el catálogo |
@@ -197,7 +197,7 @@ lo que falta es un punto de extensión, no un parche.
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
 | captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/abstract_model.py`, `abstract_pipeline.py`, `model_factory.py`, `mock_model.py`, `null_model.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
+| inferencia | `system/inference/models/*` (menos el del fork), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
 | bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |

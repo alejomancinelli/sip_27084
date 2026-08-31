@@ -27,7 +27,7 @@ el control de planta, no la capacidad.
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from system.inference.model_factory import REGISTERED_MODELS
+from system.inference.models.model_factory import REGISTERED_MODELS
 
 from system.config_manager import ConfigManager
 

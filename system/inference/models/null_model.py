@@ -12,7 +12,7 @@ import numpy as np
 from system.config_manager import ConfigManager
 
 from .abstract_model import AbstractModel
-from .result import Detection
+from ..result import Detection
 
 
 class NullModel(AbstractModel):

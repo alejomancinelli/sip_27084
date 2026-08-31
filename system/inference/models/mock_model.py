@@ -17,7 +17,7 @@ import numpy as np
 from system.logger import logger
 
 from .abstract_model import STATUS_UNLOADED, TASK_DETECTION, AbstractModel
-from .result import Detection
+from ..result import Detection
 
 _DEFAULT_DETECTION_COUNT = 3
 _MAX_DETECTION_COUNT = 64        # techo: el mock dibuja, no estresa

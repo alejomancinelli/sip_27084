@@ -44,8 +44,8 @@ import numpy as np
 
 from system.config_manager import ConfigManager
 
-from .abstract_model import AbstractModel
-from .model_factory import create_model
+from .models.abstract_model import AbstractModel
+from .models.model_factory import create_model
 from .result import Detection
 
 
