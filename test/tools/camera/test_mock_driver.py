@@ -5,6 +5,7 @@ import os
 import sys
 
 
+import tools.camera.mock_driver as md
 from tools.camera.mock_driver import MockDriver
 
 # fps alto para que los frames no cuesten tiempo de test real.
@@ -78,3 +79,17 @@ class TestRotation:
 
     def test_unknown_rotation_is_ignored(self):
         assert _connected(rotation="45").get_frame().shape == _connected().get_frame().shape
+
+
+class TestDustNoise:
+    def test_the_pattern_is_reused_between_frames(self):
+        """Sortearlo por frame cuesta ~21 ms de GIL y con varias cámaras mock lo que se
+        termina midiendo es el driver de prueba."""
+        driver = _connected()
+        assert driver._dust_noise() is driver._dust_noise()
+
+    def test_it_is_refreshed_once_the_window_passed(self):
+        driver = _connected()
+        stale = driver._dust_noise()
+        driver._noise_time_s -= md._NOISE_REFRESH_S
+        assert driver._dust_noise() is not stale

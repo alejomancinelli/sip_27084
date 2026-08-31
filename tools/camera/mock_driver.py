@@ -18,6 +18,7 @@ _FLOW_JITTER_PX = 150    # ensanchamiento aleatorio por frame, ±px
 _FLOW_GRAY      = 150    # nivel de gris de la banda 0–255
 
 _DUST_NOISE_MAX = 30        # amplitud del ruido que simula polvillo 0–255
+_NOISE_REFRESH_S = 1.0      # cada cuánto se regenera el patrón de ruido
 _BASE_TEMPERATURE_C = 40.0  # temperatura de referencia del status sintético
 
 
@@ -44,6 +45,8 @@ class MockDriver(AbstractCameraDriver):
         self._fps_limit = float(fps_limit)
         self._frame_time_s = 1.0 / self._fps_limit
         self._last_frame_time_s = time.time()
+        self._noise: np.ndarray | None = None
+        self._noise_time_s = 0.0
 
     def connect(self) -> bool:
         self.is_connected = True
@@ -90,7 +93,22 @@ class MockDriver(AbstractCameraDriver):
             (_FLOW_GRAY, _FLOW_GRAY, _FLOW_GRAY),
             -1,
         )
+        return cv2.add(frame, self._dust_noise())
 
-        # Ruido uniforme: simula polvillo en suspensión.
-        noise = np.random.randint(0, _DUST_NOISE_MAX, frame.shape, dtype=np.uint8)
-        return cv2.add(frame, noise)
+    def _dust_noise(self) -> np.ndarray:
+        """
+        Patrón de polvillo, regenerado como mucho una vez por segundo.
+
+        Sortear el ruido de un frame entero cuesta ~21 ms y retiene el GIL mientras
+        tanto: con varias cámaras mock, los hilos de captura le sacan el intérprete al
+        resto de la app y lo que se termina midiendo es el driver de prueba. Reusarlo
+        deja el frame en ~3 ms y el polvillo sigue cambiando lo suficiente para que no
+        parezca una imagen congelada.
+        """
+        now_s = time.time()
+        if self._noise is None or (now_s - self._noise_time_s) >= _NOISE_REFRESH_S:
+            self._noise = np.random.randint(
+                0, _DUST_NOISE_MAX, (_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), dtype=np.uint8
+            )
+            self._noise_time_s = now_s
+        return self._noise

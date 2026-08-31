@@ -1152,13 +1152,49 @@ def main(argv: list | None = None) -> int:
     # Ctrl+C y el SIGTERM de un servicio, con el event loop de Qt corriendo: sin esto la
     # señal queda esperando a que Qt devuelva el control, que no pasa. El timer al vacío
     # es lo que le da al intérprete la chance de atenderla.
-    for signal_number in (signal.SIGINT, signal.SIGTERM):
+    #
+    for signal_number in _interrupt_signals():
         signal.signal(signal_number, lambda *_: app.quit())
     interrupt_timer = QTimer()
     interrupt_timer.timeout.connect(lambda: None)
     interrupt_timer.start(_SIGNAL_POLL_INTERVAL_MS)
 
-    return app.exec()
+    exit_code = app.exec()
+    return _exit(exit_code, config)
+
+
+def _interrupt_signals() -> tuple:
+    """
+    Señales con las que se le pide a la app que cierre.
+
+    ONLY_WINDOWS: `SIGBREAK` es el Ctrl+Break de Windows y no existe en POSIX. Sin
+    atenderlo el proceso muere con 0xC000013A **sin ejecutar un solo paso de `stop()`**:
+    las cámaras quedan tomadas y el datastore del Modbus con el último valor publicado.
+    El `hasattr` es lo que deja el mismo código corriendo en Linux.
+    """
+    signal_numbers = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        signal_numbers.append(signal.SIGBREAK)
+    return tuple(signal_numbers)
+
+
+def _exit(exit_code: int, config: ConfigManager) -> int:
+    """
+    Cierra el log y, si el config lo pide, termina el proceso sin desarmar el intérprete.
+
+    Con `system.hard_exit: true` no se vuelve de acá. Hace falta cuando el proceso aborta
+    en el *teardown* del intérprete y no en el cierre: un framework de inferencia con hilos
+    nativos y Qt cargados a la vez pueden abortar con 0xC0000409 al descargarse, aun con
+    todos los hilos de la app cerrados limpiamente. `stop()` ya corrió por `aboutToQuit`,
+    así que lo que se saltea es la destrucción de módulos, no el cierre ordenado.
+
+    Viene apagado porque saltea también los `atexit` y el flush de lo que no sea el log, y
+    porque el que lo necesita lo descubre al desplegar, no antes.
+    """
+    logging.shutdown()
+    if config.get("system.hard_exit", False):
+        os._exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":

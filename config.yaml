@@ -9,6 +9,13 @@ system:
   app_name: APP_NAME
   device_id: DEVICE_ID
   log_level: INFO               # DEBUG | INFO | WARNING | ERROR
+  hard_exit: false
+  # Termina el proceso al salir sin desarmar el intérprete. Hace falta sólo cuando el
+  # proceso aborta DESPUÉS de haber cerrado bien: un framework de inferencia con hilos
+  # nativos y Qt cargados a la vez pueden abortar al descargarse (0xC0000409 en Windows),
+  # aunque todos los hilos de la app hayan cerrado limpiamente. El cierre ordenado ya
+  # corrió; lo que se saltea es la destrucción de módulos —y con ella los `atexit`—, así
+  # que viene apagado y se prende en el equipo donde se vea el aborto.
   paths:
     logs: ./data/logs
     dataset: ./data/dataset
