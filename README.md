@@ -338,7 +338,7 @@ campos cambian en cada instalación, y el diálogo de GPIO espera un
 Cómo se toca cada atributo —dónde vive un color, un texto, una medida; cómo se agrega
 una pestaña o un widget; qué cosas la UI **no** hace— está en [docs/ui.md](docs/ui.md).
 
-## Los cinco puntos de extensión del motor de inferencia
+## Los seis puntos de extensión del motor de inferencia
 
 Un fork no edita `engine.py`: le pasa funciones por el constructor. Es lo que mantiene
 genérica la maquinaria y testeable lo del proyecto.
@@ -347,9 +347,18 @@ genérica la maquinaria y testeable lo del proyecto.
 |---|---|---|
 | `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
 | `pipeline` | qué modelos corren y en qué orden | `pipeline.py` |
+| `classifier` | qué detecciones cuentan y con qué clase | del fork, con `process:` |
 | `analyzer` | qué significan las detecciones | `metrics.py` |
 | `annotator` | qué se dibuja además del resultado | `annotations.py` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |
+
+El `classifier` corre entre el pipeline y el promedio de confianza, y es el único lugar
+donde entra lo que depende de la cámara: `predict()` no recibe el slot, porque el modelo es
+uno por pipeline y lo comparten todas sus cámaras. Ahí van la escala de píxel, el filtro de
+tamaño y la clase que sale de la medida. Lo que descarta no cuenta para `min_detections` ni
+para la confianza del resultado, y la clase que deja en `class_index` es la que después
+colorean el overlay y `analysis.count_by_class`. El analyzer no puede hacerlo: su contrato
+dice que no modifica el resultado.
 
 ## Los tres caminos que salen de un frame
 

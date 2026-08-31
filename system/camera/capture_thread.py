@@ -69,6 +69,10 @@ class CaptureThread(QThread):
         )
         self._last_status: dict = self._driver.get_status()
         self._last_status_time_s = time.time()
+        # Pedido de prender o apagar la captura, pendiente de aplicar. None = nada que
+        # hacer. Lo escribe el hilo que llama a `set_capture_enabled` y lo consume este
+        # hilo: asignar una referencia es atómico bajo el GIL, así que no necesita lock.
+        self._capture_wanted: bool | None = None
 
     # ── API pública ──────────────────────────────────────────────────────────
 
@@ -81,6 +85,16 @@ class CaptureThread(QThread):
     def config_error(self) -> str | None:
         """Motivo por el que la cámara no puede operar, o None si la config sirve."""
         return self._config_error
+
+    def set_capture_enabled(self, enabled: bool):
+        """
+        Pide prender o apagar la captura sin cerrar la conexión. Barata y thread-safe.
+
+        No toca el driver: dos de los drivers cortan el grab en el SDK, y hacerlo desde
+        otro hilo mientras éste está adentro de `get_frame()` es una carrera contra la
+        librería del fabricante. Lo aplica este hilo en su próxima vuelta.
+        """
+        self._capture_wanted = bool(enabled)
 
     def get_status(self) -> dict:
         """
@@ -118,6 +132,8 @@ class CaptureThread(QThread):
                     self._sleep_interruptible(_RECONNECT_DELAY_MS)
                     continue
 
+            self._apply_capture_wanted()
+
             # ── Captura de frame ─────────────────────────────────────────────
             try:
                 frame = self._driver.get_frame(timeout_ms=_FRAME_TIMEOUT_MS)
@@ -154,6 +170,16 @@ class CaptureThread(QThread):
             return
         self._last_status = status
         self.status_updated.emit(status, self.camera_slot)
+
+    def _apply_capture_wanted(self):
+        """Aplica en el driver el último pedido de captura, si hay alguno pendiente."""
+        wanted, self._capture_wanted = self._capture_wanted, None
+        if wanted is None:
+            return
+        try:
+            self._driver.set_capture_enabled(wanted)
+        except Exception as e:
+            logger.warning(f"[{self.camera_slot}] No se pudo cambiar la captura: {e}.")
 
     def _idle_sleep_ms(self) -> int:
         """Pausa entre pedidos cuando el driver no entrega frame."""

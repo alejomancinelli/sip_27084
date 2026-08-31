@@ -23,4 +23,4 @@ Cómo se sube. Se edita `APP_VERSION` en el mismo commit que cierra el cambio, c
 Cada fork lleva su propia versión: son programas distintos, aunque compartan la plomería.
 """
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"

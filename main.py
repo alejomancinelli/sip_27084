@@ -50,17 +50,18 @@ Lo que **no** hace, y por qué:
     valores físicos.
   - **No dibuja.** El overlay es del motor; las referencias de la planta son annotators.
 
-Los cinco puntos de extensión del motor, y de dónde sale cada uno:
+Los seis puntos de extensión del motor, y de dónde sale cada uno:
 
     preprocessor    `tools/image/undistort.py`, si alguna cámara declara calibración
     pipeline        `system/inference/pipeline.py`, que el fork reescribe
+    classifier      qué detecciones cuentan y con qué clase, compuesto abajo con `process:`
     analyzer        `system/inference/metrics.py`, que el fork reescribe
     annotator       `system/inference/annotations.py`, compuesto abajo con `process:`
     annotate_gate   acá: se dibuja si lo mira la UI o un cliente del stream anotado
 
-**Qué toca el fork.** Los tres métodos del bloque «Lo que cambia en cada fork»: qué mira
-el operador, qué se dibuja además del resultado, y con qué parámetros se cuenta. El resto
-es cableado genérico y se cross-portea sin editar.
+**Qué toca el fork.** Los cuatro métodos del bloque «Lo que cambia en cada fork»: qué mira
+el operador, qué detecciones cuentan, qué se dibuja además del resultado, y con qué
+parámetros se cuenta. El resto es cableado genérico y se cross-portea sin editar.
 
 Cómo llegan los números al PLC: se publican los registros de salud —heartbeat, hardware,
 estado por cámara, palabras de estado— y, de las métricas del analyzer, **las que tengan
@@ -83,6 +84,7 @@ from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Signal, S
 from PySide6.QtWidgets import QApplication, QWidget
 
 from system import paths
+from system.camera.capture_scheduler import CaptureScheduler
 from system.camera.capture_thread import CaptureThread
 from system.config_manager import ConfigManager
 from system.formats import camera_health, com_status, system_status
@@ -429,6 +431,7 @@ class Application(QObject):
         # el hilo, así los pesos se cargan una vez y el acceso a la GPU queda
         # serializado por construcción.
         preprocessor = self._build_preprocessor()
+        classifier = self._build_classifier()
         analyzer = self._build_analyzer()
         annotator = self._build_annotator()
         self._engines: list[InferenceThread] = []
@@ -439,6 +442,7 @@ class Application(QObject):
             engine = InferenceThread(
                 config, Pipeline(config, pipeline_slot),
                 preprocessor=preprocessor,
+                classifier=classifier,
                 analyzer=analyzer,
                 annotator=annotator,
                 annotate_gate=self._is_annotated_watched,
@@ -446,14 +450,25 @@ class Application(QObject):
             engine.result_ready.connect(self._on_result_ready)
             self._engines.append(engine)
 
+        # ── Ciclo de medición ────────────────────────────────────────────────
+        # El motor emite un resultado por frame; el scheduler junta los N que forman una
+        # medición. Con `frames_per_cycle: 1` es un pass-through y cada resultado sale tal
+        # cual, así que el camino es uno solo y no hay que preguntar si hay ciclo.
+        self._scheduler = CaptureScheduler(
+            config, tuple(engine.pipeline_slot for engine in self._engines))
+        for engine in self._engines:
+            engine.result_ready.connect(self._scheduler.on_result_ready)
+        self._scheduler.cycle_complete.connect(self._on_cycle_complete)
+        self._scheduler.capture_wanted.connect(self._on_capture_wanted)
+
         # ── Captura ──────────────────────────────────────────────────────────
-        self._capture_threads: list[CaptureThread] = []
+        self._capture_threads: dict[str, CaptureThread] = {}
         for camera_slot in (config.get("cameras", {}) or {}):
             thread = CaptureThread(config, camera_slot)
             thread.frame_ready.connect(self._on_frame_ready)
             thread.status_updated.connect(self._on_camera_status)
             self._forward_status_to_content(thread)
-            self._capture_threads.append(thread)
+            self._capture_threads[camera_slot] = thread
 
         # ── Hardware y timers ────────────────────────────────────────────────
         self._monitor = SystemMonitor(config)
@@ -472,9 +487,10 @@ class Application(QObject):
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
-    # Tres decisiones del proyecto, juntas y marcadas para que un diff las muestre de
-    # una: qué mira el operador, con qué parámetros se cuenta, y qué se dibuja además
-    # del resultado. Todo lo demás de este archivo es cableado genérico.
+    # Cuatro decisiones del proyecto, juntas y marcadas para que un diff las muestre de
+    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta, y
+    # qué se dibuja además del resultado. Todo lo demás de este archivo es cableado
+    # genérico.
 
     def _build_monitor_content(self) -> QWidget:
         """
@@ -491,6 +507,21 @@ class Application(QObject):
         from ui.widgets.camera_grid import CameraGrid
 
         return CameraGrid(self._config)
+
+    def _build_classifier(self):
+        """
+        Qué detecciones cuentan y con qué clase. El template no filtra ni reetiqueta.
+
+        Es donde va lo que depende de la cámara y el modelo no puede saber, porque es uno
+        solo para todas las del pipeline: una escala de píxel, un filtro de tamaño, una
+        clase que sale de la medida. Recibe `(detections, camera_slot)` y devuelve las que
+        quedan; lo que descarte no cuenta para la confianza ni para `min_detections`, y la
+        clase que deje en `class_index` es la que colorea el overlay.
+
+        Se arma con los mismos valores de `process:` que el analyzer, leídos una sola vez,
+        para que lo que se dibuja y lo que se mide no puedan discrepar.
+        """
+        return None
 
     def _build_analyzer(self):
         """
@@ -528,8 +559,9 @@ class Application(QObject):
         self._metrics_poller.start()
         for engine in self._engines:
             engine.start()
-        for thread in self._capture_threads:
+        for thread in self._capture_threads.values():
             thread.start()
+        self._scheduler.start()
 
         self._ui.show()
         logger.info(
@@ -549,8 +581,9 @@ class Application(QObject):
             timer.stop()
         self._ui.detach_log_handler()
 
+        self._scheduler.stop()
         # Primero la captura: sin frames nuevos, la inferencia drena lo que tenga.
-        qt_threads = (self._capture_threads + self._engines
+        qt_threads = (list(self._capture_threads.values()) + self._engines
                       + [self._metrics_poller, self._telemetry])
         for thread in qt_threads:
             thread.requestInterruption()
@@ -583,8 +616,17 @@ class Application(QObject):
             content.update_frame(frame_bgr, camera_slot)
         self._http_video.push_raw(camera_slot, frame_bgr)
         self._rtsp_video.push_raw(camera_slot, frame_bgr)
+        if frame_bgr is None or frame_bgr.size == 0:
+            return
         for engine in self._engines:
-            engine.push_frame(frame_bgr, camera_slot)
+            # El ciclo decide si este frame entra: con `frames_per_cycle: 1` siempre
+            # que sí, y el ritmo lo sigue poniendo el `interval_s` del motor. El permiso
+            # se pide último porque se consume: pedirlo por un frame que el motor va a
+            # descartar deja al ciclo esperando un resultado que no llega.
+            if self._scheduler.take_frame(camera_slot, engine.pipeline_slot):
+                engine.push_frame(
+                    frame_bgr, camera_slot,
+                    ignore_interval=self._scheduler.is_cycled(engine.pipeline_slot))
 
     @Slot(object, str)
     def _on_camera_status(self, status: dict, camera_slot: str):
@@ -596,10 +638,10 @@ class Application(QObject):
     @Slot(object)
     def _on_result_ready(self, result: InferenceResult):
         """
-        Un resultado del motor: a la UI, a los streams, al dataset y a la telemetría.
+        Un resultado del motor: a la UI y a los streams, uno por frame.
 
-        Los registros no se escriben acá: los publica el ciclo de `_on_registers_tick`,
-        que junta las métricas con la salud y codifica una sola vez.
+        Sólo el camino de vista. La medición sale por `_on_cycle_complete`, que es un
+        ciclo entero: publicar acá daría N mediciones por medición.
         """
         self._camera_illumination[result.camera_slot] = result.illumination_pct
         content = self._ui.monitor_content
@@ -614,12 +656,36 @@ class Application(QObject):
             self._http_video.push_annotated(result.camera_slot, result.annotated_bgr)
             self._rtsp_video.push_annotated(result.camera_slot, result.annotated_bgr)
 
+    @Slot(object)
+    def _on_cycle_complete(self, result: InferenceResult):
+        """
+        La medición del ciclo: al dataset, a la telemetría y a los registros.
+
+        Va separado de `_on_result_ready` porque son dos caminos distintos: el operador
+        mira los N frames del ciclo, pero la medición es una sola. Con
+        `frames_per_cycle: 1` el scheduler reemite cada resultado y los dos caminos
+        corren igual de seguido.
+        """
         # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector.
         if self._collector.mode == _COLLECTOR_MODE_INTERVAL:
             self._collector.push_frame(
                 result.camera_slot, result.source_bgr,
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
             )
+        elif self._scheduler.is_cycled(result.pipeline_slot):
+            # En on_demand el que pide la captura es el ciclo, y es una por medición.
+            # `save_now` escribe en este hilo: por frame sería un guardado sincrónico en
+            # el hilo de la GUI, que es justo lo que su contrato desaconseja.
+            self._collector.save_now(
+                result.camera_slot, result.source_bgr,
+                annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
+            )
+
+        content = self._ui.monitor_content
+        if content is not None:
+            setter = getattr(content, "update_cycle", None)
+            if setter is not None:
+                setter(result)
 
         # Telemetría: al buzón, no a la cola. Lo publica el tick, agregado, porque una
         # serie por resultado escala con los fps y no agrega información. Los no
@@ -629,6 +695,13 @@ class Application(QObject):
             (result.camera_slot, result.pipeline_slot), []
         ).append(result)
         self._store_metrics(result)
+
+    @Slot(str, bool)
+    def _on_capture_wanted(self, camera_slot: str, enabled: bool):
+        """El scheduler pide prender o apagar una cámara entre mediciones."""
+        thread = self._capture_threads.get(camera_slot)
+        if thread is not None:
+            thread.set_capture_enabled(enabled)
 
     def _is_annotated_watched(self, camera_slot: str) -> bool:
         """
@@ -667,7 +740,8 @@ class Application(QObject):
                 model_loaded=all(e.get_status()["loaded"] for e in self._engines),
                 inference_error=any(not e.get_status()["running"] for e in self._engines),
                 fallback_config=self._config.is_using_fallback,
-                dead_thread=any(not t.isRunning() for t in self._capture_threads),
+                dead_thread=any(not t.isRunning()
+                                for t in self._capture_threads.values()),
             ),
             # Los seis canales, cada uno con el estado que informó su dueño: es la misma
             # fuente que alimenta los chips, así que el operador y el PLC no pueden estar
@@ -715,6 +789,7 @@ class Application(QObject):
         que se consulta. Por eso esto es un timer y no un slot, y por eso está todo en un
         solo lugar en vez de repartido.
         """
+        self._scheduler.tick()
         statuses = self._get_service_statuses()
         for service, status in statuses.items():
             self._ui.set_service_status(service, status)
@@ -951,10 +1026,8 @@ class Application(QObject):
         ]
 
     def _is_synthetic(self, camera_slot: str) -> bool:
-        for thread in self._capture_threads:
-            if thread.camera_slot == camera_slot:
-                return thread.is_synthetic
-        return False
+        thread = self._capture_threads.get(camera_slot)
+        return bool(thread is not None and thread.is_synthetic)
 
     def _forward_status_to_content(self, thread: CaptureThread):
         """Conecta el status al widget del monitor, si el que puso el fork lo acepta."""
@@ -1079,13 +1152,49 @@ def main(argv: list | None = None) -> int:
     # Ctrl+C y el SIGTERM de un servicio, con el event loop de Qt corriendo: sin esto la
     # señal queda esperando a que Qt devuelva el control, que no pasa. El timer al vacío
     # es lo que le da al intérprete la chance de atenderla.
-    for signal_number in (signal.SIGINT, signal.SIGTERM):
+    #
+    for signal_number in _interrupt_signals():
         signal.signal(signal_number, lambda *_: app.quit())
     interrupt_timer = QTimer()
     interrupt_timer.timeout.connect(lambda: None)
     interrupt_timer.start(_SIGNAL_POLL_INTERVAL_MS)
 
-    return app.exec()
+    exit_code = app.exec()
+    return _exit(exit_code, config)
+
+
+def _interrupt_signals() -> tuple:
+    """
+    Señales con las que se le pide a la app que cierre.
+
+    ONLY_WINDOWS: `SIGBREAK` es el Ctrl+Break de Windows y no existe en POSIX. Sin
+    atenderlo el proceso muere con 0xC000013A **sin ejecutar un solo paso de `stop()`**:
+    las cámaras quedan tomadas y el datastore del Modbus con el último valor publicado.
+    El `hasattr` es lo que deja el mismo código corriendo en Linux.
+    """
+    signal_numbers = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        signal_numbers.append(signal.SIGBREAK)
+    return tuple(signal_numbers)
+
+
+def _exit(exit_code: int, config: ConfigManager) -> int:
+    """
+    Cierra el log y, si el config lo pide, termina el proceso sin desarmar el intérprete.
+
+    Con `system.hard_exit: true` no se vuelve de acá. Hace falta cuando el proceso aborta
+    en el *teardown* del intérprete y no en el cierre: un framework de inferencia con hilos
+    nativos y Qt cargados a la vez pueden abortar con 0xC0000409 al descargarse, aun con
+    todos los hilos de la app cerrados limpiamente. `stop()` ya corrió por `aboutToQuit`,
+    así que lo que se saltea es la destrucción de módulos, no el cierre ordenado.
+
+    Viene apagado porque saltea también los `atexit` y el flush de lo que no sea el log, y
+    porque el que lo necesita lo descubre al desplegar, no antes.
+    """
+    logging.shutdown()
+    if config.get("system.hard_exit", False):
+        os._exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":

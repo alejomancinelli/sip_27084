@@ -25,9 +25,12 @@ De qué se ocupa, en este orden, por cada frame:
   3. Descarta lo que no vale una pasada del modelo: sin modelo cargado, o iluminación por
      debajo de `cameras.<slot>.illumination_min`.
   4. Corre el pipeline y devuelve las detecciones al espacio del frame de referencia.
-  5. Promedia la confianza y decide si el resultado es confiable
+  5. Le pasa las detecciones al `classifier`, si hay uno: es donde se filtra y se etiqueta
+     con lo que depende de la cámara, que el modelo no puede saber porque es uno solo para
+     todas las del pipeline.
+  6. Promedia la confianza y decide si el resultado es confiable
      (`min_result_confidence_pct`, `min_detections`).
-  6. Llama al analyzer —sólo si el resultado es confiable— y dibuja el frame anotado.
+  7. Llama al analyzer —sólo si el resultado es confiable— y dibuja el frame anotado.
 
 Cuatro puntos del contrato que no se ven en las firmas:
   - **Siempre gana el último frame de cada cámara.** Una cámara que pushea más rápido de
@@ -42,11 +45,19 @@ Cuatro puntos del contrato que no se ven en las firmas:
     —cuesta más que codificar el frame— `main.py` le pasa un `annotate_gate`, típicamente
     el `has_annotated_clients` del servidor de video.
 
-Cuatro cosas entran por el constructor y son las que hacen que este archivo no sepa del
+Cinco cosas entran por el constructor y son las que hacen que este archivo no sepa del
 proyecto: el `preprocessor` (qué frame se mide), el `pipeline` (qué modelos y en qué
-orden), el `analyzer` (qué significan las detecciones) y el `annotator` (qué se dibuja
-además de lo que salió de la inferencia). Todas son opcionales salvo el pipeline, y sin
-ellas el ciclo funciona igual.
+orden), el `classifier` (qué detecciones cuentan y qué clase les toca), el `analyzer` (qué
+significan las detecciones) y el `annotator` (qué se dibuja además de lo que salió de la
+inferencia). Todas son opcionales salvo el pipeline, y sin ellas el ciclo funciona igual.
+
+El `classifier` existe porque `predict()` no recibe identidad de cámara: el modelo es uno
+por slot de pipeline y lo comparten todas sus cámaras, así que no puede aplicar nada
+calibrado por montaje —una escala de píxel, un filtro de tamaño, una clase por medida—. Y
+el analyzer tampoco puede, porque no modifica el resultado. Corre entre el pipeline y el
+promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
+confianza del resultado, y la clase que deja en `class_index` es la que después colorean
+el overlay y `analysis.count_by_class`.
 """
 
 import threading
@@ -81,10 +92,12 @@ class InferenceThread(QThread):
     lado no puede bloquear.
 
     Las dependencias van explícitas: el preprocessor decide qué frame se mide, el pipeline
-    qué modelos corren y en qué orden, el analyzer qué significan las detecciones, el
-    annotator qué se dibuja además de lo que salió de la inferencia, y el gate quién está
-    mirando. Sin preprocessor se mide el frame de la cámara; sin analyzer el resultado
-    viaja con `metrics` vacío; sin annotator, con el anotado estándar.
+    qué modelos corren y en qué orden, el classifier qué detecciones cuentan y con qué
+    clase, el analyzer qué significan las detecciones, el annotator qué se dibuja además de
+    lo que salió de la inferencia, y el gate quién está mirando. Sin preprocessor se mide el
+    frame de la cámara; sin classifier salen las detecciones tal como las dejó el pipeline;
+    sin analyzer el resultado viaja con `metrics` vacío; sin annotator, con el anotado
+    estándar.
     """
 
     result_ready = Signal(object)    # InferenceResult — uno por frame procesado
@@ -92,6 +105,7 @@ class InferenceThread(QThread):
 
     def __init__(self, config_manager: ConfigManager, pipeline: AbstractPipeline, *,
                  preprocessor: Callable[[np.ndarray, str], np.ndarray] | None = None,
+                 classifier: Callable[[list, str], list] | None = None,
                  analyzer: Callable[[InferenceResult], dict] | None = None,
                  annotator: Callable[[np.ndarray, InferenceResult], None] | None = None,
                  annotate_gate: Callable[[str], bool] | None = None):
@@ -100,6 +114,7 @@ class InferenceThread(QThread):
         self._config = config_manager
         self._pipeline = pipeline
         self._preprocessor = preprocessor
+        self._classifier = classifier
         self._analyzer = analyzer
         self._annotator = annotator
         self._annotate_gate = annotate_gate
@@ -293,6 +308,7 @@ class InferenceThread(QThread):
             else:
                 if roi_px is not None:
                     offset_detections(detections, roi_px[0], roi_px[1])
+                detections = self._classify(detections, camera_slot)
                 result.detections = detections
                 result.labels = self._pipeline.labels
                 result.stage_times_ms = self._pipeline.stage_times_ms
@@ -380,6 +396,30 @@ class InferenceThread(QThread):
                 "El preprocessor devolvió un frame vacío. Se mide el frame de cámara.")
             return frame_bgr
         return preprocessed
+
+    def _classify(self, detections: list, camera_slot: str) -> list:
+        """
+        Detecciones que cuentan, con la clase que les corresponde en esta cámara.
+
+        Corre después de devolver las coordenadas al frame de referencia, así que el
+        classifier recibe áreas y posiciones en el espacio en el que está calibrado.
+
+        Un classifier que falla no pierde el frame: siguen las detecciones sin filtrar y se
+        avisa. Es la misma decisión que en el preprocessor y el analyzer, y la alternativa
+        —tirar el resultado— convertiría un error de configuración en una caída de la línea.
+        """
+        if self._classifier is None:
+            return detections
+        try:
+            classified = self._classifier(detections, camera_slot)
+        except Exception as e:
+            name = getattr(self._classifier, "__name__", repr(self._classifier))
+            self._warn_throttled(
+                "classifier",
+                f"El classifier {name} falló para {camera_slot}: {e}. "
+                f"Las detecciones salen sin filtrar.")
+            return detections
+        return list(classified) if classified is not None else []
 
     def _run_analyzer(self, result: InferenceResult) -> dict:
         """Métricas del proyecto. Un analyzer que falla no se lleva puesto el resultado."""

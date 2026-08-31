@@ -35,6 +35,10 @@ Qué fija el contrato:
   - **`predict()` recibe las detecciones de la etapa anterior** y decide si recorta por
     ahí (detección → clasificación, detección → segmentación) o si las ignora y mira el
     frame completo. Ignorarlas es lo que hace que dos etapas corran independientes.
+  - **`predict()` no sabe de qué cámara es el frame**, y es a propósito: el modelo es uno
+    por slot y lo comparten todas las cámaras del pipeline, así que nada calibrado por
+    montaje —una escala de píxel, un filtro de tamaño, una clase que sale de la medida—
+    puede resolverse acá. Eso va en el `classifier` del motor, que sí recibe el slot.
 
 Cada modelo lee su sección `inference.models.<slot>` del config.yaml. El slot es su
 identidad: es el nombre con el que el pipeline lo pide y con el que aparece en
