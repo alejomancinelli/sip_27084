@@ -8,13 +8,13 @@ contrato completo en un equipo sin GPU.
 import numpy as np
 import pytest
 
-from system.inference.abstract_model import (STATUS_ERROR, STATUS_LOADED, STATUS_UNLOADED,
+from system.inference.models.abstract_model import (STATUS_ERROR, STATUS_LOADED, STATUS_UNLOADED,
                                              TASK_CLASSIFICATION, TASK_DETECTION,
                                              TASK_SEGMENTATION, AbstractModel,
                                              normalize_task)
-from system.inference.mock_model import MockModel
-from system.inference.model_factory import REGISTERED_MODELS, create_model
-from system.inference.null_model import NullModel
+from system.inference.models.mock_model import MockModel
+from system.inference.models.model_factory import REGISTERED_MODELS, create_model
+from system.inference.models.null_model import NullModel
 
 _SLOT = "model_1"
 _STATUS_KEYS = {"model_slot", "task", "status", "loaded", "synthetic", "error"}

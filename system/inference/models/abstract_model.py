@@ -56,7 +56,7 @@ from system.config_manager import ConfigManager
 from system.logger import logger
 from system.paths import resolve
 
-from .result import Detection
+from ..result import Detection
 
 # Vocabulario de `status`, para que la UI y los tests no repitan los literales.
 STATUS_UNLOADED = "unloaded"    # todavía no se llamó a load(), o ya se descargó

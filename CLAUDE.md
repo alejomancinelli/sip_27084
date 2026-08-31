@@ -48,10 +48,11 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         collector.py          dataset en disco, por intervalo o a pedido
         conditions.py         módulo puro: predicados sobre el dict de inferencia
       inference/
-        abstract_model.py     el contrato del modelo: ciclo de vida y coordenadas propias
-        model_factory.py      único archivo que conoce las clases concretas
-        mock_model.py         detecciones sintéticas, sin framework
-        null_model.py         lo que devuelve la fábrica ante una config inválida
+        models/               una implementación por framework, detrás del mismo contrato
+          abstract_model.py   el contrato del modelo: ciclo de vida y coordenadas propias
+          model_factory.py    único archivo que conoce las clases concretas
+          mock_model.py       detecciones sintéticas, sin framework
+          null_model.py       lo que devuelve la fábrica ante una config inválida
         abstract_pipeline.py  maquinaria de las etapas: las crea, las carga y las cronometra
         pipeline.py           el pipeline concreto; es lo que cambia en cada instalación
         result.py             nivel 1 — Detection e InferenceResult, el dato que cruza
@@ -128,7 +129,7 @@ Son punteros: el contrato vive en el archivo, no acá.
   forma del registro (`measurement`, `tags`, `fields`, `time`) y los `STATUS_*`.
 - **Servidor de video** — `system/video/abstract_video_server.py`: un stream por
   cámara y modo, el vocabulario de `status` y el gating por cliente conectado.
-- **Modelo de inferencia** — `system/inference/abstract_model.py`: el ciclo de vida,
+- **Modelo de inferencia** — `system/inference/models/abstract_model.py`: el ciclo de vida,
   las coordenadas en el espacio del frame recibido, el umbral por detección y el
   vocabulario de `task` con el que `_verify_task()` confronta los pesos.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una

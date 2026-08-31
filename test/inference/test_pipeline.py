@@ -7,7 +7,7 @@ Los modelos son dobles: acá se verifica el andamio de las etapas, no un framewo
 import numpy as np
 import pytest
 
-from system.inference.abstract_model import AbstractModel
+from system.inference.models.abstract_model import AbstractModel
 from system.inference.abstract_pipeline import AbstractPipeline
 from system.inference.pipeline import Pipeline
 from system.inference.result import Detection
