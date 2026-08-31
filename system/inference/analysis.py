@@ -89,6 +89,25 @@ def coverage_pct(detections: Iterable[Detection], frame_area_px: int) -> float:
     return round(min(100.0, covered_px / frame_area_px * 100), 1)
 
 
+# Claves que `summarize_metrics` agrega por su cuenta: el conteo de muestras y, por cada
+# métrica, sus cuatro estadísticos. Están acá y no en el consumidor porque las inventa este
+# módulo: quien las recibe no tiene por qué saber deducirlas de un sufijo.
+SAMPLE_COUNT_KEY = "sample_count"
+SUMMARY_SUFFIXES = ("_mean", "_std", "_min", "_max")
+
+
+def is_summary_key(name: str) -> bool:
+    """
+    Si la clave la agregó `summarize_metrics` en vez de venir del analyzer.
+
+    Sirve para que un consumidor que sólo quiere las métricas del proceso —los registros
+    del PLC, por ejemplo— separe lo derivado sin repetir la lista de sufijos. Una métrica
+    del proyecto que de verdad se llame `algo_max` da un falso positivo; es el precio de no
+    marcar cada clave, y se evita no llamando así a una métrica.
+    """
+    return name == SAMPLE_COUNT_KEY or name.endswith(SUMMARY_SUFFIXES)
+
+
 def summarize_metrics(results: Iterable[InferenceResult], *,
                       valid_only: bool = True) -> dict:
     """

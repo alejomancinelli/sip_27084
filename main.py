@@ -957,6 +957,11 @@ class Application(QObject):
         por ciclo—, porque lo más probable es que sea un nombre mal escrito de un lado o
         del otro y verlo una vez alcanza para corregirlo.
 
+        Lo que agrega `summarize_metrics` al cerrar un ciclo —`sample_count` y los
+        estadísticos por métrica— se descarta sin avisar: son para la telemetría y el
+        dataset, nunca tuvieron fila, y con diez métricas son treinta líneas de log que
+        tapan justamente el aviso del nombre mal escrito.
+
         **Ojo con varias cámaras publicando la misma métrica**: hay un registro por
         nombre, así que la última cámara del recorrido gana y el PLC ve un valor que
         cambia de origen sin avisar. Un proyecto que mide lo mismo en dos cintas prefija
@@ -970,6 +975,11 @@ class Application(QObject):
                     continue
                 if name in _REGISTER_NAMES:
                     values[name] = value
+                elif analysis.is_summary_key(name):
+                    # La dispersión de un ciclo es para la telemetría y el dataset, no
+                    # para el PLC: no tener fila es lo esperado y avisarlo sería tapar el
+                    # aviso que sí importa, el del nombre mal escrito.
+                    continue
                 elif name not in self._unmapped_metrics:
                     self._unmapped_metrics.add(name)
                     logger.info(
