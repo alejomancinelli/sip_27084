@@ -376,7 +376,7 @@ class _DemoApp(QObject):
             engine.start()
         for thread in self._capture_threads:
             thread.start()
-        self._window.show()
+        self._window.showMaximized()   # como la app de verdad
         logger.info(
             f"[Demo] {len(self._capture_threads)} cámaras, {len(self._engines)} pipeline(s). "
             f"Config: {_CONFIG_PATH.name}"

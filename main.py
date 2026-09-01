@@ -105,6 +105,7 @@ from system.video.abstract_video_server import (
 )
 from system.video.http_server import HttpVideoServer
 from system.video.rtsp_server import RtspVideoServer
+from tools.image.enhance import build_display_adjust
 from tools.image.undistort import build_undistorter
 
 from ui import service_status
@@ -293,7 +294,10 @@ class _QtUi:
         self._window.monitor_view.set_content(self.monitor_content)
 
     def show(self):
-        self._window.show()
+        # Maximizada y no `show()`: es una pantalla de planta y siempre se la termina
+        # maximizando a mano. El `resize()` de la ventana sigue valiendo — es el tamaño al
+        # que vuelve cuando el operador la restaura.
+        self._window.showMaximized()
 
     def attach_log_handler(self):
         """Manda cada línea del logger al log de la ventana, cruzando de hilo por señal."""
@@ -405,6 +409,8 @@ class Application(QObject):
         # cuando el operador pasa a crudo y vuelve: el siguiente sale recién con la
         # medición siguiente, que puede estar a varios minutos.
         self._last_annotated: dict[str, np.ndarray] = {}
+        # Ajuste de visualización: se arma una vez y se rehace al guardar el config.
+        self._display_adjust = self._read_display_adjust()
         self._pending_results: dict[tuple[str, str], list] = {}
         self._unmapped_metrics: set = set()
         self._last_service_statuses: dict[str, str] = {}
@@ -607,6 +613,24 @@ class Application(QObject):
 
     # ── Slots de los hilos ───────────────────────────────────────────────────
 
+    def _read_display_adjust(self):
+        """El ajuste de visualización del config, o None si no cambia nada."""
+        return build_display_adjust(
+            gamma=float(self._config.get("video.display.gamma", 1.0) or 1.0),
+            clahe_clip=float(self._config.get("video.display.clahe_clip", 0.0) or 0.0),
+        )
+
+    def _for_display(self, frame_bgr: np.ndarray | None) -> np.ndarray | None:
+        """
+        El frame como lo tiene que ver una persona.
+
+        Sin ajuste configurado devuelve el mismo array: no se copia un frame para dejarlo
+        igual, y esto corre por cada frame de cada cámara.
+        """
+        if self._display_adjust is None or frame_bgr is None or frame_bgr.size == 0:
+            return frame_bgr
+        return self._display_adjust(frame_bgr)
+
     @Slot(object, str)
     def _on_frame_ready(self, frame_bgr: np.ndarray | None, camera_slot: str):
         """
@@ -616,6 +640,10 @@ class Application(QObject):
         motor, que es el mismo array con el resultado dibujado. Todo lo que se conecte
         acá tiene que ser barato o descartar: cualquier demora frena la captura.
         """
+        # Lo que mira una persona puede llevar gamma y contraste local; lo que se mide,
+        # nunca. `_for_display` devuelve un frame nuevo, así que el que sigue viaje hacia
+        # el motor y el dataset es el de la cámara.
+        display_bgr = self._for_display(frame_bgr)
         content = self._ui.monitor_content
         if content is not None:
             # El crudo va siempre, mire lo que mire: es el que necesita la herramienta de
@@ -624,9 +652,9 @@ class Application(QObject):
             if setter is not None:
                 setter(frame_bgr, camera_slot)
             if getattr(content, "mode", None) != MODE_ANNOTATED:
-                content.update_frame(frame_bgr, camera_slot)
-        self._http_video.push_raw(camera_slot, frame_bgr)
-        self._rtsp_video.push_raw(camera_slot, frame_bgr)
+                content.update_frame(display_bgr, camera_slot)
+        self._http_video.push_raw(camera_slot, display_bgr)
+        self._rtsp_video.push_raw(camera_slot, display_bgr)
         if frame_bgr is None or frame_bgr.size == 0:
             return
         for engine in self._engines:
@@ -952,6 +980,10 @@ class Application(QObject):
         usa, y lo que se fija al arrancar necesita reinicio: el propio panel lo avisa.
         """
         logger.info("[Main] config.yaml guardado desde la interfaz.")
+        # El gamma y el contraste se ajustan mirando la imagen, así que pedir un reinicio
+        # por cada prueba los volvería inusables. Es la excepción que se puede hacer sin
+        # riesgo: no tocan la medición, sólo cómo se ve.
+        self._display_adjust = self._read_display_adjust()
 
     # ── Traducción al esquema de registros ───────────────────────────────────
 
