@@ -110,7 +110,6 @@ class OverlayOptions:
     mask_style: str = MASK_STYLE_FILL
     mask_alpha: float = _MASK_ALPHA
     draw_labels: bool = True
-    draw_summary: bool = True
     draw_roi: bool = True
     draw_timestamp: bool = True
     crop_to_roi: bool = False
@@ -157,10 +156,6 @@ def annotate(result: InferenceResult, options: OverlayOptions | None = None) -> 
     if opts.draw_roi and result.roi_px is not None and not cropped:
         draw_roi(annotated, result.roi_px)
     draw_detections(annotated, result.detections, options=opts, offset_px=offset_px)
-    if opts.draw_summary:
-        draw_text_panel(
-            annotated, build_summary_lines(result), options=opts,
-            text_bgr=_PANEL_TEXT_BGR if result.is_valid else _INVALID_TEXT_BGR)
     if opts.draw_timestamp:
         draw_timestamp(annotated, result.timestamp_s, options=opts)
     return annotated
@@ -328,36 +323,6 @@ def draw_timestamp(frame_bgr: np.ndarray, timestamp_s: float, *,
                   (width_px, height_px), _PANEL_BG_BGR, cv2.FILLED)
     cv2.putText(frame_bgr, text, (x_px, y_px - baseline_px // 2),
                 _FONT, font_scale, _PANEL_TEXT_BGR, thickness, cv2.LINE_AA)
-
-
-def build_summary_lines(result: InferenceResult) -> list[str]:
-    """
-    Las líneas del panel: lo que toda inferencia tiene, más las métricas del proyecto.
-
-    Arranca por el motivo cuando el resultado no es confiable, para que el operador no
-    lea como medición unos números que no midieron nada.
-    """
-    lines = []
-    if not result.is_valid:
-        lines.append(f"! {result.invalid_reason or 'invalid'}")
-    lines.append(f"{result.inference_time_ms:.0f} ms")
-    lines.append(f"conf {result.confidence_pct:.0f}%")
-    lines.append(f"det {result.detection_count}")
-    # Los veredictos del frame van antes de los números: dicen si los números aplican.
-    for name, value in result.labels.items():
-        lines.append(f"{name} {value}")
-    for key, value in result.metrics.items():
-        lines.append(f"{key} {_format_value(value)}")
-    return lines
-
-
-def _format_value(value: object) -> str:
-    """Valor de una métrica como texto corto y ASCII."""
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, float):
-        return f"{value:.1f}"
-    return str(value)
 
 
 def _blend_mask(frame_bgr: np.ndarray, mask: np.ndarray,

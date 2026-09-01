@@ -252,9 +252,6 @@ _TEXTS: dict[str, dict[str, str]] = {
     "inf_min_result_conf":    {"es": "Confianza mínima del resultado (%):",
                                "en": "Minimum result confidence (%):",
                                "pt": "Confiança mínima do resultado (%):"},
-    "inf_draw_summary":       {"es": "Dibujar panel de resumen",
-                               "en": "Draw summary panel",
-                               "pt": "Desenhar painel de resumo"},
     "inf_draw_timestamp":     {"es": "Dibujar la hora","en": "Draw timestamp","pt": "Desenhar a hora"},
     "inf_overlay_note":       {"es": "Las cajas, las máscaras, las etiquetas y el recuadro del ROI "
                                      "van siempre: apagarlas deja un stream anotado que no muestra "

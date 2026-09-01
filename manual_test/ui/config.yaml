@@ -68,7 +68,6 @@ inference:
     draw_boxes: true
     draw_masks: true
     draw_labels: true
-    draw_summary: true
     draw_roi: true
     draw_timestamp: true
     font_scale: 0.6
