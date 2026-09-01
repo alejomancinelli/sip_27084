@@ -61,6 +61,9 @@ _TEXTS: dict[str, dict[str, str]] = {
 
     # ── Panel y grilla de cámaras ────────────────────────────────────────────
     "camera_no_signal":       {"es": "SIN SEÑAL",      "en": "NO SIGNAL",     "pt": "SEM SINAL"},
+    "camera_waiting_inference": {"es": "ESPERANDO INFERENCIA",
+                               "en": "WAITING FOR INFERENCE",
+                               "pt": "AGUARDANDO INFERÊNCIA"},
     "camera_starting":        {"es": "Iniciando",      "en": "Starting",      "pt": "Iniciando"},
     "camera_connected":       {"es": "Conectada",      "en": "Connected",     "pt": "Conectada"},
     "camera_disconnected":    {"es": "Desconectada",   "en": "Disconnected",  "pt": "Desconectada"},
@@ -259,8 +262,38 @@ _TEXTS: dict[str, dict[str, str]] = {
                                      "sempre: desligá-las deixa um stream anotado que não mostra "
                                      "nada. Suas chaves seguem no config.yaml caso um projeto "
                                      "precise desligá-las."},
+    "inf_frames_per_cycle":   {"es": "Imágenes por medición:",
+                               "en": "Frames per measurement:",
+                               "pt": "Imagens por medição:"},
+    "inf_cycle_interval":     {"es": "Espera entre mediciones (s):",
+                               "en": "Wait between measurements (s):",
+                               "pt": "Espera entre medições (s):"},
+    "inf_capture_timeout":    {"es": "Tiempo máximo por imagen (s):",
+                               "en": "Timeout per frame (s):",
+                               "pt": "Tempo máximo por imagem (s):"},
+    "inf_idle_cameras":       {"es": "Apagar la captura entre mediciones",
+                               "en": "Stop capture between measurements",
+                               "pt": "Desligar a captura entre medições"},
+    "inf_cycle_note":         {"es": "Con 1 imagen por medición las otras tres no hacen "
+                                     "nada. Apagar la captura libera la red, pero deja el "
+                                     "video en vivo sin imagen hasta la medición siguiente.",
+                               "en": "With 1 frame per measurement the other three do "
+                                     "nothing. Stopping capture frees the network but "
+                                     "leaves the live view blank until the next measurement.",
+                               "pt": "Com 1 imagem por medição as outras três não fazem "
+                                     "nada. Desligar a captura libera a rede, mas deixa o "
+                                     "vídeo ao vivo sem imagem até a medição seguinte."},
+    "inf_crop_to_roi":        {"es": "Anotar sólo el recorte del ROI",
+                               "en": "Annotate only the ROI crop",
+                               "pt": "Anotar apenas o recorte do ROI"},
+    "inf_mask_style":         {"es": "Dibujo de la máscara:",
+                               "en": "Mask drawing:",   "pt": "Desenho da máscara:"},
+    "inf_mask_alpha":         {"es": "Opacidad del relleno:",
+                               "en": "Fill opacity:",   "pt": "Opacidade do preenchimento:"},
     "inf_font_scale":         {"es": "Escala de fuente:",
                                "en": "Font scale:",    "pt": "Escala da fonte:"},
+    "inf_font_scale_auto":    {"es": "automática",
+                               "en": "automatic",      "pt": "automática"},
     "inf_thickness":          {"es": "Grosor de línea (px):",
                                "en": "Line thickness (px):",
                                "pt": "Espessura da linha (px):"},

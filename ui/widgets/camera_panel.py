@@ -12,7 +12,7 @@ anotado que emite el motor.
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QEvent, Qt, Signal, Slot
 from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
@@ -26,6 +26,8 @@ from ui.widgets.status_chip import CHIP_ERROR, CHIP_INFO, CHIP_OK, CHIP_WARNING,
 
 _MIN_VIDEO_WIDTH_PX = 320
 _MIN_VIDEO_HEIGHT_PX = 200
+# Ancho mínimo del panel, fijo a propósito: ver `__init__`.
+_MIN_PANEL_WIDTH_PX = 360
 _ROI_PEN_WIDTH_PX = 2
 
 
@@ -34,11 +36,16 @@ class CameraPanel(QGroupBox):
     Feed de una cámara con su telemetría.
 
     El título es el `name` de la cámara en el config; el slot es la identidad y no se
-    muestra. Guarda el último frame recibido y lo publica por `frame_updated`, que es
-    de donde lo toma el diálogo de ROI para trabajar en vivo.
+    muestra.
+
+    **Lo que se muestra y lo que se recorta no son el mismo frame.** `update_frame()`
+    pinta lo que el cableado mande según el modo —crudo o anotado—, y `update_raw_frame()`
+    guarda el de cámara, que es el único con el que tiene sentido definir un ROI: el
+    anotado puede venir con máscaras encima y, si el overlay recorta al ROI, ni siquiera
+    tiene el tamaño del sensor. `frame_updated` publica el crudo por eso mismo.
     """
 
-    frame_updated = Signal(object)   # np.ndarray BGR — uno por frame recibido
+    frame_updated = Signal(object)   # np.ndarray BGR crudo — uno por frame de cámara
 
     def __init__(self, camera_slot: str, config_manager: ConfigManager, parent=None):
         self._config = config_manager
@@ -46,6 +53,7 @@ class CameraPanel(QGroupBox):
         title = str(self._config.get(f"cameras.{camera_slot}.name", camera_slot))
         super().__init__(title, parent)
         self._last_frame: np.ndarray | None = None
+        self._last_raw_frame: np.ndarray | None = None
         self._is_dark = True
 
         layout = QVBoxLayout(self)
@@ -57,6 +65,7 @@ class CameraPanel(QGroupBox):
         self._video_label.setMinimumSize(_MIN_VIDEO_WIDTH_PX, _MIN_VIDEO_HEIGHT_PX)
         self._video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._video_label.setAlignment(Qt.AlignCenter)
+        self._video_label.installEventFilter(self)
 
         self._chip_state = StatusChip(tr("camera_starting"))
         self._chip_fps = StatusChip("0.0 FPS")
@@ -74,6 +83,21 @@ class CameraPanel(QGroupBox):
         layout.addWidget(self._video_label, stretch=1)
         layout.addLayout(chip_row)
 
+        # El ancho que el panel pide es fijo y no sale de su contenido. Sin esto lo fija el
+        # texto más largo que tenga adentro —el nombre de la cámara en el título, o el chip
+        # de estado, que pasa de «Conectada» a «Mal configurada» en caliente— y dos paneles
+        # con el mismo tamaño de imagen terminan con anchos distintos en la grilla: la
+        # cámara con problemas se lleva 70 px de la que anda. Se nota cuando el espacio
+        # aprieta, que es justo con la barra lateral abierta. Si el texto no entra, se
+        # recorta; el estado también se lee por el color del chip.
+        #
+        # `Ignored` es la mitad que hace falta para que sean iguales de verdad: el mínimo
+        # de arriba empareja el piso, pero la grilla reparte el espacio sobrante mirando
+        # también el tamaño preferido, que el título vuelve a inflar. Ignorándolo, lo único
+        # que decide el ancho es el stretch de la columna, que es 1 para todas.
+        self.setMinimumWidth(_MIN_PANEL_WIDTH_PX)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+
     # ── API pública ──────────────────────────────────────────────────────────
 
     @property
@@ -81,8 +105,23 @@ class CameraPanel(QGroupBox):
         return self._camera_slot
 
     def get_last_frame(self) -> np.ndarray | None:
-        """Último frame recibido, o None si todavía no llegó ninguno."""
-        return self._last_frame
+        """
+        Último frame CRUDO de la cámara, o None si todavía no llegó ninguno.
+
+        Crudo y no el que se está mostrando: es el que usa el diálogo de ROI, y un ROI
+        definido sobre un frame anotado o recortado sale con coordenadas que no son las
+        del sensor.
+        """
+        return self._last_raw_frame
+
+    @Slot(object)
+    def update_raw_frame(self, frame_bgr: np.ndarray | None):
+        """Guarda el frame de cámara y lo publica. No dibuja: de eso se ocupa
+        `update_frame()`, que puede estar mostrando el anotado."""
+        if frame_bgr is None or frame_bgr.size == 0:
+            return
+        self._last_raw_frame = _to_bgr(frame_bgr)
+        self.frame_updated.emit(self._last_raw_frame)
 
     def apply_theme(self, dark: bool):
         self._is_dark = dark
@@ -92,10 +131,41 @@ class CameraPanel(QGroupBox):
         """Slot de `CaptureThread.frame_ready` (o del frame anotado del motor)."""
         if frame_bgr is None or frame_bgr.size == 0:
             return
-        frame_bgr = _to_bgr(frame_bgr)
-        self._last_frame = frame_bgr
-        self.frame_updated.emit(frame_bgr)
+        self._last_frame = _to_bgr(frame_bgr)
+        self._repaint()
 
+    def clear_frame(self, message: str = ""):
+        """
+        Deja el panel sin imagen, con un texto en el lugar del video.
+
+        La hace falta porque el panel retiene el último pixmap que le dieron: mostrando el
+        anotado antes de la primera medición quedaría el último frame crudo, que parece la
+        inferencia y no lo es.
+        """
+        self._last_frame = None
+        self._video_label.clear()
+        self._video_label.setText(message or tr("camera_no_signal"))
+
+    def eventFilter(self, watched, event):
+        """
+        Reescala la imagen cuando cambia el tamaño del video.
+
+        El pixmap se escala al tamaño que tiene el label en el momento de pintarlo, así
+        que sin esto una imagen quieta se queda del tamaño viejo. En crudo no se nota
+        —llegan cinco frames por segundo y cada uno se pinta al tamaño nuevo— pero el
+        anotado es uno por ciclo: plegar la barra lateral o enfocar una cámara dejaba la
+        imagen chica hasta la medición siguiente.
+        """
+        if (watched is self._video_label and event.type() == QEvent.Resize
+                and event.size() != event.oldSize()):
+            self._repaint()
+        return super().eventFilter(watched, event)
+
+    def _repaint(self):
+        """Pinta `_last_frame` al tamaño que tiene ahora el label."""
+        frame_bgr = self._last_frame
+        if frame_bgr is None:
+            return
         height, width = frame_bgr.shape[:2]
         image = QImage(frame_bgr.data, width, height, 3 * width, QImage.Format_BGR888)
         scaled = QPixmap.fromImage(image).scaled(

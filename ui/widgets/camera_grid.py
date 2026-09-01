@@ -144,6 +144,30 @@ class CameraGrid(QWidget):
             panel.update_frame(frame_bgr)
 
     @Slot(object, str)
+    def update_raw_frame(self, frame_bgr: np.ndarray | None, camera_slot: str):
+        """
+        El frame de cámara, con la firma de `frame_ready`, para el que lo necesite crudo.
+
+        No dibuja: guarda. Es lo que alimenta al diálogo de ROI, que tiene que trabajar
+        sobre el frame del sensor aunque la grilla esté mostrando el anotado.
+        """
+        panel = self._panels.get(camera_slot)
+        if panel is not None:
+            panel.update_raw_frame(frame_bgr)
+
+    @Slot(str)
+    def clear_frame(self, camera_slot: str):
+        """
+        Saca la imagen de ese panel y deja dicho que todavía no hay inferencia.
+
+        Es lo que el cableado usa al pasar a anotado sin una medición hecha: sin esto
+        queda a la vista el último frame crudo, que se lee como si fuera el resultado.
+        """
+        panel = self._panels.get(camera_slot)
+        if panel is not None:
+            panel.clear_frame(tr("camera_waiting_inference"))
+
+    @Slot(object, str)
     def update_status(self, status: dict, camera_slot: str):
         """Slot con la firma de `CaptureThread.status_updated`: (status, slot)."""
         panel = self._panels.get(camera_slot)

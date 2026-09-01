@@ -197,9 +197,15 @@ class _CameraForm(QWidget):
         )
 
     def load_roi(self):
-        """Recarga sólo el ROI: es lo que cambia el diálogo interactivo."""
+        """
+        Recarga sólo la geometría del ROI: es lo único que cambia el diálogo interactivo.
+
+        **El `enabled` no se toca a propósito.** El diálogo escribe las cuatro coordenadas
+        y nada más, así que releer la casilla desde el archivo pisaría lo que el operador
+        acaba de marcar y todavía no guardó — y como los campos y el botón cuelgan de esa
+        casilla, se apagan solos justo después de definir el ROI.
+        """
         roi = self._config.get(f"{self._prefix}.roi", {}) or {}
-        self._roi_check.setChecked(bool(roi.get("enabled", False)))
         for key, spin in self._roi_spins.items():
             spin.setValue(int(roi.get(key, 0)))
 

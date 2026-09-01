@@ -28,6 +28,7 @@ el control de planta, no la capacidad.
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from system.inference.models.model_factory import REGISTERED_MODELS
+from system.inference.overlay import MASK_STYLE_FILL, MASK_STYLES
 
 from system.config_manager import ConfigManager
 
@@ -42,6 +43,8 @@ from ui.widgets.form import (
 _MAX_SIDE_PX = 8192
 _MAX_DETECTIONS = 10000
 _MAX_INTERVAL_S = 3600.0
+_MAX_FRAMES_PER_CYCLE = 100      # N imágenes por medición; más que esto es otro problema
+_MAX_CYCLE_INTERVAL_S = 86400.0  # una medición por día es el extremo razonable
 _MAX_FONT_SCALE = 4.0
 _MAX_THICKNESS_PX = 10
 
@@ -99,7 +102,22 @@ class InferenceTab(AbstractConfigTab):
                                            build_spin_box(0, _MAX_DETECTIONS, 0)),
             "min_result_confidence_pct": add_form_row(form, tr("inf_min_result_conf"),
                                                       build_spin_box(0, 100, 0)),
+            # El ciclo de medición: los lee el scheduler, no el motor. Con
+            # `frames_per_cycle` en 1 los otros tres no hacen nada.
+            "frames_per_cycle": add_form_row(form, tr("inf_frames_per_cycle"),
+                                             build_spin_box(1, _MAX_FRAMES_PER_CYCLE, 1)),
+            "cycle_interval_s": add_form_row(
+                form, tr("inf_cycle_interval"),
+                build_double_spin_box(0.0, _MAX_CYCLE_INTERVAL_S, 0.0, decimals=1, step=10.0),
+            ),
+            "capture_timeout_s": add_form_row(
+                form, tr("inf_capture_timeout"),
+                build_double_spin_box(0.0, _MAX_CYCLE_INTERVAL_S, 30.0, decimals=1, step=5.0),
+            ),
+            "idle_cameras_between_cycles": add_check_row(
+                form, tr("inf_idle_cameras"), False),
         }
+        add_hint_row(form, tr("inf_cycle_note"))
         self._pipeline_forms[pipeline_slot] = fields
         return box
 
@@ -112,10 +130,21 @@ class InferenceTab(AbstractConfigTab):
         self._overlay_checks = {
             "draw_summary":   add_check_row(form, tr("inf_draw_summary"), True),
             "draw_timestamp": add_check_row(form, tr("inf_draw_timestamp"), True),
+            "crop_to_roi":    add_check_row(form, tr("inf_crop_to_roi"), False),
         }
+        self._mask_style = add_form_row(
+            form, tr("inf_mask_style"), build_combo_box(list(MASK_STYLES), MASK_STYLE_FILL))
+        self._mask_alpha = add_form_row(
+            form, tr("inf_mask_alpha"),
+            build_double_spin_box(0.0, 1.0, 0.45, decimals=2, step=0.05),
+        )
         self._font_scale = add_form_row(
             form, tr("inf_font_scale"),
-            build_double_spin_box(0.1, _MAX_FONT_SCALE, 0.6, decimals=2, step=0.1),
+            # El mínimo es 0 y NO es un tamaño: es «automática». Con el mínimo en 0.1,
+            # abrir esta pantalla y guardar convertía el 0 del config en 0.1 sin avisar,
+            # y el texto dejaba de adaptarse al tamaño del lienzo.
+            build_double_spin_box(0.0, _MAX_FONT_SCALE, 0.6, decimals=2, step=0.1,
+                                  special_value_text=tr("inf_font_scale_auto")),
         )
         self._thickness = add_form_row(
             form, tr("inf_thickness"), build_spin_box(1, _MAX_THICKNESS_PX, 2)
@@ -147,10 +176,21 @@ class InferenceTab(AbstractConfigTab):
             fields["min_result_confidence_pct"].setValue(
                 int(self._config.get(f"{prefix}.min_result_confidence_pct", 0))
             )
+            fields["frames_per_cycle"].setValue(
+                int(self._config.get(f"{prefix}.frames_per_cycle", 1)))
+            fields["cycle_interval_s"].setValue(
+                float(self._config.get(f"{prefix}.cycle_interval_s", 0.0)))
+            fields["capture_timeout_s"].setValue(
+                float(self._config.get(f"{prefix}.capture_timeout_s", 30.0)))
+            fields["idle_cameras_between_cycles"].setChecked(
+                bool(self._config.get(f"{prefix}.idle_cameras_between_cycles", False)))
 
         self._overlay_enabled.setChecked(bool(self._config.get("inference.overlay.enabled", True)))
         for key, check in self._overlay_checks.items():
             check.setChecked(bool(self._config.get(f"inference.overlay.{key}", True)))
+        set_combo_value(self._mask_style,
+                        self._config.get("inference.overlay.mask_style", MASK_STYLE_FILL))
+        self._mask_alpha.setValue(float(self._config.get("inference.overlay.mask_alpha", 0.45)))
         self._font_scale.setValue(float(self._config.get("inference.overlay.font_scale", 0.6)))
         self._thickness.setValue(int(self._config.get("inference.overlay.thickness", 2)))
 
@@ -172,9 +212,17 @@ class InferenceTab(AbstractConfigTab):
             self._config.set(f"{prefix}.min_detections", fields["min_detections"].value())
             self._config.set(f"{prefix}.min_result_confidence_pct",
                              fields["min_result_confidence_pct"].value())
+            self._config.set(f"{prefix}.frames_per_cycle", fields["frames_per_cycle"].value())
+            self._config.set(f"{prefix}.cycle_interval_s", fields["cycle_interval_s"].value())
+            self._config.set(f"{prefix}.capture_timeout_s",
+                             fields["capture_timeout_s"].value())
+            self._config.set(f"{prefix}.idle_cameras_between_cycles",
+                             fields["idle_cameras_between_cycles"].isChecked())
 
         self._config.set("inference.overlay.enabled", self._overlay_enabled.isChecked())
         for key, check in self._overlay_checks.items():
             self._config.set(f"inference.overlay.{key}", check.isChecked())
+        self._config.set("inference.overlay.mask_style", self._mask_style.currentText())
+        self._config.set("inference.overlay.mask_alpha", self._mask_alpha.value())
         self._config.set("inference.overlay.font_scale", self._font_scale.value())
         self._config.set("inference.overlay.thickness", self._thickness.value())
