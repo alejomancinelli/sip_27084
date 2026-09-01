@@ -49,6 +49,26 @@ _RETRY_DELAY_S = 5      # entre reintentos de conexión del thread de captura
 _RETRIEVE_TIMEOUT_MS = 30000
 
 
+def _refresh_device_list(st_system):
+    """
+    Vuelve a enumerar interfaces y cámaras.
+
+    Cada llamada es un descubrimiento por broadcast, así que sólo se hace al buscar por
+    dirección: mientras la cámara responde, el loop de captura reusa su device_id y no
+    pasa por acá. Un transporte que no soporte alguna de las dos no es un error: se sigue
+    con la lista que haya.
+    """
+    try:
+        st_system.update_interface_list()
+    except Exception as e:
+        logger.debug(f"[StDriver] No se pudo actualizar la lista de interfaces: {e}")
+    for index in range(st_system.interface_count):
+        try:
+            st_system.get_interface(index).update_device_list()
+        except Exception as e:
+            logger.debug(f"[StDriver] No se pudo actualizar la lista de cámaras: {e}")
+
+
 def _looks_like_ip(text: str) -> bool:
     """True si el texto tiene forma de IPv4. No valida que la dirección exista."""
     parts = text.split(".")
@@ -336,6 +356,12 @@ class StDriver(AbstractCameraDriver):
         primera disponible entregaría frames de otra cámara como si fueran los de la
         pedida. Solo cuando `address` viene vacío se toma la primera.
         """
+        # La lista de cámaras se arma cuando se crea el system y no se actualiza sola: una
+        # que se desenchufa y vuelve sigue figurando con su IP —la traducción a device_id
+        # funciona— pero el handle que quedó cacheado ya no abre, y `create_device_by_id`
+        # falla sin decir por qué. Re-enumerar es lo único que la vuelve a hacer visible.
+        _refresh_device_list(st_system)
+
         wanted = (self._address or "").strip()
         if not wanted or wanted.lower() == "unknown":
             logger.warning("[StDriver] Sin `address` en config: se toma la primera cámara.")

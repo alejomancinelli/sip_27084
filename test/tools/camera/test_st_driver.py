@@ -19,6 +19,9 @@ class _Interface:
     def __init__(self, system):
         self._system = system
 
+    def update_device_list(self):
+        self._system.refreshes += 1
+
     def create_device_by_id(self, device_id: str):
         self._system.by_id_calls.append(device_id)
         # Corta el loop si se insiste demasiado con el mismo id. Sin esto, un driver que
@@ -46,10 +49,14 @@ class _System:
         self.is_plugged = True
         self.by_id_calls: list = []
         self.by_address_calls = 0
+        self.refreshes = 0
         self.driver = None
 
     def get_interface(self, index: int):
         return _Interface(self)
+
+    def update_interface_list(self):
+        self.refreshes += 1
 
 
 @pytest.fixture
@@ -130,6 +137,30 @@ class TestGrabLoopReconnect:
 
         assert driver.grabbed == []
         assert system.by_address_calls == 4
+
+
+class TestDeviceListRefresh:
+    """
+    Buscar por dirección tiene que re-enumerar antes.
+
+    La lista se arma al crear el system y no se actualiza sola: la cámara que volvió sigue
+    figurando con su IP, así que la traducción a device_id da bien y `create_device_by_id`
+    falla igual. Es el segundo motivo por el que sólo se recuperaba reiniciando.
+    """
+
+    def test_it_re_enumerates_before_looking_up_by_address(self, system):
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        driver._create_configured_device(system)
+        assert system.refreshes > 0
+
+    def test_a_transport_without_refresh_is_not_an_error(self, system):
+        """Se sigue con la lista que haya en vez de dejar la cámara sin abrir."""
+        def _explota():
+            raise RuntimeError("no soportado")
+        system.update_interface_list = _explota
+        driver = st_driver.StDriver({"address": "", "acquisition": {}})
+        system.create_first_device = lambda: _Device("cam-1")
+        assert driver._create_configured_device(system) is not None
 
 
 def _unplug_after_first(driver, system):
