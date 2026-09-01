@@ -188,8 +188,16 @@ class InferenceThread(QThread):
 
         Corre en el hilo del que llama, no en éste. Es una sola pasada de dibujo por
         ciclo, no por frame.
+
+        **No pasa por el gate**, y por eso es un método aparte. El gate existe por el costo
+        por frame: dibujar cuesta más que codificar, así que a 5 fps no se dibuja para
+        nadie. Ese argumento no aplica a un dibujo cada varios minutos, y aplicarlo igual
+        tiene un costo peor: la pregunta «¿alguien mira?» se contesta en el instante del
+        dibujo, así que si justo entonces la UI estaba en crudo y ningún cliente estaba
+        conectado, la medición se queda sin imagen hasta el ciclo siguiente. El que se
+        conecta después no tiene nada que ver, y no es que llegue tarde: nunca se dibujó.
         """
-        return self._annotate(result)
+        return self._annotate(result, respect_gate=False)
 
     def get_status(self) -> dict:
         """
@@ -444,12 +452,15 @@ class InferenceThread(QThread):
             self._warn_throttled("analyzer", f"El analyzer falló: {e}. Resultado sin métricas.")
             return {}
 
-    def _annotate(self, result: InferenceResult) -> np.ndarray | None:
+    def _annotate(self, result: InferenceResult, *,
+                  respect_gate: bool = True) -> np.ndarray | None:
         """
         Frame anotado, o None si el config lo apagó o nadie está mirando.
 
         Dibujar cuesta más que codificar, así que un stream sin clientes no se anota; el
         gate lo decide `main.py`, que es el único que sabe quién está conectado.
+        `respect_gate` en False lo saltea: lo usa `annotate()`, que dibuja una vez por
+        medición y no una vez por frame. Lo que apaga el config no se saltea nunca.
 
         Primero el anotado estándar y después el annotator del proyecto, que dibuja encima
         sus referencias. Un annotator que falla no se lleva puesto el frame: queda lo que
@@ -457,7 +468,8 @@ class InferenceThread(QThread):
         """
         if not self._config.get("inference.overlay.enabled", True):
             return None
-        if self._annotate_gate is not None and not self._annotate_gate(result.camera_slot):
+        if (respect_gate and self._annotate_gate is not None
+                and not self._annotate_gate(result.camera_slot)):
             return None
         try:
             annotated = overlay.annotate(result, self._read_overlay_options())
@@ -526,10 +538,10 @@ class InferenceThread(QThread):
                                             defaults.mask_style)),
             mask_alpha=float(self._config.get("inference.overlay.mask_alpha",
                                               defaults.mask_alpha)),
-            draw_labels=bool(self._config.get("inference.overlay.draw_labels",
-                                              defaults.draw_labels)),
             draw_summary=bool(self._config.get("inference.overlay.draw_summary",
                                                defaults.draw_summary)),
+            draw_labels=bool(self._config.get("inference.overlay.draw_labels",
+                                              defaults.draw_labels)),
             draw_roi=bool(self._config.get("inference.overlay.draw_roi", defaults.draw_roi)),
             draw_timestamp=bool(self._config.get("inference.overlay.draw_timestamp",
                                                  defaults.draw_timestamp)),

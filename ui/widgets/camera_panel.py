@@ -209,6 +209,10 @@ class CameraPanel(QGroupBox):
     # ── Internos ─────────────────────────────────────────────────────────────
 
     def _show_placeholder(self):
+        # Se olvida el frame además de borrarlo: si queda guardado, el repintado por
+        # resize lo vuelve a dibujar y la cámara caída muestra su última imagen buena cada
+        # vez que se pliega la barra lateral.
+        self._last_frame = None
         self._video_label.clear()
         self._video_label.setText(tr("camera_no_signal"))
 
