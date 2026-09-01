@@ -121,9 +121,16 @@ class TestLookupsUsedByTheApp:
         51 + 4*(N-1). El fork copia el bloque y corre las direcciones, y el
         integrador calcula la dirección de una cámara sin abrir el mapa.
         """
+        # Sólo el bloque de salud: un fork puede prefijar con el slot las filas de
+        # inferencia —de hecho tiene que hacerlo con más de una cámara— y ésas viven en
+        # su propio rango, con su propio paso.
+        health_suffixes = ("_state_bitfield", "_temperature_c", "_fps",
+                           "_illumination_pct")
         by_camera: dict[str, list[int]] = {}
         for reg in REGISTERS:
             if not reg.name.startswith("camera_"):
+                continue
+            if not reg.name.endswith(health_suffixes):
                 continue
             slot = "_".join(reg.name.split("_")[:2])
             by_camera.setdefault(slot, []).append(reg.addr)
