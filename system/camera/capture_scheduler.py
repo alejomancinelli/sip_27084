@@ -75,6 +75,18 @@ _MEAN_SUFFIX = "_mean"
 REASON_EMPTY_CYCLE = "empty_cycle"
 
 
+def _describe(metrics: dict) -> str:
+    """
+    Las métricas del ciclo en una línea, sin los estadísticos.
+
+    Sólo los nombres limpios: la dispersión va a la telemetría y al dataset, y meterla acá
+    multiplica por cinco el largo de una línea que se lee de un vistazo.
+    """
+    shown = [f"{name}={value}" for name, value in sorted(metrics.items())
+             if not analysis.is_summary_key(name)]
+    return "  ".join(shown) if shown else "sin métricas"
+
+
 class _PipelineCycle:
     """Estado de la ronda de un pipeline: en qué cámara va y qué lleva juntado."""
 
@@ -329,6 +341,9 @@ class CaptureScheduler(QObject):
         cycle.known_keys_by_camera[camera_slot] = tuple(metrics)
 
         representative = analysis.pick_representative(valid) or valid[0]
+        logger.info(
+            f"[Scheduler] {pipeline_slot}/{camera_slot}: ciclo con "
+            f"{len(valid)}/{len(cycle.results)} frames — {_describe(metrics)}")
         # `replace` y no mutación: ese resultado ya viajó a la UI y a los streams.
         return replace(representative, metrics=metrics)
 
