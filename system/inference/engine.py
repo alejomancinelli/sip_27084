@@ -178,6 +178,19 @@ class InferenceThread(QThread):
             self._count("dropped")
         self._frame_available.set()
 
+    def annotate(self, result: InferenceResult) -> np.ndarray | None:
+        """
+        Dibuja el resultado con las mismas opciones y el mismo annotator que el ciclo.
+
+        Es para quien agrega varios resultados en una medición: el frame que eligió como
+        representativo se anotó con SUS números, no con los del ciclo, así que hay que
+        volver a dibujarlo o la imagen y el registro dicen cosas distintas.
+
+        Corre en el hilo del que llama, no en éste. Es una sola pasada de dibujo por
+        ciclo, no por frame.
+        """
+        return self._annotate(result)
+
     def get_status(self) -> dict:
         """
         Estado del motor con claves estables:
@@ -509,6 +522,10 @@ class InferenceThread(QThread):
         return overlay.OverlayOptions(
             draw_boxes=bool(self._config.get("inference.overlay.draw_boxes", defaults.draw_boxes)),
             draw_masks=bool(self._config.get("inference.overlay.draw_masks", defaults.draw_masks)),
+            mask_style=str(self._config.get("inference.overlay.mask_style",
+                                            defaults.mask_style)),
+            mask_alpha=float(self._config.get("inference.overlay.mask_alpha",
+                                              defaults.mask_alpha)),
             draw_labels=bool(self._config.get("inference.overlay.draw_labels",
                                               defaults.draw_labels)),
             draw_summary=bool(self._config.get("inference.overlay.draw_summary",
@@ -516,6 +533,8 @@ class InferenceThread(QThread):
             draw_roi=bool(self._config.get("inference.overlay.draw_roi", defaults.draw_roi)),
             draw_timestamp=bool(self._config.get("inference.overlay.draw_timestamp",
                                                  defaults.draw_timestamp)),
+            crop_to_roi=bool(self._config.get("inference.overlay.crop_to_roi",
+                                              defaults.crop_to_roi)),
             font_scale=float(self._config.get("inference.overlay.font_scale",
                                               defaults.font_scale)),
             thickness=int(self._config.get("inference.overlay.thickness", defaults.thickness)),

@@ -77,11 +77,21 @@ def build_spin_box(min_value: int, max_value: int, value: int) -> QSpinBox:
 
 
 def build_double_spin_box(min_value: float, max_value: float, value: float, *,
-                          decimals: int = 2, step: float = 0.1) -> QDoubleSpinBox:
+                          decimals: int = 2, step: float = 0.1,
+                          special_value_text: str = "") -> QDoubleSpinBox:
+    """
+    Spin decimal. `special_value_text` es lo que muestra en el mínimo, si se le da.
+
+    Es para las claves donde el mínimo no es un número sino un modo —0 = automático, 0 =
+    nativo—: sin esto el operador ve un 0 que parece un valor y el rango no le dice que
+    significa otra cosa.
+    """
     spin = QDoubleSpinBox()
     spin.setRange(min_value, max_value)
     spin.setDecimals(decimals)
     spin.setSingleStep(step)
+    if special_value_text:
+        spin.setSpecialValueText(special_value_text)
     spin.setValue(float(value))
     return spin
 

@@ -401,6 +401,10 @@ class Application(QObject):
         # lo mismo con distinto propósito— y con la cámara sola los dos se mezclarían en un
         # promedio que no significa nada. Se toca sólo desde el hilo de la GUI —el slot del
         # resultado llega en cola y el tick es un QTimer—, así que no necesita lock.
+        # Último frame anotado de cada cámara. Se guarda para poder volver a mostrarlo
+        # cuando el operador pasa a crudo y vuelve: el siguiente sale recién con la
+        # medición siguiente, que puede estar a varios minutos.
+        self._last_annotated: dict[str, np.ndarray] = {}
         self._pending_results: dict[tuple[str, str], list] = {}
         self._unmapped_metrics: set = set()
         self._last_service_statuses: dict[str, str] = {}
@@ -409,6 +413,7 @@ class Application(QObject):
         # En headless esto es el no-op: el factory del widget no se llama y no se
         # construye ni un widget.
         self._ui.build_monitor_content(self._build_monitor_content)
+        self._connect_content_mode()
         self._ui.attach_log_handler()
 
         # ── Servidores de video ──────────────────────────────────────────────
@@ -612,8 +617,14 @@ class Application(QObject):
         acá tiene que ser barato o descartar: cualquier demora frena la captura.
         """
         content = self._ui.monitor_content
-        if content is not None and getattr(content, "mode", None) != MODE_ANNOTATED:
-            content.update_frame(frame_bgr, camera_slot)
+        if content is not None:
+            # El crudo va siempre, mire lo que mire: es el que necesita la herramienta de
+            # ROI, que define coordenadas del sensor y no del anotado.
+            setter = getattr(content, "update_raw_frame", None)
+            if setter is not None:
+                setter(frame_bgr, camera_slot)
+            if getattr(content, "mode", None) != MODE_ANNOTATED:
+                content.update_frame(frame_bgr, camera_slot)
         self._http_video.push_raw(camera_slot, frame_bgr)
         self._rtsp_video.push_raw(camera_slot, frame_bgr)
         if frame_bgr is None or frame_bgr.size == 0:
@@ -638,10 +649,11 @@ class Application(QObject):
     @Slot(object)
     def _on_result_ready(self, result: InferenceResult):
         """
-        Un resultado del motor: a la UI y a los streams, uno por frame.
+        Un resultado del motor, uno por frame: sólo la iluminación de la cámara.
 
-        Sólo el camino de vista. La medición sale por `_on_cycle_complete`, que es un
-        ciclo entero: publicar acá daría N mediciones por medición.
+        El frame anotado NO sale de acá. Lo publica `_on_cycle_complete`, con el
+        representativo del ciclo: es el único que se corresponde con los números que
+        salieron al PLC, y es el que tiene que quedar hasta la medición siguiente.
         """
         self._camera_illumination[result.camera_slot] = result.illumination_pct
         content = self._ui.monitor_content
@@ -649,12 +661,6 @@ class Application(QObject):
             setter = getattr(content, "set_illumination_pct", None)
             if setter is not None:
                 setter(result.camera_slot, result.illumination_pct)
-
-        if result.annotated_bgr is not None:
-            if content is not None and getattr(content, "mode", None) == MODE_ANNOTATED:
-                content.update_frame(result.annotated_bgr, result.camera_slot)
-            self._http_video.push_annotated(result.camera_slot, result.annotated_bgr)
-            self._rtsp_video.push_annotated(result.camera_slot, result.annotated_bgr)
 
     @Slot(object)
     def _on_cycle_complete(self, result: InferenceResult):
@@ -666,6 +672,18 @@ class Application(QObject):
         `frames_per_cycle: 1` el scheduler reemite cada resultado y los dos caminos
         corren igual de seguido.
         """
+        annotated_bgr = self._annotate_cycle(result)
+        if annotated_bgr is not None:
+            result.annotated_bgr = annotated_bgr
+            self._last_annotated[result.camera_slot] = annotated_bgr
+            content = self._ui.monitor_content
+            if content is not None and getattr(content, "mode", None) == MODE_ANNOTATED:
+                content.update_frame(annotated_bgr, result.camera_slot)
+            # Los servidores retienen el último frame que se les dio, así que el anotado
+            # del ciclo queda publicado hasta que lo reemplace el de la medición siguiente.
+            self._http_video.push_annotated(result.camera_slot, annotated_bgr)
+            self._rtsp_video.push_annotated(result.camera_slot, annotated_bgr)
+
         # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector.
         if self._collector.mode == _COLLECTOR_MODE_INTERVAL:
             self._collector.push_frame(
@@ -695,6 +713,24 @@ class Application(QObject):
             (result.camera_slot, result.pipeline_slot), []
         ).append(result)
         self._store_metrics(result)
+
+    def _annotate_cycle(self, result: InferenceResult) -> np.ndarray | None:
+        """
+        El frame anotado del ciclo, con los números del ciclo.
+
+        El representativo se anotó en el motor con SUS métricas, y el scheduler le puso
+        encima las del ciclo: la imagen diría una cosa y el registro otra. Por eso se
+        redibuja, y por eso se redibuja acá y no en el scheduler, que no dibuja.
+
+        Sin ciclo —`frames_per_cycle: 1`— el anotado que trae ya es el correcto y se usa
+        tal cual: redibujar sería una pasada de dibujo más por frame.
+        """
+        if not self._scheduler.is_cycled(result.pipeline_slot):
+            return result.annotated_bgr
+        for engine in self._engines:
+            if engine.pipeline_slot == result.pipeline_slot:
+                return engine.annotate(result)
+        return result.annotated_bgr
 
     @Slot(str, bool)
     def _on_capture_wanted(self, camera_slot: str, enabled: bool):
@@ -1038,6 +1074,42 @@ class Application(QObject):
     def _is_synthetic(self, camera_slot: str) -> bool:
         thread = self._capture_threads.get(camera_slot)
         return bool(thread is not None and thread.is_synthetic)
+
+    @Slot(str)
+    def _on_content_mode_changed(self, mode: str):
+        """
+        El operador pasó a anotado: se le devuelve el último anotado de cada cámara.
+
+        Sin esto la vista queda en el último frame crudo hasta la medición siguiente, que
+        con un ciclo de varios minutos es una imagen vieja que no dice nada. La cámara que
+        todavía no midió se limpia en vez de dejarse como está, por lo mismo: el crudo que
+        quedó pintado se lee como si fuera el resultado de una inferencia que no corrió.
+        """
+        if mode != MODE_ANNOTATED:
+            return
+        content = self._ui.monitor_content
+        if content is None:
+            return
+        clear = getattr(content, "clear_frame", None)
+        for camera_slot in getattr(content, "camera_slots", ()):
+            frame_bgr = self._last_annotated.get(camera_slot)
+            if frame_bgr is not None:
+                content.update_frame(frame_bgr, camera_slot)
+            elif clear is not None:
+                clear(camera_slot)
+
+    def _connect_content_mode(self):
+        """Escucha el selector de modo del widget del monitor, si tiene uno."""
+        content = self._ui.monitor_content
+        signal = getattr(content, "mode_changed", None)
+        if signal is not None:
+            signal.connect(self._on_content_mode_changed)
+        # El widget arranca en el modo que eligió el fork y esa primera vez no pasa por la
+        # señal, así que el estado inicial se arma acá: en anotado, los paneles quedan
+        # esperando la primera medición en vez de mostrando lo que haya.
+        mode = getattr(content, "mode", None)
+        if mode is not None:
+            self._on_content_mode_changed(mode)
 
     def _forward_status_to_content(self, thread: CaptureThread):
         """Conecta el status al widget del monitor, si el que puso el fork lo acepta."""
