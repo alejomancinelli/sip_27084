@@ -389,6 +389,11 @@ class StDriver(AbstractCameraDriver):
                 if st_device:
                     self._do_grabbing(st_device)
                 else:
+                    # Se olvida el id cacheado para volver a enumerar por dirección. Una
+                    # cámara que se desenchufa y vuelve puede no responder más a ese id, y
+                    # reintentarlo con el mismo no sale nunca: la cámara está de vuelta en
+                    # la red y el driver sigue preguntando por algo que ya no existe.
+                    device_id = ""
                     logger.warning(
                         f"[StDriver] {self._address} no encontrada. "
                         f"Reintento en {_RETRY_DELAY_S} s."
