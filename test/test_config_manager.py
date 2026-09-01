@@ -244,7 +244,8 @@ class TestSave:
     def test_leaves_no_tmp_file_behind(self, tmp_path):
         path = _write_config(tmp_path)
         _manager(path).save()
-        assert os.listdir(str(tmp_path)) == ["config.yaml"]
+        # El .bak es esperado; lo que no puede quedar es el intermedio.
+        assert not [name for name in os.listdir(str(tmp_path)) if name.endswith(".tmp")]
 
     def test_keeps_the_key_order(self, tmp_path):
         """Ordenar alfabéticamente haría ilegible el diff de un cambio de la UI."""
@@ -266,7 +267,7 @@ class TestSave:
         cfg = _manager(path)
         cfg.set("system.raro", object())
         assert cfg.save() is False
-        assert os.listdir(str(tmp_path)) == ["config.yaml"]
+        assert not [name for name in os.listdir(str(tmp_path)) if name.endswith(".tmp")]
         assert _read(path) == _VALID_YAML
 
     def test_what_gets_saved_is_readable_again(self, tmp_path):
@@ -347,3 +348,37 @@ class TestThreadSafety:
             writer.join(timeout=5)
 
         assert errors == []
+
+
+class TestBackup:
+    """El `.bak` que queda antes de pisar el archivo."""
+
+    def test_it_keeps_the_previous_version(self, tmp_path):
+        """Es la red contra el guardado que persiste un campo que no se cargó bien."""
+        path = tmp_path / "config.yaml"
+        path.write_text("system:\n  log_level: INFO\n", encoding="utf-8")
+        config = ConfigManager(str(path))
+        config.set("system.log_level", "DEBUG")
+        assert config.save()
+
+        backup = tmp_path / "config.yaml.bak"
+        assert yaml.safe_load(backup.read_text(encoding="utf-8"))["system"]["log_level"] == "INFO"
+        assert yaml.safe_load(path.read_text(encoding="utf-8"))["system"]["log_level"] == "DEBUG"
+
+    def test_it_holds_one_version_and_not_a_history(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text("system:\n  log_level: INFO\n", encoding="utf-8")
+        config = ConfigManager(str(path))
+        for level in ("DEBUG", "WARNING"):
+            config.set("system.log_level", level)
+            config.save()
+
+        backup = yaml.safe_load((tmp_path / "config.yaml.bak").read_text(encoding="utf-8"))
+        assert backup["system"]["log_level"] == "DEBUG"
+
+    def test_the_first_save_without_a_file_leaves_no_backup(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        config = ConfigManager(str(path))
+        config.set("system.log_level", "INFO")
+        config.save()
+        assert not (tmp_path / "config.yaml.bak").exists()

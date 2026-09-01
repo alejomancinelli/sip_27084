@@ -415,3 +415,6 @@ FodyWeavers.xsd
 # Dataset and logger — same as above: the folder is versioned, its contents are not.
 data/*
 !data/.gitkeep
+
+# Config backup that ConfigManager.save() leaves behind before overwriting.
+config.yaml.bak

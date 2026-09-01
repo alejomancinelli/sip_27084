@@ -20,6 +20,7 @@ Dos puntos del contrato que no se ven en las firmas:
 
 import copy
 import os
+import shutil
 import threading
 
 import yaml
@@ -27,6 +28,7 @@ import yaml
 from system.logger import logger
 
 _CONFIG_FILENAME = "config.yaml"
+_BACKUP_SUFFIX = ".bak"   # copia de la versión anterior, una sola
 _TMP_SUFFIX = ".tmp"
 
 # Config de rescate: lo mínimo para que la app arranque y pueda loguear. Las
@@ -173,6 +175,13 @@ class ConfigManager:
         sobre el original: un corte de energía deja el archivo viejo entero, nunca
         uno a medio escribir. Los comentarios del YAML original no sobreviven.
 
+        Antes de pisarlo guarda una copia en `.bak`, que es **la versión anterior, no un
+        histórico**. Es la red contra el modo de falla propio de este archivo: acá no se
+        escribe un valor, se reescribe el archivo entero desde lo que haya en memoria, así
+        que un campo que no se llenó bien se persiste como si fuera un valor elegido. Eso
+        no rompe nada —una escala en cero publica ceros creíbles— y para cuando se nota
+        puede haber pasado un turno.
+
         No guarda —y devuelve False— si la config en memoria es la de rescate y el
         archivo existe: sería pisar con un esqueleto un archivo que todavía se
         puede arreglar a mano. Tampoco guarda si algún valor no es YAML plano; el
@@ -186,6 +195,7 @@ class ConfigManager:
                 )
                 return False
 
+            self._write_backup()
             tmp_path = f"{self._config_path}{_TMP_SUFFIX}"
             try:
                 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -203,6 +213,22 @@ class ConfigManager:
                 logger.error(f"Error escribiendo {self._config_path}: {e}")
                 self._discard_tmp(tmp_path)
                 return False
+
+    def _write_backup(self):
+        """
+        Copia el archivo actual a `.bak` antes de pisarlo. Un fallo no impide guardar.
+
+        Se copia y no se renombra: renombrar dejaría al proceso sin config si la escritura
+        siguiente falla. Y si la copia no se puede hacer se avisa y se sigue: perder el
+        respaldo es peor que no guardar, pero no tanto como no poder guardar.
+        """
+        if not os.path.exists(self._config_path):
+            return
+        backup_path = f"{self._config_path}{_BACKUP_SUFFIX}"
+        try:
+            shutil.copy2(self._config_path, backup_path)
+        except OSError as e:
+            logger.warning(f"No se pudo dejar el respaldo en {backup_path}: {e}")
 
     # ── Internos ─────────────────────────────────────────────────────────────
 

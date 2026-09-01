@@ -53,6 +53,9 @@ class ConfigView(QWidget):
         super().__init__(parent)
         self._config = config_manager
         self._tabs: list = []
+        # Pestañas que cargaron bien. Una que no cargó tiene los campos en su valor por
+        # defecto, así que guardarla escribiría esos defaults encima de la config real.
+        self._loaded_tabs: set = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -76,6 +79,10 @@ class ConfigView(QWidget):
             cameras_tab.open_roi_requested.connect(self.open_roi_requested)
 
         layout.addLayout(self._build_button_row())
+        # Cargar acá y no dejarlo librado a cada pestaña: una que se olvide de hacerlo en
+        # su constructor arranca con los campos en su default y el primer guardado los
+        # persiste. El invariante lo garantiza quien las crea, no cada una por su cuenta.
+        self.reload()
 
     # ── API pública ──────────────────────────────────────────────────────────
 
@@ -85,9 +92,21 @@ class ConfigView(QWidget):
 
         Es lo que hace el botón de descartar, y también lo que hay que llamar cuando el
         `config.yaml` cambió por afuera de la aplicación.
+
+        Una pestaña que falla al cargar no corta a las demás y queda marcada: no se la
+        guarda, porque sus campos tienen el valor por defecto y persistirlos borraría la
+        configuración real de esa sección sin que nada parezca haber fallado.
         """
         for tab in self._tabs:
-            tab.load()
+            try:
+                tab.load()
+            except Exception as error:
+                self._loaded_tabs.discard(tab)
+                logger.error(
+                    f"[UI] La pestaña '{tr(tab.TITLE_KEY)}' no pudo cargar su "
+                    f"configuración: {error}. No se va a guardar.")
+            else:
+                self._loaded_tabs.add(tab)
 
     def refresh_roi_fields(self, camera_slot: str):
         """Recarga los campos de ROI de una cámara tras cerrarse el diálogo interactivo."""
@@ -124,6 +143,11 @@ class ConfigView(QWidget):
     def _on_save_clicked(self):
         try:
             for tab in self._tabs:
+                if tab not in self._loaded_tabs:
+                    logger.error(
+                        f"[UI] No se guarda la pestaña '{tr(tab.TITLE_KEY)}': no había "
+                        f"cargado su configuración y escribiría valores por defecto.")
+                    continue
                 tab.save()
         except Exception as error:
             logger.error(f"[UI] No se pudo armar la configuración a guardar: {error}")
