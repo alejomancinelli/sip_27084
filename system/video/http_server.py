@@ -396,7 +396,12 @@ class HttpVideoServer(AbstractVideoServer):
             return
         # El chequeo de clientes va antes de leer el config: esto corre por frame de
         # cámara, así que sin nadie mirando tiene que salir lo más barato posible.
-        if not self._is_watched(key):
+        #
+        # El anotado no pasa por ese chequeo. Llega uno por medición, no uno por frame, y
+        # descartarlo por no tener clientes en ese instante deja al que se conecta después
+        # esperando el ciclo entero —minutos— por una imagen que ya existía. El costo es
+        # acotado porque el frame anotado sólo existe si alguien lo mandó dibujar.
+        if key[1] != MODE_ANNOTATED and not self._is_watched(key):
             return
         jpeg_quality = self._config.get("video.http.jpeg_quality", _DEFAULT_JPEG_QUALITY)
         frame_width_px = self._config.get("video.http.frame_width_px",

@@ -165,7 +165,32 @@ class CameraGrid(QWidget):
         """
         panel = self._panels.get(camera_slot)
         if panel is not None:
-            panel.clear_frame(tr("camera_waiting_inference"))
+            panel.clear_frame(self._no_annotation_reason(camera_slot))
+
+    def _no_annotation_reason(self, camera_slot: str) -> str:
+        """
+        Por qué no hay imagen anotada para esa cámara.
+
+        Los tres motivos se ven igual —un panel vacío— y piden cosas distintas: uno se
+        arregla esperando, los otros dos tocando el config. Decirlos es la diferencia entre
+        «todavía no midió» y «no va a medir».
+        """
+        if not self._config.get("inference.overlay.enabled", True):
+            return tr("camera_overlay_off")
+        if not self._is_in_an_enabled_pipeline(camera_slot):
+            return tr("camera_pipeline_off")
+        return tr("camera_waiting_inference")
+
+    def _is_in_an_enabled_pipeline(self, camera_slot: str) -> bool:
+        """Una pipeline sin `cameras` las toma a todas, igual que en el motor."""
+        pipelines = self._config.get("inference.pipelines", {}) or {}
+        for section in pipelines.values():
+            if not isinstance(section, dict) or not section.get("enabled", True):
+                continue
+            cameras = section.get("cameras", []) or []
+            if not cameras or camera_slot in cameras:
+                return True
+        return False
 
     @Slot(object, str)
     def update_status(self, status: dict, camera_slot: str):

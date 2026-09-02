@@ -448,7 +448,13 @@ class TestPartHeader:
 
 
 class TestPushGating:
-    """Lo que ahorra el gating: sin nadie mirando un stream no se codifica nada."""
+    """
+    Lo que ahorra el gating: sin nadie mirando un stream crudo no se codifica nada.
+
+    El anotado no se gatea, y el motivo está en `_push`: llega uno por medición y no uno
+    por frame, así que descartarlo deja al cliente que se conecta después esperando el
+    ciclo entero por una imagen que ya existía.
+    """
 
     def test_nothing_is_encoded_without_clients(self):
         server = _watched_server()
@@ -465,10 +471,25 @@ class TestPushGating:
         server = _watched_server(_RAW_1)
         for slot in ("camera_1", "camera_2"):
             server.push_raw(slot, _frame())
-            server.push_annotated(slot, _frame())
         assert server._store.get(_RAW_1)[0] is not None
-        for key in (_ANNOTATED_1, _RAW_2, _ANNOTATED_2):
-            assert server._store.get(key)[0] is None
+        assert server._store.get(_RAW_2)[0] is None
+
+    def test_the_annotated_frame_is_kept_without_clients(self):
+        """
+        El que se conecta cinco minutos después de la medición no llegó tarde.
+
+        La imagen existe desde que cerró el ciclo; tirarla por no tener clientes en ese
+        instante la hacía esperar hasta la medición siguiente.
+        """
+        server = _watched_server()
+        server.push_annotated("camera_1", _frame())
+        assert server._store.get(_ANNOTATED_1)[0] is not None
+
+    def test_the_raw_stream_is_still_gated(self):
+        """Es el que llega al ritmo de la cámara: ahí el ahorro es real."""
+        server = _watched_server(_ANNOTATED_1)
+        server.push_raw("camera_1", _frame())
+        assert server._store.get(_RAW_1)[0] is None
 
     def test_annotated_is_encoded_when_watched(self):
         server = _watched_server(_ANNOTATED_2)

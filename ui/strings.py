@@ -61,6 +61,12 @@ _TEXTS: dict[str, dict[str, str]] = {
 
     # ── Panel y grilla de cámaras ────────────────────────────────────────────
     "camera_no_signal":       {"es": "SIN SEÑAL",      "en": "NO SIGNAL",     "pt": "SEM SINAL"},
+    "camera_overlay_off":     {"es": "ANOTADO DESACTIVADO",
+                               "en": "ANNOTATION OFF",
+                               "pt": "ANOTACAO DESATIVADA"},
+    "camera_pipeline_off":    {"es": "INFERENCIA DESACTIVADA",
+                               "en": "INFERENCE OFF",
+                               "pt": "INFERENCIA DESATIVADA"},
     "camera_waiting_inference": {"es": "ESPERANDO INFERENCIA",
                                "en": "WAITING FOR INFERENCE",
                                "pt": "AGUARDANDO INFERÊNCIA"},

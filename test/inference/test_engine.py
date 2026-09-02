@@ -584,6 +584,27 @@ class TestAnnotation:
         engine = _engine(_FakePipeline(), annotate_gate=lambda camera_slot: False)
         assert _process_one(engine, _frame()).annotated_bgr is None
 
+    def test_the_cycle_frame_is_drawn_even_when_nobody_is_watching(self):
+        """
+        `annotate()` saltea el gate a propósito.
+
+        Es un dibujo por medición, no por frame, así que el costo que el gate cuida no
+        aplica. Y como la pregunta se contesta en el momento del dibujo, respetarlo dejaba
+        la medición sin imagen durante todo el ciclo por haber tenido la UI en crudo justo
+        en ese instante — y sin nada guardado para el que se conectara después.
+        """
+        engine = _engine(_FakePipeline([(0, 90.0, (10, 10, 40, 40))]),
+                         annotate_gate=lambda camera_slot: False)
+        result = _process_one(engine, _frame())
+        assert result.annotated_bgr is None          # el camino por frame sí lo respeta
+        assert engine.annotate(result) is not None   # la medición, no
+
+    def test_the_cycle_frame_still_obeys_the_config(self):
+        """El gate es una optimización; apagar el overlay es una decisión."""
+        config = _MockConfig(**{"inference.overlay.enabled": False})
+        engine = _engine(_FakePipeline(), config)
+        assert engine.annotate(_process_one(engine, _frame())) is None
+
     def test_the_annotator_draws_over_the_standard_overlay(self):
         seen = []
 
