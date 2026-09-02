@@ -188,6 +188,14 @@ class _CameraForm(QWidget):
             int(self._config.get(f"{self._prefix}.illumination_min", 50))
         )
 
+        # La casilla se lee acá y no en `load_roi()`: son dos llamadores que quieren
+        # cosas distintas. Esto es la carga completa desde el archivo; `load_roi()` es el
+        # callback del diálogo, que sólo escribe geometría y no tiene que pisar lo que el
+        # operador acaba de tildar. Leerla en el lugar equivocado la dejó sin leer en
+        # ninguno, y como `save()` la escribe de vuelta, abrir la pestaña y guardar apagaba
+        # un ROI que estaba prendido.
+        roi_enabled = (self._config.get(f"{self._prefix}.roi", {}) or {}).get("enabled", False)
+        self._roi_check.setChecked(bool(roi_enabled))
         self.load_roi()
 
         calibration = self._config.get(f"{self._prefix}.calibration", {}) or {}
