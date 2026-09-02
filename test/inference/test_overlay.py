@@ -11,7 +11,7 @@ import pytest
 from system.inference import overlay
 from system.inference.result import Detection, InferenceResult
 
-_NO_EXTRAS = {"draw_summary": False, "draw_timestamp": False, "draw_roi": False}
+_NO_EXTRAS = {"draw_timestamp": False, "draw_roi": False}
 
 
 def _frame(level: int = 128) -> np.ndarray:
@@ -108,43 +108,9 @@ class TestAnnotate:
 
     def test_the_roi_is_marked(self):
         options = overlay.OverlayOptions(draw_boxes=False, draw_labels=False,
-                                         draw_summary=False, draw_timestamp=False)
+                                         draw_timestamp=False)
         result = _result(detections=[], roi_px=(10, 10, 100, 60))
         assert _changed_pixels(_frame(), overlay.annotate(result, options)) > 0
-
-
-class TestSummary:
-    def test_it_always_reports_time_confidence_and_count(self):
-        lines = overlay.build_summary_lines(_result())
-        assert lines == ["12 ms", "conf 90%", "det 1"]
-
-    def test_the_metrics_of_the_project_follow(self):
-        lines = overlay.build_summary_lines(_result(metrics={"coverage_pct": 42.5}))
-        assert lines[-1] == "coverage_pct 42.5"
-
-    def test_an_invalid_result_leads_with_its_reason(self):
-        lines = overlay.build_summary_lines(_result(is_valid=False, invalid_reason="dark_frame"))
-        assert lines[0] == "! dark_frame"
-
-    def test_booleans_are_readable(self):
-        lines = overlay.build_summary_lines(_result(metrics={"alarm": True}))
-        assert lines[-1] == "alarm yes"
-
-    def test_the_labels_come_before_the_metrics(self):
-        """El veredicto dice si los números aplican, así que se lee primero."""
-        lines = overlay.build_summary_lines(
-            _result(labels={"belt": "full"}, metrics={"coverage_pct": 42.5}))
-        assert lines[-2:] == ["belt full", "coverage_pct 42.5"]
-
-    def test_the_panel_is_drawn_over_the_frame(self):
-        options = overlay.OverlayOptions(draw_boxes=False, draw_labels=False,
-                                         draw_roi=False, draw_timestamp=False)
-        assert _changed_pixels(_frame(), overlay.annotate(_result(), options)) > 0
-
-    def test_an_empty_panel_draws_nothing(self):
-        frame = _frame()
-        overlay.draw_text_panel(frame, [])
-        assert _changed_pixels(_frame(), frame) == 0
 
 
 class TestDrawLine:
@@ -185,7 +151,7 @@ class TestCropToRoi:
     def test_it_does_not_frame_its_own_border(self):
         """Recuadrar el recorte marca el borde de la imagen: no dice nada."""
         options = overlay.OverlayOptions(crop_to_roi=True, draw_roi=True,
-                                         draw_summary=False, draw_timestamp=False)
+                                         draw_timestamp=False)
         annotated = overlay.annotate(_result(roi_px=self._ROI, detections=[]), options)
         assert _changed_pixels(annotated, np.full_like(annotated, 128)) == 0
 

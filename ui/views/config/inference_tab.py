@@ -128,7 +128,6 @@ class InferenceTab(AbstractConfigTab):
         # el motor las sigue leyendo del config, así que un proyecto que necesite
         # apagarlas puede, pero no desde la pantalla de planta.
         self._overlay_checks = {
-            "draw_summary":   add_check_row(form, tr("inf_draw_summary"), True),
             "draw_timestamp": add_check_row(form, tr("inf_draw_timestamp"), True),
             "crop_to_roi":    add_check_row(form, tr("inf_crop_to_roi"), False),
         }

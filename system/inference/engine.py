@@ -538,8 +538,6 @@ class InferenceThread(QThread):
                                             defaults.mask_style)),
             mask_alpha=float(self._config.get("inference.overlay.mask_alpha",
                                               defaults.mask_alpha)),
-            draw_summary=bool(self._config.get("inference.overlay.draw_summary",
-                                               defaults.draw_summary)),
             draw_labels=bool(self._config.get("inference.overlay.draw_labels",
                                               defaults.draw_labels)),
             draw_roi=bool(self._config.get("inference.overlay.draw_roi", defaults.draw_roi)),
