@@ -46,7 +46,7 @@ cameras:
   # `.env`. Sin esa clave usaría las compartidas RTSP_USER / RTSP_PASSWORD.
   rtsp:
     driver: rtsp
-    address: rtsp://10.8.83.90:554/Streaming/channels/101
+    address: rtsp://192.168.1.64:554/Streaming/channels/101
     credentials_env: CAM1
     rotation: null
     acquisition:
@@ -55,7 +55,7 @@ cameras:
   # La misma cámara sin tope de entrega: muestra el fps real del stream.
   rtsp_full_rate:
     driver: rtsp
-    address: rtsp://10.8.83.90:554/Streaming/channels/101
+    address: rtsp://192.168.1.64:554/Streaming/channels/101
     credentials_env: CAM1
     rotation: null
     acquisition:
