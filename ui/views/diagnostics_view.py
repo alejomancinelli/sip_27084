@@ -9,24 +9,30 @@ Agregar una pestaña de diagnóstico es un archivo en `ui/views/diagnostics/` y 
 línea en `_TAB_CLASSES`.
 """
 
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QLabel, QTabWidget, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 
 from ui.strings import tr
 from ui.views.diagnostics.hardware_tab import HardwareTab
+from ui.views.diagnostics.license_tab import LicenseTab
 from ui.views.diagnostics.logs_tab import LogsTab
 from ui.views.diagnostics.modbus_tab import ModbusTab
 from ui.views.diagnostics.video_tab import VideoTab
 from ui.widgets.form import wrap_in_card
 
 # Pestañas en el orden en que se muestran.
-_TAB_CLASSES = (HardwareTab, ModbusTab, VideoTab, LogsTab)
+_TAB_CLASSES = (HardwareTab, ModbusTab, VideoTab, LicenseTab, LogsTab)
 
 
 class DiagnosticsView(QWidget):
     """Panel de diagnóstico. Reparte a las pestañas lo que le empuja el cableado."""
+
+    # Las dos rutas que el operador eligió en un diálogo. Quien abre el archivo es el
+    # cableado: la pantalla elige la ruta y avisa. Una por acción del usuario.
+    license_export_requested = Signal(str)
+    license_install_requested = Signal(str)
 
     def __init__(self, config_manager: ConfigManager, parent=None):
         super().__init__(parent)
@@ -51,6 +57,10 @@ class DiagnosticsView(QWidget):
             )
         layout.addWidget(tab_widget, stretch=1)
 
+        license_tab = self._get_tab(LicenseTab)
+        license_tab.export_requested.connect(self.license_export_requested)
+        license_tab.install_requested.connect(self.license_install_requested)
+
     # ── API pública ──────────────────────────────────────────────────────────
 
     def set_service_status(self, service: str, status: str):
@@ -68,6 +78,10 @@ class DiagnosticsView(QWidget):
 
     def log_event(self, level: str, message: str, module: str = ""):
         self._get_tab(LogsTab).log_event(level, message, module)
+
+    def show_license_result(self, is_ok: bool, message: str):
+        """Resultado de instalar una licencia, tal como lo devolvió el manager."""
+        self._get_tab(LicenseTab).show_install_result(is_ok, message)
 
     def apply_theme(self, dark: bool):
         for tab in self._tabs:
@@ -89,6 +103,11 @@ class DiagnosticsView(QWidget):
     def update_modbus_values(self, values: dict):
         """Slot para {dirección: valor} de los registros que se están publicando."""
         self._get_tab(ModbusTab).update_values(values)
+
+    @Slot(object)
+    def update_license(self, status: dict):
+        """Slot para el dict de `LicenseManager.get_status()`."""
+        self._get_tab(LicenseTab).update_license(status)
 
     # ── Internos ─────────────────────────────────────────────────────────────
 

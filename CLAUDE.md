@@ -62,6 +62,16 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
         metrics.py            nivel 1 — las métricas del proceso; se reescribe en cada fork
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
+      license/                ata el equipo a la máquina para la que se emitió la licencia
+        schema.py             nivel 1 — dueño del formato del .lic: campos, token, firma
+        verify.py             nivel 0 — Ed25519 contra la clave pública embebida
+        public_key.py         nivel 1 — clave pública por `key_id`; la privada NO vive acá
+        policy.py             nivel 1 — qué hace el equipo cuando la licencia no vale
+        fingerprint.py        nivel 0 — huella por componente; nunca levanta excepción
+        clock.py              nivel 0 — último-visto firmado; caza el reloj atrasado
+        manager.py            la fachada: lo único que importa main.py
+        request.py            arma la solicitud que se manda a firmar
+        __main__.py           CLI: status | fingerprint | request | install
       modbus/
         schema.py             nivel 1 — maquinaria del mapa: carga, escalas, espejo R/W
         register_map.yaml     el mapa concreto; es lo que cambia en cada instalación
@@ -103,7 +113,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         config_view.py        cascarón: arma las pestañas y persiste una sola vez
         diagnostics_view.py   cascarón: reparte a las pestañas lo que le llega
         config/               una pestaña por sección del config; +1 línea para agregar otra
-        diagnostics/          hardware, Modbus, video y logs
+        diagnostics/          hardware, Modbus, video, licencia y logs
       widgets/                form, status_chip, log_table, realtime_chart,
                               camera_panel (una cámara), camera_grid (N, con foco)
       dialogs/                roi_dialog, gpio_dialog
@@ -112,10 +122,12 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
     test/                     espeja el árbol de arriba; conftest.py en la raíz
     manual_test/              pruebas con hardware o pantalla, con su config.yaml al lado
       ui/                     levanta la app entera con cámaras mock; hace de main.py
+      license/                emite la solicitud y simula el binario para probar la licencia
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
+                              licensing.md (cómo se pide y se renueva una licencia)
                               mqtt.md (la misma estructura, en tópicos y JSON)
     data/                     logs y dataset en runtime
 
@@ -156,6 +168,10 @@ Son punteros: el contrato vive en el archivo, no acá.
   El mapa concreto es `system/modbus/register_map.yaml`.
 - **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
   documenta qué significa cada bit. Nadie corre bits afuera.
+- **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
+  estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
+  `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
+  pide y se renueva está en `docs/licensing.md`.
 - **Configuración** — `system/config_manager.py`: rutas punteadas, copias en la
   entrega, config de rescate.
 - **Pestaña de configuración** — `ui/views/config/abstract_tab.py`: `TITLE_KEY`,
@@ -269,6 +285,61 @@ Lo que no se deduce leyendo un archivo suelto:
   publica **por tick y no por evento**, porque una serie de salud por evento no agrega
   información. La estructura de las series —measurements, tags y nombres de campo— es un
   contrato con los dashboards y está en `docs/influxdb.md`.
+- **La licencia sólo se enforcea en un build compilado.** Corriendo desde fuentes el
+  estado es `unlicensed_build`, la política es `off` y no se restringe nada, con una línea
+  de log para que nunca sea silencioso: sacar la validación de un `.py` es borrar un `if`,
+  y fingir que protege algo sería peor que decir que no protege nada. La marca la pone
+  Nuitka (`__compiled__` o `sys.frozen`) y **no hay variable de entorno ni clave de config
+  que lo apague**: un `LICENSE_DEV=1` es un string en el binario y es lo primero que se
+  busca. Sin compilar (roadmap B3), todo esto es un cartel.
+- **Lo que ata el equipo es la huella, no los nombres.** `client` y `project_id` se
+  comparan contra `project:` del config —que el cliente edita— así que son una alarma de
+  archivo equivocado, no un control. El lock es el N-de-M sobre las fuentes de hardware:
+  la licencia declara cuántas tienen que seguir coincidiendo, y con eso un disco o una
+  placa de red reemplazados no dejan afuera al cliente que pagó. Esa es la falla que
+  hunde estos esquemas, y por eso el N-de-M no es un lujo.
+- **Sin archivo de licencia el equipo no arranca, y eso se decide en el build.** La
+  política —avisar, o además dejar de publicar— viaja firmada adentro de la licencia, así
+  que se elige por cliente sin recompilar; pero cuando no hay archivo no hay política que
+  leer, y por eso ese caso lo fija `REFUSE_START_WITHOUT_LICENSE` y vale para todo el
+  build. El corte es de arranque: una licencia que se cae a mitad de un turno no baja la
+  línea, porque ahí ya hay cámaras tomadas y números publicados.
+- **Con la política `degrade` el canal sigue sirviendo y lo que para es la medición.** El
+  heartbeat, la salud del equipo y las palabras de estado se publican igual; los registros
+  de proceso quedan con su último valor y el bit de licencia dice por qué. Bajar el Modbus
+  dejaría al PLC viendo un enlace muerto, indistinguible de un cable cortado, y mandaría
+  al integrador a buscar el problema equivocado.
+- **Los entitlements sólo restringen cuando hay una licencia que los declare.** Sin
+  archivo no se sabe qué se compró: el cupo de cámaras y los features no bloquean nada y
+  lo que aplica es la política sobre el estado inválido. Con una licencia que parsea
+  —aunque esté vencida o sea de otra máquina— sus entitlements sí se aplican, porque ahí
+  sí se sabe qué se vendió. Una cámara sobre el cupo no desaparece de la pantalla: se
+  publica su estado con el motivo, porque un hueco manda a revisar un cable que está bien.
+- **Un feature por pipeline, y dos propósitos son dos pipelines.** Medir un proceso y
+  vigilar una zona no se juntan aunque miren la misma cámara: son dos hilos, sus
+  resultados ya se separan por el par `(cámara, pipeline)`, y se venden por separado.
+  Juntarlos haría que el cliente que no compró la vigilancia pierda también la medición
+  que sí pagó, porque el pipeline entero no arranca.
+- **Contra el reloj atrasado, el equipo solo tiene un techo, y lo que lo completa está en
+  el PLC.** El estado firmado de `data/license_state.bin` caza el intento ingenuo, pero
+  atrasar la fecha y borrar ese archivo deja el equipo andando: todo lo que guarda vive en
+  un disco que el mismo administrador controla. Por eso se publican dos cosas hacia
+  afuera, y las dos son requisitos de la integración y no algo que el equipo imponga: el
+  bit de licencia, **para que el PLC lo enclave** —el equipo puede levantar la alarma pero
+  no borrarla—, y el reloj del equipo como epoch UTC en `clock_epoch_s_high` / `_low`,
+  **para que el PLC lo compare con el suyo**, que es el único reloj confiable en una
+  instalación sin internet. Acá no se compara ni se juzga: se publica el dato y el integrador arma la
+  lógica, como con todo el resto del mapa. Sólo afecta a las licencias con vencimiento;
+  una perpetua no tiene fecha que esquivar.
+- **La clave privada no vive en este repo y nunca va a vivir acá.** Acá va sólo la pública,
+  en `system/license/public_key.py`, compilada adentro del binario: si se pudiera cargar
+  de un archivo al lado del ejecutable, cualquiera pondría la suya y firmaría sus propias
+  licencias. Hay **una sola clave** para todos los proyectos —lo que separa una
+  instalación de otra es la huella, no el nombre de la clave— y el `key_id` es un contador
+  (`iea-1`) sin año ni país, porque el verificador nunca lo valida como alcance. Rotar es
+  de dos etapas y la segunda —sacar la clave vieja de la tabla— es la que cierra el
+  agujero. El repositorio que firma es privado y aparte; su encargo está en
+  `.claude/plans/licensing-signer-repo.md`.
 - **Los dos backends de telemetría publican el mismo dato.** `PersistenceThread` arma el
   registro una sola vez y se lo pasa igual a InfluxDB y a MQTT, así que no hay una lista
   de campos por destino: los nombres se eligen una vez y valen para los dos. Lo que cambia
@@ -370,7 +441,7 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, siete pestañas de configuración, cuatro de diagnóstico— salvo dos
+  andando —tres vistas, siete pestañas de configuración, cinco de diagnóstico— salvo dos
   huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
   `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
   `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
@@ -381,10 +452,16 @@ La tabla completa, archivo por archivo, está en `README.md`.
   fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
-- Las próximas líneas de trabajo —visuales de configuración, protección del entregable
-  (hash del modelo, licencia por hardware, compilar) y rendimiento/despliegue
-  (optimización en Jetson, Docker)— están en `.claude/plans/roadmap.md`, con qué hay que
-  averiguar antes de empezar cada una. Ninguna está decidida.
+- **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
+  —cupo de cámaras, features por pipeline, vencimiento, huella, bit al PLC y pestaña de
+  diagnóstico— pero le faltan dos cosas para servir de algo: la **clave pública real** en
+  `system/license/public_key.py`, que hoy tiene una de prueba, y **compilar** (roadmap B3),
+  sin lo cual la validación se saltea borrando un `if`. El diseño completo está en
+  `.claude/plans/licensing.md`.
+- Las próximas líneas de trabajo —visuales de configuración, lo que falta de la protección
+  del entregable (hash del modelo, compilar) y rendimiento/despliegue (optimización en
+  Jetson, Docker)— están en `.claude/plans/roadmap.md`, con qué hay que averiguar antes de
+  empezar cada una.
 
 ## Dónde va lo que se escribe
 

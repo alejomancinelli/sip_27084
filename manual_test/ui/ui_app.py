@@ -130,6 +130,8 @@ from system.inference.engine import InferenceThread                      # noqa:
 from system.inference.metrics import compute_metrics                     # noqa: E402
 from system.inference.pipeline import Pipeline                           # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
+from system.license.manager import LicenseManager                        # noqa: E402
+from system.license.request import save_request                          # noqa: E402
 from system.logger import logger                                         # noqa: E402
 from system.modbus.registers import SCHEMA                               # noqa: E402
 from system.modbus.server import SharedModbusServer                      # noqa: E402
@@ -288,6 +290,14 @@ class _DemoApp(QObject):
         self._grid = CameraGrid(config)
         self._window.monitor_view.set_content(self._grid)
         self._window.config_saved.connect(self._on_config_saved)
+
+        # ── Licencia ─────────────────────────────────────────────────────────
+        # Corriendo desde fuentes el estado es `unlicensed_build` y no se enforcea nada,
+        # que es justamente lo que hay que poder ver en la pestaña.
+        self._license = LicenseManager(config)
+        self._window.update_license(self._license.get_status())
+        self._window.license_export_requested.connect(self._on_license_export_requested)
+        self._window.license_install_requested.connect(self._on_license_install_requested)
 
         # ── Log real hacia la UI ─────────────────────────────────────────────
         self._log_bridge = _LogBridge(self)
@@ -489,6 +499,7 @@ class _DemoApp(QObject):
                 inference_error=False,
                 fallback_config=self._config.is_using_fallback,
                 dead_thread=any(not t.isRunning() for t in self._capture_threads),
+                license_invalid=self._license.should_report_invalid(),
             ),
             # Los seis canales, cada uno con el estado que informó su dueño: es la
             # misma fuente que alimenta los chips de la pantalla, así que el operador y
@@ -576,6 +587,25 @@ class _DemoApp(QObject):
         self._config_snapshot = _read_config_file()
         self._window.reload_config_view()
         logger.info(f"[Demo] {_CONFIG_PATH.name} cambió por afuera: releído y panel recargado.")
+
+    # ── Licencia ─────────────────────────────────────────────────────────────
+    # Los dos slots hacen lo mismo que hará `main.py`: la pantalla eligió una ruta y el
+    # cableado es el que toca el disco.
+
+    @Slot(str)
+    def _on_license_export_requested(self, path: str):
+        try:
+            written = save_request(self._config, path)
+        except OSError as e:
+            self._window.show_license_result(False, f"No se pudo escribir: {e}")
+            return
+        self._window.show_license_result(True, f"Solicitud escrita en {written}")
+
+    @Slot(str)
+    def _on_license_install_requested(self, path: str):
+        is_installed, message = self._license.install(path)
+        self._window.update_license(self._license.get_status())
+        self._window.show_license_result(is_installed, message)
 
     # ── Configuración guardada desde la pantalla ─────────────────────────────
 

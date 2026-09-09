@@ -58,5 +58,14 @@ pyserial>=3.5
 influxdb-client>=1.36
 paho-mqtt>=1.6,<3
 
+# Firma de las licencias (system/license). Ed25519: la clave pública son 32 bytes que
+# entran en una línea del código y no hay parámetros que elegir mal. Hay wheels cp310
+# para win_amd64 y para el aarch64 de la Jetson, así que no pelea con el pin de Python.
+#
+# A diferencia de los backends de telemetría, sin esta librería el módulo NO degrada a
+# no-op: un verificador que no puede verificar rechaza todo. Un candado que no cierra
+# tiene que quedar cerrado.
+cryptography>=42.0
+
 # Tests
 pytest>=7.4

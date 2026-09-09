@@ -119,6 +119,7 @@ def _build_values(server: SharedModbusServer, walks: dict[str, _Walk],
         inference_error=False,
         fallback_config=False,
         dead_thread=False,
+        license_invalid=False,       # esta prueba no evalúa la licencia
     )
     values["com_status_bitfield"] = com_status.pack(
         modbus_tcp_status=server.tcp_status,

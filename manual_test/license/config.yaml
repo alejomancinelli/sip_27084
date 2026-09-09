@@ -1,0 +1,81 @@
+# Config de la prueba manual de licencia. NO es el config de la app: sólo trae las
+# secciones que el subsistema de licencia lee, que son cuatro.
+#
+# Este archivo es la mitad editable de la prueba: se comenta y se descomenta acá, se
+# vuelve a correr `check_license.py`, y se compara lo que dice el reporte con lo que
+# debería pasar. Cada escenario está marcado con ESCENARIO y dice qué esperar.
+
+project:
+  # ESCENARIO «licencia de otra planta»: cambiar `project_id` por LINEA_9 con una
+  # licencia emitida para LINEA_3. Esperado: estado `foreign`, y el motivo nombra los dos
+  # valores. Ojo con la lectura: esto NO es seguridad —el cliente puede editar su propio
+  # config— sino la forma de que mandar el archivo equivocado se note el primer día.
+  client: ACME
+  project_id: LINEA_3
+
+cameras:
+  # ESCENARIO «cupo de cámaras»: emitir la licencia con `max_cameras: 2` y dejar las
+  # cuatro declaradas acá. Esperado: arrancan camera_1 y camera_2, y el reporte marca
+  # camera_3 y camera_4 como sobre el cupo.
+  #
+  # El corte es por ORDEN DE DECLARACIÓN, no por número de slot: comentar camera_1 y
+  # dejar las otras tres tiene que dejar andando a camera_2 y camera_3. Vale la prueba,
+  # porque es la que verifica que apagar una cámara no mueva a las demás al azar.
+  camera_1:
+    name: Entrada
+    enabled: true
+    driver: mock
+  camera_2:
+    name: Salida
+    enabled: true
+    driver: mock
+  camera_3:
+    name: Cinta norte
+    enabled: false
+    driver: mock
+  camera_4:
+    name: Cinta sur
+    enabled: true
+    driver: mock
+
+inference:
+  pipelines:
+    # ESCENARIO «addon no licenciado»: emitir la licencia con `features: [core]` y dejar
+    # los tres pipelines. Esperado: arrancan pipeline_1 y pipeline_3, y pipeline_2 no,
+    # porque su `feature` no está en la licencia.
+    #
+    # Emitir después con `features: [core, security_detection]` y volver a correr: los
+    # tres tienen que arrancar sin tocar este archivo.
+    pipeline_1:
+      enabled: true
+      cameras: [camera_1]
+      feature: core             # ausente = core; se declara igual para que se vea
+    pipeline_2:
+      enabled: true
+      cameras: [camera_2]
+      feature: security_detection
+    # ESCENARIO «feature mal escrito»: poner acá una lista —`feature: [core, otro]`— o
+    # cualquier cosa que no sea un nombre suelto. Esperado: un WARNING al arrancar y el
+    # pipeline sin arrancar. Un pipeline declara UN feature; dos propósitos son dos
+    # pipelines. Lo que se prueba es que el error se avise y no bloquee en silencio.
+    pipeline_3:
+      enabled: true
+      cameras: [camera_3]
+      feature: core
+    # ESCENARIO «deshabilitado en config vs no licenciado»: poner `enabled: false` en
+    # pipeline_1. Esperado: el reporte lo marca deshabilitado por config y NO por
+    # licencia. Son dos motivos distintos y no tienen que confundirse en la pantalla.
+
+  models:
+    # ESCENARIO «pesos copiados»: emitir la licencia con el sha256 de un archivo, y
+    # después apuntar `path` a otro. Esperado: estado `foreign` y el motivo nombra el
+    # slot del modelo.
+    #
+    # El sha256 se saca con:
+    #   .venv\Scripts\python.exe -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" pesos.bin
+    #
+    # Con la licencia emitida sin `model_hashes` esto no se mira y el path puede estar
+    # vacío, que es como viene.
+    model_1:
+      type: mock
+      path: ''
