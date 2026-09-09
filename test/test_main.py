@@ -40,6 +40,26 @@ class TestExit:
         assert calls == ["shutdown", "exit"]
 
 
+class TestUnlicensedCamera:
+    """El status que el cableado publica por una cámara que la licencia deja afuera."""
+
+    def test_it_uses_the_stable_keys_of_a_driver(self):
+        # Lo consumen la grilla, el bitfield que va al PLC y la serie de telemetría, y
+        # ninguno pregunta de dónde salió el status. Una clave de menos acá es un KeyError
+        # en el tick de telemetría, lejos de donde se escribió.
+        assert set(main._UNLICENSED_CAMERA_STATUS) >= {
+            "connected", "capture_enabled", "temperature", "fps_estimated"}
+
+    def test_it_reads_as_a_camera_that_cannot_operate(self):
+        status = main._UNLICENSED_CAMERA_STATUS
+        assert status["connected"] is False
+        assert status["capture_enabled"] is False
+
+    def test_it_says_why(self):
+        """Sin motivo, la pantalla muestra una cámara caída y mandan a revisar un cable."""
+        assert main._UNLICENSED_CAMERA_STATUS.get("error")
+
+
 class TestInterruptSignals:
     def test_ctrl_c_and_sigterm_are_always_handled(self):
         assert {signal.SIGINT, signal.SIGTERM} <= set(main._interrupt_signals())

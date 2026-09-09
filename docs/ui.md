@@ -285,11 +285,26 @@ crece. `IS_CENTERED = False` es para las que tienen que ocupar todo el ancho.
 método, y **una pestaña que no conoce un servicio lo ignora**: así el cableado publica
 todo en un solo lugar y no tiene que saber quién lo dibuja.
 
+Una pestaña que además necesita **disparar una acción** —no sólo mostrar— la emite por
+una señal y la vista la reenvía hacia arriba hasta `MainWindow`, que es la única con la
+que el cableado habla. La de licencia lo hace con dos: `license_export_requested(str)` y
+`license_install_requested(str)`, cada una con la ruta que el operador eligió. La
+pestaña no sabe qué pasa después, y el cableado no sabe qué botón se apretó.
+
+Cuando esa acción tiene un resultado que el operador tiene que ver, vuelve por un método
+—`show_license_result(ok, mensaje)`— y **no se mezcla con el estado**: el mensaje lo
+limpia el próximo clic, no el próximo estado, así el orden en que el cableado llame a
+los dos métodos deja de importar.
+
 ## Qué NO hace la UI
 
 `ui/` es presentación. Estas cinco cosas son errores de límite, no atajos:
 
 1. **No abre cámaras, sockets, ni archivos** que no sean sus propios estilos e iconos.
+   Un `QFileDialog` **no** es una excepción a esto: devuelve una ruta y no toca el
+   archivo. La pestaña de licencia es el ejemplo — pregunta dónde guardar la solicitud o
+   cuál `.lic` instalar, emite la ruta por una señal, y el que abre, verifica y copia es
+   el cableado. Elegir una ruta es presentación; leerla y escribirla, no.
 2. **No arma direcciones ni rutas de protocolo.** Las URLs de los streams llegan hechas
    por `set_stream_urls()`: la forma de la ruta la conoce el servidor de video, y si la
    UI la compusiera el formato quedaría definido en dos lugares.

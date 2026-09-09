@@ -78,6 +78,7 @@ import statistics
 import sys
 import threading
 from collections.abc import Callable
+from datetime import datetime, timezone
 
 import numpy as np
 from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Signal, Slot
@@ -94,6 +95,10 @@ from system.inference.engine import InferenceThread
 from system.inference.metrics import compute_metrics
 from system.inference.pipeline import Pipeline
 from system.inference.result import InferenceResult
+from system.license.manager import (
+    PERPETUAL_DAYS_SENTINEL, RECHECK_INTERVAL_MS, LicenseManager, read_feature,
+)
+from system.license.request import save_request
 from system.logger import logger
 from system.modbus.registers import REGISTERS, SCHEMA
 from system.modbus.server import SharedModbusServer
@@ -112,6 +117,11 @@ from ui import service_status
 # `MainWindow` y `CameraGrid` se importan dentro de `_QtUi`: en headless no se construye
 # ninguna ventana y no hace falta cargar el árbol de vistas.
 
+# Código de salida del equipo que no arranca por falta de licencia. Propio y distinto de
+# 1, para que el supervisor del servicio pueda distinguirlo de una caída y no reintente en
+# loop: sin licencia, reintentar no arregla nada.
+_EXIT_NO_LICENSE = 3
+
 _METRICS_INTERVAL_S = 1.0         # cada cuánto se pide una métrica de hardware
 _REGISTERS_INTERVAL_MS = 1000     # cada cuánto se escriben los registros
 _STATUS_INTERVAL_MS = 1000        # cada cuánto se releen los `status` de los subsistemas
@@ -120,6 +130,18 @@ _SERVER_STOP_TIMEOUT_S = 5.0      # espera al hilo del servidor Modbus al cerrar
 
 _HEARTBEAT_MAX = 65535            # el registro es uint16: el contador da la vuelta ahí
 _SIGNAL_POLL_INTERVAL_MS = 200     # timer al vacío para que Qt atienda Ctrl+C y SIGTERM
+
+# Status de una cámara declarada que la licencia deja afuera. Las claves son las estables
+# de `AbstractCameraDriver.get_status()`: para el resto del sistema es una cámara que no
+# puede operar, igual que una mal configurada, y el motivo viaja en `error` para que la
+# pantalla diga por qué en vez de mostrar un hueco.
+_UNLICENSED_CAMERA_STATUS = {
+    "connected": False,
+    "capture_enabled": False,
+    "temperature": 0.0,
+    "fps_estimated": 0.0,
+    "error": "Sobre el cupo de la licencia",
+}
 
 # El muestreo de la telemetría no es configuración: un segundo es la resolución con la
 # que se miran estas series y no hay instalación que quiera otra. Más fino no agrega
@@ -271,6 +293,16 @@ class _HeadlessUi:
     def update_modbus_values(self, registers: dict):
         pass
 
+    def update_license(self, status: dict):
+        pass
+
+    def show_license_result(self, is_ok: bool, message: str):
+        pass
+
+    def connect_license_requests(self, export_slot: Callable[[str], None],
+                                 install_slot: Callable[[str], None]):
+        """En headless nadie aprieta un botón: el mismo flujo va por `python -m system.license`."""
+
 
 class _QtUi:
     """
@@ -332,6 +364,17 @@ class _QtUi:
     def update_modbus_values(self, registers: dict):
         self._window.diagnostics_view.update_modbus_values(registers)
 
+    def update_license(self, status: dict):
+        self._window.update_license(status)
+
+    def show_license_result(self, is_ok: bool, message: str):
+        self._window.show_license_result(is_ok, message)
+
+    def connect_license_requests(self, export_slot: Callable[[str], None],
+                                 install_slot: Callable[[str], None]):
+        self._window.license_export_requested.connect(export_slot)
+        self._window.license_install_requested.connect(install_slot)
+
 
 def create_ui(config: ConfigManager, *, headless: bool):
     """
@@ -391,10 +434,15 @@ class Application(QObject):
     hilo que emite, tocando widgets desde afuera del hilo de la GUI.
     """
 
-    def __init__(self, config: ConfigManager, ui, parent=None):
+    def __init__(self, config: ConfigManager, ui, license_manager: LicenseManager,
+                 parent=None):
         super().__init__(parent)
         self._config = config
         self._ui = ui
+        # Ya construido y evaluado por `main()`, que lo necesitó antes de Qt para decidir
+        # si el equipo arranca. Se recibe hecho en vez de construirlo de nuevo: leer la
+        # huella cuesta un proceso de WMI y el veredicto tiene que ser uno solo.
+        self._license = license_manager
         self._heartbeat = 0
         self._last_metrics: dict = {}
         self._camera_status: dict[str, dict] = {}
@@ -450,6 +498,16 @@ class Application(QObject):
             if not config.get(f"inference.pipelines.{pipeline_slot}.enabled", True):
                 logger.info(f"[Main] {pipeline_slot} deshabilitado: sin hilo de inferencia.")
                 continue
+            # Un feature no licenciado y un `enabled: false` se ven igual desde afuera
+            # —el pipeline no corre— y son cosas distintas: uno se arregla comprando y el
+            # otro editando el config. Por eso son dos mensajes y no uno.
+            feature = read_feature(config.get(f"inference.pipelines.{pipeline_slot}.feature"))
+            if not self._license.has_feature(feature):
+                logger.warning(
+                    f"[Main] {pipeline_slot} no arranca: la licencia no habilita "
+                    f"'{feature}'. Sin hilo de inferencia para ese pipeline."
+                )
+                continue
             engine = InferenceThread(
                 config, Pipeline(config, pipeline_slot),
                 preprocessor=preprocessor,
@@ -473,8 +531,23 @@ class Application(QObject):
         self._scheduler.capture_wanted.connect(self._on_capture_wanted)
 
         # ── Captura ──────────────────────────────────────────────────────────
+        # El cupo de la licencia corta por orden de declaración, y el corte es
+        # determinista: que la cámara que se apaga cambie entre arranques sería peor que
+        # el límite mismo. La que queda afuera no desaparece de la pantalla —se publica su
+        # estado con el motivo, como cualquier cámara mal configurada—, porque un hueco
+        # manda al operador a revisar un cable que está bien.
+        declared_cameras = tuple(config.get("cameras", {}) or {})
+        licensed_cameras = self._license.allowed_camera_slots(declared_cameras)
         self._capture_threads: dict[str, CaptureThread] = {}
-        for camera_slot in (config.get("cameras", {}) or {}):
+        for camera_slot in declared_cameras:
+            if camera_slot not in licensed_cameras:
+                logger.warning(
+                    f"[Main] {camera_slot} no arranca: la licencia habilita "
+                    f"{self._license.max_cameras} cámaras y hay {len(declared_cameras)} "
+                    f"declaradas."
+                )
+                self._on_camera_status(_UNLICENSED_CAMERA_STATUS, camera_slot)
+                continue
             thread = CaptureThread(config, camera_slot)
             thread.frame_ready.connect(self._on_frame_ready)
             thread.status_updated.connect(self._on_camera_status)
@@ -491,10 +564,14 @@ class Application(QObject):
             self._start_timer(_REGISTERS_INTERVAL_MS, self._on_registers_tick),
             self._start_timer(_STATUS_INTERVAL_MS, self._on_status_tick),
             self._start_timer(_SAMPLE_INTERVAL_MS, self._on_telemetry_tick),
+            self._start_timer(RECHECK_INTERVAL_MS, self._on_license_tick),
         ]
         self._warn_if_telemetry_margin_is_thin()
 
         self._ui.connect_config_saved(self._on_config_saved)
+        self._ui.connect_license_requests(self._on_license_export_requested,
+                                          self._on_license_install_requested)
+        self._ui.update_license(self._license.get_status())
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
@@ -806,7 +883,10 @@ class Application(QObject):
                 fallback_config=self._config.is_using_fallback,
                 dead_thread=any(not t.isRunning()
                                 for t in self._capture_threads.values()),
+                license_invalid=self._license.should_report_invalid(),
             ),
+            "license_days_remaining": self._license_days_remaining(),
+            **self._build_clock_registers(),
             # Los seis canales, cada uno con el estado que informó su dueño: es la misma
             # fuente que alimenta los chips, así que el operador y el PLC no pueden estar
             # viendo cosas distintas.
@@ -837,7 +917,14 @@ class Application(QObject):
                 "power_w": metrics["power_w"],
             })
         values.update(self._build_camera_registers())
-        values.update(self._build_metric_registers())
+        # Con la política `degrade` las mediciones no se publican, pero el canal sigue
+        # sirviendo: el latido, la salud del equipo y las palabras de estado salen igual.
+        # Bajar el Modbus dejaría al PLC viendo un enlace muerto, indistinguible de un
+        # cable cortado, y el integrador saldría a buscar el problema equivocado. Los
+        # registros de proceso quedan con su último valor, y el bit de licencia dice por
+        # qué dejaron de moverse.
+        if self._license.is_publishing_allowed():
+            values.update(self._build_metric_registers())
 
         # Un solo `encode_batch` para los dos consumidores —el datastore que lee el PLC y
         # la tabla que mira el operador—: codificar dos veces los deja divergir.
@@ -930,6 +1017,12 @@ class Application(QObject):
         El buzón se vacía en el mismo paso: nada se publica dos veces, y un par que no
         produjo nada no genera punto —el hueco en la serie dice que no midió—.
         """
+        if not self._license.is_publishing_allowed():
+            # Se vacía igual. Si no, el buzón crece sin techo mientras la licencia no
+            # valga, y el día que se renueve saldría de golpe un promedio de semanas.
+            self._pending_results.clear()
+            return
+
         for (camera_slot, pipeline_slot), results in self._pending_results.items():
             if not results:
                 continue
@@ -985,6 +1078,59 @@ class Application(QObject):
         # riesgo: no tocan la medición, sólo cómo se ve.
         self._display_adjust = self._read_display_adjust()
 
+    # ── Licencia ─────────────────────────────────────────────────────────────
+
+    def _on_license_tick(self):
+        """
+        Revalida la licencia con el proceso andando y publica el estado.
+
+        Sin esto alcanzaría con congelar el reloj antes de arrancar y no reiniciar nunca:
+        la validación del arranque no vuelve a correr. No se relee el archivo —lo que
+        cambia mientras el proceso vive es la fecha, no la firma—, salvo que no hubiera
+        licencia, y ahí sí mira de nuevo por si alguien acaba de dejarla en su lugar.
+
+        El estado se publica en cada tick y no sólo cuando cambia: los días restantes
+        bajan sin que cambie el estado, y el contador de la pantalla quedaría viejo.
+        Un cambio de estado ya lo loguea el propio manager.
+
+        **Lo que no hace es frenar el equipo.** Que la licencia se caiga a mitad de un
+        turno no baja la línea: eso lo decide la política, y el corte por falta de
+        licencia es una decisión de arranque —ahí no hay nada tomado ni publicado que
+        desarmar—.
+        """
+        self._license.recheck()
+        self._ui.update_license(self._license.get_status())
+
+    @Slot(str)
+    def _on_license_export_requested(self, path: str):
+        """La pantalla eligió dónde escribir la solicitud; el archivo lo escribe acá."""
+        try:
+            written = save_request(self._config, path)
+        except OSError as e:
+            logger.error(f"[Licencia] No se pudo escribir la solicitud: {e}")
+            self._ui.show_license_result(False, str(e))
+            return
+
+        logger.info(f"[Licencia] Solicitud escrita en {written}.")
+        self._ui.show_license_result(True, written)
+
+    @Slot(str)
+    def _on_license_install_requested(self, path: str):
+        """
+        La pantalla eligió un `.lic`; verificarlo e instalarlo es del cableado.
+
+        El orden importa: primero el estado nuevo y después el resultado, porque lo que
+        el operador tiene que leer al lado del estado es qué pasó con lo que apretó.
+        """
+        is_installed, message = self._license.install(path)
+        self._ui.update_license(self._license.get_status())
+        self._ui.show_license_result(is_installed, message)
+
+        if is_installed:
+            logger.info(f"[Licencia] {message}")
+        else:
+            logger.error(f"[Licencia] No se instaló: {message}")
+
     # ── Traducción al esquema de registros ───────────────────────────────────
 
     def _mapped_only(self, values: dict) -> dict:
@@ -1009,6 +1155,47 @@ class Application(QObject):
                 # no algo que el operador tenga que ir a corregir.
                 logger.debug(f"[Main] '{name}' no tiene fila en el mapa: no se publica.")
         return mapped
+
+    def _build_clock_registers(self) -> dict:
+        """
+        El reloj del equipo en segundos epoch UTC, partido en palabra alta y baja.
+
+        **El PLC es el único reloj confiable que hay en una instalación sin internet.** El
+        vencimiento se evalúa contra el reloj de este equipo, y quien tiene admin acá puede
+        atrasarlo; lo que el equipo guarda para detectarlo vive en un disco que ese mismo
+        admin controla, así que solo no alcanza. Publicando la hora, el PLC la compara con
+        la suya y un atraso se ve desde afuera.
+
+        Acá no se compara ni se juzga nada: se publica el dato y el programa del PLC decide
+        con qué tolerancia alarma. Es el mismo criterio que con todo lo demás — el equipo
+        entrega valores y el integrador arma la lógica.
+
+        **El corte en dos palabras se hace acá y no en el esquema** porque el esquema es
+        una fila por registro y sostener ese invariante vale más que ahorrar dos líneas:
+        el mapa sigue teniendo un nombre por dirección, que es lo que el integrador lee.
+        El día que un fork necesite publicar varios valores de 32 bits, lo que corresponde
+        es que el esquema aprenda a hacerlo, no repetir esto en cada llamador.
+        """
+        epoch_s = int(datetime.now(timezone.utc).timestamp())
+        return {
+            "clock_epoch_s_high": (epoch_s >> 16) & 0xFFFF,
+            "clock_epoch_s_low": epoch_s & 0xFFFF,
+        }
+
+    def _license_days_remaining(self) -> int:
+        """
+        Días de licencia que se publican al PLC.
+
+        Una perpetua publica un centinela alto y constante: el registro es un entero sin
+        signo y no hay forma de decir «no vence» con un número, así que se dice «falta
+        muchísimo», que es lo que una alarma por umbral necesita. El 0 cubre los tres
+        casos en que no queda nada de qué fiarse —vencida, sin licencia, o con el reloj
+        movido—; cuál de los tres es lo dice el bit de la palabra de estado.
+        """
+        days = self._license.days_remaining
+        if days is not None:
+            return days
+        return PERPETUAL_DAYS_SENTINEL if self._license.is_valid else 0
 
     def _build_camera_registers(self) -> dict:
         """
@@ -1276,13 +1463,20 @@ def main(argv: list | None = None) -> int:
     config = ConfigManager(args.config)
     _setup_logging(config)
 
+    # Antes de Qt y de cualquier subsistema: un equipo entregado sin licencia utilizable no
+    # arranca. Acá no se tomó ninguna cámara, no se abrió el puerto Modbus y no se publicó
+    # nada, así que abortar es salir, no desarmar.
+    license_manager = LicenseManager(config)
+    if license_manager.should_refuse_start():
+        return _refuse_start(license_manager, config)
+
     headless = args.headless or not config.get("ui.enabled", True)
     # `QCoreApplication` en headless: `QApplication` necesita una plataforma gráfica y en
     # un equipo sin display no arranca. El event loop es el mismo, y es el que hace falta
     # igual, porque las señales son el cableado entre los hilos.
     app = QCoreApplication(sys.argv) if headless else QApplication(sys.argv)
 
-    application = Application(config, create_ui(config, headless=headless))
+    application = Application(config, create_ui(config, headless=headless), license_manager)
     app.aboutToQuit.connect(application.stop)
     application.start()
 
@@ -1298,6 +1492,27 @@ def main(argv: list | None = None) -> int:
 
     exit_code = app.exec()
     return _exit(exit_code, config)
+
+
+def _refuse_start(license_manager: LicenseManager, config: ConfigManager) -> int:
+    """
+    Aborta el arranque de un equipo compilado sin licencia utilizable, con el motivo.
+
+    Sólo se llega acá con `absent` o `invalid`, que son los dos estados en los que no hay
+    política firmada que consultar (ver `REFUSE_START_WITHOUT_LICENSE` en el manager). El
+    log ya sale por consola y por archivo, así que un equipo en gabinete y sin pantalla
+    deja escrito por qué no arrancó, que es lo único que va a poder mirar el que llegue.
+    """
+    logger.error(f"[Licencia] {license_manager.reason}")
+    # La línea que el manager ya logueó nombra una política —el default del build— que acá
+    # no decide nada, y sin esta aclaración se lee como que se contradicen.
+    logger.error("[Licencia] El equipo no arranca sin una licencia válida. La política no "
+                 "aplica en este caso: sin un archivo que verifique no hay política "
+                 "firmada que leer, así que la decisión es del build.")
+    logger.error("[Licencia] Generar la solicitud con `python -m system.license request` "
+                 "y, con el .lic recibido, instalarlo con "
+                 "`python -m system.license install <archivo>`.")
+    return _exit(_EXIT_NO_LICENSE, config)
 
 
 def _interrupt_signals() -> tuple:

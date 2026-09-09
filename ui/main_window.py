@@ -74,6 +74,10 @@ class MainWindow(QMainWindow):
     """Ventana principal. Ver el contrato en el docstring del módulo."""
 
     config_saved = Signal()      # se persistió el config.yaml; reenvía el del ConfigView
+    # Rutas que el operador eligió en la pestaña de licencia; las reenvía la vista de
+    # diagnóstico. Quien abre los archivos es el cableado, no la ventana.
+    license_export_requested = Signal(str)
+    license_install_requested = Signal(str)
 
     def __init__(self, config_manager: ConfigManager, parent=None):
         super().__init__(parent)
@@ -109,6 +113,8 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._config_placeholder)          # VIEW_CONFIG
 
         self.diagnostics_view = DiagnosticsView(self._config)
+        self.diagnostics_view.license_export_requested.connect(self.license_export_requested)
+        self.diagnostics_view.license_install_requested.connect(self.license_install_requested)
         self._stack.addWidget(self.diagnostics_view)             # VIEW_DIAGNOSTICS
 
         root_layout.addWidget(self._build_footer())
@@ -154,6 +160,14 @@ class MainWindow(QMainWindow):
         """Una línea de log a la barra lateral del monitor y a la pestaña de logs."""
         self.monitor_view.log_event(level, message)
         self.diagnostics_view.log_event(level, message, module)
+
+    def update_license(self, status: dict):
+        """Estado de la licencia, tal como sale de `LicenseManager.get_status()`."""
+        self.diagnostics_view.update_license(status)
+
+    def show_license_result(self, is_ok: bool, message: str):
+        """Resultado de instalar una licencia, para que el operador lo vea donde apretó."""
+        self.diagnostics_view.show_license_result(is_ok, message)
 
     def set_status_message(self, message: str = ""):
         """Cambia el texto del footer y lo hace destellar para que el cambio se note."""

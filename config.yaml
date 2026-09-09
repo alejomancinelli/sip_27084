@@ -147,6 +147,19 @@ inference:
     # es la identidad con la que el pipeline aparece en el resto del sistema.
     pipeline_1:
       enabled: true
+      # Qué addon comercial es este pipeline: UN nombre. Lo lee el subsistema de licencia
+      # (`system/license/`) y un pipeline cuyo feature no está habilitado no se instancia.
+      # Ausente = `core`, que es el pipeline normal y el que tiene toda instalación.
+      #
+      # El nombre es la unidad comercial y no el framework: dos productos distintos pueden
+      # correr el mismo `type` de modelo, y un addon puede cambiar de framework entre
+      # versiones sin que cambie lo que el cliente compró.
+      #
+      # DOS PROPÓSITOS SON DOS PIPELINES. Medir un proceso y vigilar una zona no se juntan
+      # acá aunque miren la misma cámara: son dos hilos, se venden por separado, y en uno
+      # solo el cliente que no compró la vigilancia perdería también la medición que sí
+      # pagó, porque el pipeline entero no arranca.
+      feature: core
       cameras: [camera_1]       # cámaras que entran a este hilo; [] = todas las que le pusheen
       interval_s: 0.0           # período mínimo entre frames de una misma cámara; 0 = todos
       # Umbrales del resultado completo, no de cada detección: por debajo, el resultado se

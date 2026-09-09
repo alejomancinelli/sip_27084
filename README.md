@@ -116,6 +116,9 @@ trae:
   arquitectura: el `cp310-win_amd64` no sirve en la Jetson, que necesita el de aarch64.
 - **`.venv/`** — se crea y se instala con `requirements.txt`.
 - **`data/`** — logs y dataset se generan en runtime.
+- **`license.lic`** — la licencia es de una máquina y no sirve en otra, así que no se
+  versiona ninguna. Desde el código fuente no hace falta: la validación sólo corre en un
+  build compilado. Ver `docs/licensing.md`.
 
 ## Cómo se arranca un fork
 
@@ -203,6 +206,7 @@ lo que falta es un punto de extensión, no un parche.
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
 | dataset | `system/image_collector/collector.py`, `conditions.py` |
+| licencia | `system/license/*` entero. La única línea que cambia es la clave pública de `public_key.py`, y la pone quien arma el build, no el fork |
 | interfaz | `ui/` entero salvo lo de arriba: `strings.py`, `theme.py`, `service_status.py`, `main_window.py`, las tres vistas, `views/config/*`, `views/diagnostics/*`, `widgets/*`, `dialogs/*`, `styles/*` |
 
 Dos excepciones acotadas: `model_factory.py` y `camera_factory.py` reciben **una línea**

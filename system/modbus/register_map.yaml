@@ -137,3 +137,53 @@
   producer: health
   unit: W
   scale: 10
+
+# ── Reloj del equipo (97-98) ─────────────────────────────────────────────────
+# El reloj del equipo como **segundos desde 1970-01-01 00:00 UTC**, en dos registros.
+#
+# **Para qué está: el PLC es el único reloj confiable que hay.** El vencimiento de la
+# licencia se evalúa contra el reloj del equipo, y quien tiene admin en el equipo puede
+# atrasarlo. El equipo no puede detectar eso solo —el estado que guarda vive en un disco
+# que ese mismo admin controla—, pero el PLC sí: si esta fecha se aparta de la suya más de
+# lo razonable, alguien movió el reloj. Comparar y alarmar es del programa del PLC; el
+# equipo publica el dato y no juzga.
+#
+# **El registro de Modbus es de 16 bits siempre**: un valor de 32 bits viaja en dos, que es
+# la práctica corriente y todo PLC sabe leer como DINT. Lo que el protocolo NO define es el
+# orden de las dos palabras, y ahí es donde fallan estas integraciones:
+#
+#     97  palabra ALTA   (bits 31-16)
+#     98  palabra BAJA   (bits 15-0)
+#
+#     epoch = (reg97 * 65536) + reg98
+#
+# Alta primero, en la dirección más baja. Si el PLC lee un DINT y da un número absurdo,
+# está invirtiendo las palabras: casi todos los drivers tienen un `word swap` para eso.
+#
+# Los dos se leen en un solo FC03 pidiéndolos juntos, y así van del mismo tick. Aun leídos
+# por separado el error máximo es de un segundo, y la tolerancia con la que se compara
+# esto es de un día — que además se come cualquier diferencia de huso horario, así que no
+# hay zona horaria que configurar en ningún lado.
+#
+# Leído como DINT **con signo** el valor da la vuelta en 2038; como unsigned llega a 2106.
+- addr: 97
+  name: clock_epoch_s_high
+  desc: Reloj del equipo, palabra alta (epoch UTC = alta*65536 + baja)
+  producer: health
+  unit: s
+
+- addr: 98
+  name: clock_epoch_s_low
+  desc: Reloj del equipo, palabra baja
+  producer: health
+  unit: s
+
+# El bit de licencia dice que algo anda mal; esta fila dice cuánto falta para que
+# empiece a andar mal, que es lo que permite alarmar con un mes de anticipación en vez
+# de enterarse el día que la línea para. Una licencia perpetua publica un centinela alto
+# y constante (9999); una vencida, sin licencia o con el reloj movido publica 0.
+- addr: 99
+  name: license_days_remaining
+  desc: Días hasta el vencimiento de la licencia
+  producer: health
+  unit: días
