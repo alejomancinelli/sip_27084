@@ -7,7 +7,7 @@ notas al pie lo dicen en pantalla, que es donde alguien va a buscar el campo que
 
 El muestreo de la telemetría no está en esta pantalla: es un punto por segundo, fijo en
 `main.py`, porque no hay instalación que quiera otro. La estructura de las series está en
-`docs/influxdb.md`.
+`docs/influxdb.md`, y cómo sale esa misma estructura por MQTT en `docs/mqtt.md`.
 """
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget

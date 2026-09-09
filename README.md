@@ -125,7 +125,9 @@ trae:
 1. **Crear el repo** como arriba, `pip install -r requirements.txt` en un venv nuevo y
    copiar el wheel de stapipy a `packages/`. Los SDK de cámara se instalan con los scripts
    de `setup/cameras/{windows,linux}/`. Cambiar la identidad del proyecto:
-   `project.project_id` y `system.app_name` en el config, y `system/version.py`.
+   `project.project_id` y `system.app_name` en el config, y `system/version.py`. Copiar
+   `.env.example` como `.env` y completar los secretos del equipo —token de InfluxDB,
+   password del broker, credenciales de las cámaras RTSP—: el `.env` no se versiona.
 2. **`config.yaml`**: `project`, `system`, y una entrada en `cameras` por cámara física
    —marca, modelo, driver, IP, adquisición, ROI, mínimo de iluminación—. Verificar con
    `manual_test/cameras/camera_live_view.py`.
@@ -198,7 +200,7 @@ lo que falta es un punto de extensión, no un parche.
 | Carpeta | Archivos |
 |---|---|
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
-| captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `mock_driver.py`, `null_driver.py` |
+| captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
 | inferencia | `system/inference/models/*` (menos el del fork), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
 | bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` |

@@ -231,8 +231,9 @@ telemetry:
   # Salida de datos hacia afuera del equipo. Cada backend es independiente: se
   # pueden usar los dos, uno o ninguno.
   #
-  # La estructura de las series —measurements, tags y nombres de campo— es el contrato
-  # con los dashboards y está en docs/influxdb.md.
+  # Los dos publican el mismo dato: la estructura de las series —measurements, tags y
+  # nombres de campo— es el contrato con los dashboards y está en docs/influxdb.md.
+  # Cómo se ve eso mismo en tópicos y JSON está en docs/mqtt.md.
   # El muestreo no se configura: es un punto por segundo por serie, fijo en main.py. Más
   # fino no agrega información y más grueso pierde el detalle de un pico.
   #
@@ -248,7 +249,8 @@ telemetry:
     org: ORG_NAME
     bucket: BUCKET_NAME
   mqtt:
-    # Un mensaje por measurement, publicado en <topic_base>/<measurement>.
+    # Un mensaje por measurement, publicado en <topic_base>/<measurement>. Los tópicos,
+    # la forma del JSON y el ritmo de las ráfagas están en docs/mqtt.md.
     # La password NO va acá: se lee de la variable de entorno MQTT_PASSWORD.
     enabled: false
     host: ''                    # IP o nombre del broker

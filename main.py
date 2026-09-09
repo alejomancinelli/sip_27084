@@ -88,6 +88,7 @@ from system import paths
 from system.camera.capture_scheduler import CaptureScheduler
 from system.camera.capture_thread import CaptureThread
 from system.config_manager import ConfigManager
+from system.env import load_env_file
 from system.formats import camera_health, com_status, system_status
 from system.image_collector.collector import ImageCollector
 from system.inference import analysis, annotations
@@ -1462,6 +1463,9 @@ def main(argv: list | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     config = ConfigManager(args.config)
     _setup_logging(config)
+    # Después del log y antes de cualquier subsistema: los que usan un secreto lo leen
+    # del entorno cuando arrancan, y de qué se cargó tiene que quedar constancia.
+    load_env_file()
 
     # Antes de Qt y de cualquier subsistema: un equipo entregado sin licencia utilizable no
     # arranca. Acá no se tomó ninguna cámara, no se abrió el puerto Modbus y no se publicó

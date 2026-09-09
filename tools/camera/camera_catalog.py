@@ -28,6 +28,13 @@ CAMERA_CATALOG: dict[str, dict] = {
             "STC-MCA503POE-HS",
         ],
     },
+    "rtsp": {
+        "label": "IP genérica (RTSP)",
+        "driver": "rtsp",
+        "models": [
+            "generic",
+        ],
+    },
     "mock": {
         "label": "Simulado (Mock)",
         "driver": "mock",

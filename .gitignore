@@ -426,3 +426,6 @@ config.yaml.bak
 *.lic
 license_request.json
 license_state.bin
+# Credentials of this installation. The example file IS versioned; the real one never is.
+.env
+!.env.example

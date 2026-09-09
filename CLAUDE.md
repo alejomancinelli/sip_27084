@@ -34,6 +34,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
 
     system/                   la app: subsistemas propios, con Qt y con I/O
       config_manager.py       nivel 0 — singleton thread-safe sobre config.yaml
+      env.py                  nivel 0 — carga el .env del equipo en el entorno
       logger.py               nivel 0 — logger único; nadie crea otro
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
@@ -94,6 +95,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         camera_factory.py     único archivo que conoce las clases concretas
         basler_driver.py      pypylon
         st_driver.py          stapipy (Sentech / Omron)
+        rtsp_driver.py        cámara IP por RTSP, con FFmpeg de OpenCV
         mock_driver.py        frames sintéticos, sin hardware
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
@@ -126,6 +128,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
                               licensing.md (cómo se pide y se renueva una licencia)
+                              mqtt.md (la misma estructura, en tópicos y JSON)
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -185,8 +188,20 @@ Lo que no se deduce leyendo un archivo suelto:
 
 - Las claves de `config.yaml` van en inglés y la jerarquía espeja los módulos, no
   las pantallas de la UI.
-- Las credenciales nunca van al config: salen del entorno (`INFLUXDB_TOKEN`,
-  `MQTT_PASSWORD`).
+- **Las credenciales nunca van al config: salen del entorno**, y al entorno las pone el
+  `.env` de la raíz —que no se versiona; el ejemplo con los nombres es `.env.example`—.
+  Lo carga `system/env.py` en el arranque y nadie más se entera: cada consumidor sigue
+  leyendo `os.environ` (`INFLUXDB_TOKEN`, `MQTT_PASSWORD`, `RTSP_USER` /
+  `RTSP_PASSWORD`). Una variable ya definida en el entorno gana sobre el archivo, así
+  que un servicio o una prueba a mano mandan sin editarlo. Los scripts de
+  `manual_test/` que usan un secreto lo cargan ellos, porque no pasan por `main.py`.
+- **Una cámara RTSP con cuenta propia declara `credentials_env`** en su sección y usa
+  `RTSP_USER_<sufijo>` / `RTSP_PASSWORD_<sufijo>`; sin esa clave valen las compartidas.
+  El sufijo nombra al secreto y no a la cámara —dos cámaras con la misma cuenta apuntan
+  al mismo, y una que cambia de slot no obliga a renombrar nada en el equipo—. Si la
+  variable falta no se cae a la cuenta compartida: prestarle a una cámara las
+  credenciales de otra da un 401 que culpa a lo que no es, o una sesión con una cuenta
+  que nadie eligió.
 - **La versión del programa va en código** (`system/version.py`), no en `config.yaml`: el
   config declara lo que cambia entre instalaciones y la versión cambia cuando cambia el
   código. En el config, una planta podría decir que corre una versión que no corre, y ese
@@ -325,6 +340,12 @@ Lo que no se deduce leyendo un archivo suelto:
   de dos etapas y la segunda —sacar la clave vieja de la tabla— es la que cierra el
   agujero. El repositorio que firma es privado y aparte; su encargo está en
   `.claude/plans/licensing-signer-repo.md`.
+- **Los dos backends de telemetría publican el mismo dato.** `PersistenceThread` arma el
+  registro una sola vez y se lo pasa igual a InfluxDB y a MQTT, así que no hay una lista
+  de campos por destino: los nombres se eligen una vez y valen para los dos. Lo que cambia
+  es la forma en el cable —MQTT publica un JSON plano en `<topic_base>/<measurement>`, con
+  los tags y los fields fusionados—, y eso está en `docs/mqtt.md`, que apunta a
+  `docs/influxdb.md` para los campos en vez de repetirlos.
 - **El mapa Modbus es un archivo de datos, no código.** Vive en
   `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
   es fuente única: la tabla que lee el integrador se genera con

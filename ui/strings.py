@@ -381,12 +381,12 @@ _TEXTS: dict[str, dict[str, str]] = {
     "tel_topic_base":         {"es": "Base de tópicos:",
                                "en": "Topic base:",    "pt": "Base de tópicos:"},
     "tel_tls":                {"es": "TLS",            "en": "TLS",           "pt": "TLS"},
-    "tel_influx_token_note":  {"es": "El token sale de la variable de entorno INFLUXDB_TOKEN.",
-                               "en": "The token comes from the INFLUXDB_TOKEN environment variable.",
-                               "pt": "O token vem da variável de ambiente INFLUXDB_TOKEN."},
-    "tel_mqtt_password_note": {"es": "La password sale de la variable de entorno MQTT_PASSWORD.",
-                               "en": "The password comes from the MQTT_PASSWORD environment variable.",
-                               "pt": "A senha vem da variável de ambiente MQTT_PASSWORD."},
+    "tel_influx_token_note":  {"es": "El token sale de INFLUXDB_TOKEN, del entorno o del .env.",
+                               "en": "The token comes from INFLUXDB_TOKEN, in the environment or the .env file.",
+                               "pt": "O token vem de INFLUXDB_TOKEN, do ambiente ou do .env."},
+    "tel_mqtt_password_note": {"es": "La password sale de MQTT_PASSWORD, del entorno o del .env.",
+                               "en": "The password comes from MQTT_PASSWORD, in the environment or the .env file.",
+                               "pt": "A senha vem de MQTT_PASSWORD, do ambiente ou do .env."},
 
     # ── Modbus (configuración) ───────────────────────────────────────────────
     "mb_box_general":         {"es": "General",        "en": "General",       "pt": "Geral"},

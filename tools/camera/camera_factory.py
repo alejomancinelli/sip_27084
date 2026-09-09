@@ -13,6 +13,7 @@ from .abstract_driver import AbstractCameraDriver
 from .basler_driver import BaslerDriver
 from .mock_driver import MockDriver
 from .null_driver import NullDriver
+from .rtsp_driver import RtspDriver
 from .st_driver import StDriver
 
 # Registro único: la clave es el valor que lleva `driver` en config.yaml.
@@ -20,6 +21,7 @@ from .st_driver import StDriver
 _DRIVER_CLASSES: dict[str, type[AbstractCameraDriver]] = {
     "basler_gige": BaslerDriver,
     "st_gige": StDriver,
+    "rtsp": RtspDriver,
     "mock": MockDriver,
 }
 

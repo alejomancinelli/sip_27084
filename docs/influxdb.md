@@ -7,6 +7,10 @@ los dashboards: una vez que un panel consulta un campo, renombrarlo lo rompe.
 aplanada y cada punto sellado con el instante en que se midió. El muestreo es de un segundo
 y no se configura.
 
+**Esto vale también para MQTT.** Los dos backends reciben el mismo registro, así que las
+series, los tags y los nombres de campo de acá son los que publica el broker. Cómo se ve
+eso en el cable —el tópico y el JSON— está en [`mqtt.md`](mqtt.md).
+
 El público es quien arma los dashboards y quien verifica una instalación desde afuera:
 con InfluxDB se contesta «¿esto viene midiendo bien desde que lo dejamos?» sin entrar al
 equipo, que es para lo que existe la telemetría acá.

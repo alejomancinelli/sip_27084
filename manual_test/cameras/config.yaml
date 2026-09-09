@@ -1,8 +1,12 @@
 # Config del visor de prueba camera_live_view.py, separada del config.yaml de la app.
-# Solo lleva lo que leen los drivers: `driver`, `address`, `rotation` y `acquisition`.
-# `brand`, `model`, `roi` e `illumination_min` no aparecen porque ningún driver los usa.
+# Solo lleva lo que leen los drivers: `driver`, `address`, `credentials_env`, `rotation` y
+# `acquisition`. `brand`, `model`, `roi` e `illumination_min` no aparecen porque ningún
+# driver los usa.
 #
 # Acá la clave nombra el caso a probar, no un slot físico de cámara.
+#
+# Ninguna credencial va en este archivo: van al `.env` de la raíz, que no se versiona
+# (ver .env.example). El visor lo carga antes de armar el driver.
 
 cameras:
   mock:
@@ -28,6 +32,34 @@ cameras:
       fps_limit: 15
       exposure_time_us: 15000
       gain: 1.5
+
+  # Cámara IP. `exposure_time_us` y `gain` no aparecen porque el driver RTSP no los
+  # aplica: eso se configura en el servidor web de la cámara.
+  #
+  # La ruta del stream la publica el fabricante y no se puede adivinar:
+  #   Hikvision  rtsp://<host>:554/Streaming/channels/101   (102 = substream)
+  #   Dahua      rtsp://<host>:554/cam/realmonitor?channel=1&subtype=0
+  #   Axis       rtsp://<host>:554/axis-media/media.amp
+  # La que publica un solo stream en la raíz acepta el host solo: `address: 10.8.83.90`.
+  #
+  # `credentials_env: CAM1` -> el driver usa RTSP_USER_CAM1 y RTSP_PASSWORD_CAM1 del
+  # `.env`. Sin esa clave usaría las compartidas RTSP_USER / RTSP_PASSWORD.
+  rtsp:
+    driver: rtsp
+    address: rtsp://192.168.1.64:554/Streaming/channels/101
+    credentials_env: CAM1
+    rotation: null
+    acquisition:
+      fps_limit: 15
+
+  # La misma cámara sin tope de entrega: muestra el fps real del stream.
+  rtsp_full_rate:
+    driver: rtsp
+    address: rtsp://192.168.1.64:554/Streaming/channels/101
+    credentials_env: CAM1
+    rotation: null
+    acquisition:
+      fps_limit: 0
 
   # Verifica la salida por configuración inválida: debe dar un NullDriver.
   unregistered:
