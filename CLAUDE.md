@@ -113,7 +113,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
     docs/                     documentos con público propio: el mapa Modbus generado,
-                              ui.md y influxdb.md (la estructura de las series)
+                              ui.md, influxdb.md (la estructura de las series) y
+                              mqtt.md (la misma estructura, en tópicos y JSON)
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -254,6 +255,12 @@ Lo que no se deduce leyendo un archivo suelto:
   publica **por tick y no por evento**, porque una serie de salud por evento no agrega
   información. La estructura de las series —measurements, tags y nombres de campo— es un
   contrato con los dashboards y está en `docs/influxdb.md`.
+- **Los dos backends de telemetría publican el mismo dato.** `PersistenceThread` arma el
+  registro una sola vez y se lo pasa igual a InfluxDB y a MQTT, así que no hay una lista
+  de campos por destino: los nombres se eligen una vez y valen para los dos. Lo que cambia
+  es la forma en el cable —MQTT publica un JSON plano en `<topic_base>/<measurement>`, con
+  los tags y los fields fusionados—, y eso está en `docs/mqtt.md`, que apunta a
+  `docs/influxdb.md` para los campos en vez de repetirlos.
 - **El mapa Modbus es un archivo de datos, no código.** Vive en
   `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
   es fuente única: la tabla que lee el integrador se genera con
