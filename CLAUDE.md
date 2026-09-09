@@ -34,6 +34,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
 
     system/                   la app: subsistemas propios, con Qt y con I/O
       config_manager.py       nivel 0 — singleton thread-safe sobre config.yaml
+      env.py                  nivel 0 — carga el .env del equipo en el entorno
       logger.py               nivel 0 — logger único; nadie crea otro
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
@@ -84,6 +85,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         camera_factory.py     único archivo que conoce las clases concretas
         basler_driver.py      pypylon
         st_driver.py          stapipy (Sentech / Omron)
+        rtsp_driver.py        cámara IP por RTSP, con FFmpeg de OpenCV
         mock_driver.py        frames sintéticos, sin hardware
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
@@ -169,8 +171,20 @@ Lo que no se deduce leyendo un archivo suelto:
 
 - Las claves de `config.yaml` van en inglés y la jerarquía espeja los módulos, no
   las pantallas de la UI.
-- Las credenciales nunca van al config: salen del entorno (`INFLUXDB_TOKEN`,
-  `MQTT_PASSWORD`).
+- **Las credenciales nunca van al config: salen del entorno**, y al entorno las pone el
+  `.env` de la raíz —que no se versiona; el ejemplo con los nombres es `.env.example`—.
+  Lo carga `system/env.py` en el arranque y nadie más se entera: cada consumidor sigue
+  leyendo `os.environ` (`INFLUXDB_TOKEN`, `MQTT_PASSWORD`, `RTSP_USER` /
+  `RTSP_PASSWORD`). Una variable ya definida en el entorno gana sobre el archivo, así
+  que un servicio o una prueba a mano mandan sin editarlo. Los scripts de
+  `manual_test/` que usan un secreto lo cargan ellos, porque no pasan por `main.py`.
+- **Una cámara RTSP con cuenta propia declara `credentials_env`** en su sección y usa
+  `RTSP_USER_<sufijo>` / `RTSP_PASSWORD_<sufijo>`; sin esa clave valen las compartidas.
+  El sufijo nombra al secreto y no a la cámara —dos cámaras con la misma cuenta apuntan
+  al mismo, y una que cambia de slot no obliga a renombrar nada en el equipo—. Si la
+  variable falta no se cae a la cuenta compartida: prestarle a una cámara las
+  credenciales de otra da un 401 que culpa a lo que no es, o una sesión con una cuenta
+  que nadie eligió.
 - **La versión del programa va en código** (`system/version.py`), no en `config.yaml`: el
   config declara lo que cambia entre instalaciones y la versión cambia cuando cambia el
   código. En el config, una planta podría decir que corre una versión que no corre, y ese

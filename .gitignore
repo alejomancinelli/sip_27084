@@ -418,3 +418,7 @@ data/*
 
 # Config backup that ConfigManager.save() leaves behind before overwriting.
 config.yaml.bak
+
+# Credentials of this installation. The example file IS versioned; the real one never is.
+.env
+!.env.example

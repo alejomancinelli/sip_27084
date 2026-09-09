@@ -15,6 +15,9 @@ Lee el config.yaml que tiene al lado (no el de la app) y arma el driver con la m
 fábrica que usa el sistema, así se prueba el camino real y no una instancia a mano.
 Sin argumento toma la primera cámara del archivo.
 
+Las credenciales de una cámara RTSP no están en ese archivo: salen del `.env` de la raíz
+del repo, que este script carga por su cuenta porque no pasa por `main.py`.
+
 Teclas:
     q / ESC   salir (también sirve cerrar la ventana)
     e         habilitar / deshabilitar la captura
@@ -41,6 +44,7 @@ if _REPO_ROOT is None:
     raise SystemExit("No se encontró la raíz del repo: ningún directorio padre tiene tools/.")
 sys.path.insert(0, str(_REPO_ROOT))
 
+from system.env import load_env_file  # noqa: E402
 from tools.camera.abstract_driver import AbstractCameraDriver  # noqa: E402
 from tools.camera.camera_factory import create_camera  # noqa: E402
 
@@ -122,6 +126,10 @@ def _show_live_feed(driver: AbstractCameraDriver, name: str):
 
 
 def main() -> int:
+    # Antes de armar el driver: la cámara RTSP resuelve sus credenciales al construirse, y
+    # este script no pasa por `main.py`, que es donde la app carga el archivo.
+    load_env_file()
+
     cameras = _load_cameras()
     if not cameras:
         print(f"{_CONFIG_PATH} no tiene ninguna cámara en 'cameras'.")
