@@ -6,7 +6,8 @@ forma del registro y vocabulario de `status`. Su sección de config es
 `telemetry.mqtt`.
 
 Cada registro se publica en `<topic_base>/<measurement>`, con un JSON de tags y
-fields fusionados más `time` si el registro lo trae.
+fields fusionados más `time` si el registro lo trae. Los tópicos que salen, la
+forma del mensaje y lo que implica para un suscriptor están en `docs/mqtt.md`.
 
 QoS 0 y sin sesión persistente: lo que no se pudo publicar no se recupera, que es
 lo que corresponde para telemetría periódica — el próximo valor llega enseguida y
