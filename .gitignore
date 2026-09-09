@@ -418,3 +418,11 @@ data/*
 
 # Config backup that ConfigManager.save() leaves behind before overwriting.
 config.yaml.bak
+
+# Licence of an installation, and the artefacts of the manual test. A .lic is issued per
+# machine and is worthless on any other, so versioning one only invites confusion about
+# which device it belongs to. The clock state is signed with the machine fingerprint and
+# does not travel either.
+*.lic
+license_request.json
+license_state.bin
