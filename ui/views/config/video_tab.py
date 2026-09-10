@@ -17,13 +17,14 @@ from system.config_manager import ConfigManager
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
-    add_check_row, add_form_row, add_hint_row, build_combo_box, build_double_spin_box,
-    build_group_box, build_line_edit, build_spin_box, join_list, set_combo_value,
+    add_check_row, add_form_row, add_hint_row, build_double_spin_box, build_group_box,
+    build_line_edit, build_spin_box, build_value_combo_box, join_list, set_combo_data,
     split_list, wire_enable_toggle,
 )
 
 # Texto que ve el operador -> valor de `video.rtsp.codec`. Los `_hw` usan el encoder
 # de la Jetson y no existen en un x86; el texto lo dice para que no se elijan a ciegas.
+# El valor viaja en el item del combo y no se reconstruye desde el texto.
 _CODECS = {
     "H.264 software":            "h264_sw",
     "H.264 hardware (Jetson)":   "h264_hw",
@@ -31,6 +32,7 @@ _CODECS = {
     "H.265 hardware (Jetson)":   "h265_hw",
     "MJPEG":                     "mjpeg",
 }
+_DEFAULT_CODEC = "h264_sw"
 
 _MAX_PORT = 65535
 _MAX_FRAME_WIDTH_PX = 8192
@@ -77,7 +79,7 @@ class VideoTab(AbstractConfigTab):
         self._rtsp_enabled = add_check_row(form, tr("field_enabled"), False)
         self._rtsp_port = add_form_row(form, tr("field_port"), build_spin_box(1, _MAX_PORT, 8554))
         self._rtsp_codec = add_form_row(
-            form, tr("video_codec"), build_combo_box(list(_CODECS), "H.264 software")
+            form, tr("video_codec"), build_value_combo_box(_CODECS, _DEFAULT_CODEC)
         )
         self._rtsp_fps = add_form_row(form, tr("field_fps"), build_spin_box(1, _MAX_FPS, 15))
         self._rtsp_width = add_form_row(
@@ -117,10 +119,7 @@ class VideoTab(AbstractConfigTab):
 
         self._rtsp_enabled.setChecked(bool(self._config.get("video.rtsp.enabled", False)))
         self._rtsp_port.setValue(int(self._config.get("video.rtsp.port", 8554)))
-        set_combo_value(
-            self._rtsp_codec,
-            _get_codec_label(str(self._config.get("video.rtsp.codec", "h264_sw"))),
-        )
+        set_combo_data(self._rtsp_codec, self._config.get("video.rtsp.codec", _DEFAULT_CODEC))
         self._rtsp_fps.setValue(int(self._config.get("video.rtsp.fps", 15)))
         self._rtsp_width.setValue(int(self._config.get("video.rtsp.frame_width_px", 0)))
         self._rtsp_interfaces.setText(join_list(self._config.get("video.rtsp.net_interfaces", [])))
@@ -138,8 +137,7 @@ class VideoTab(AbstractConfigTab):
 
         self._config.set("video.rtsp.enabled", self._rtsp_enabled.isChecked())
         self._config.set("video.rtsp.port", self._rtsp_port.value())
-        self._config.set("video.rtsp.codec",
-                         _get_codec_value(self._rtsp_codec.currentText()))
+        self._config.set("video.rtsp.codec", self._rtsp_codec.currentData())
         self._config.set("video.rtsp.fps", self._rtsp_fps.value())
         self._config.set("video.rtsp.frame_width_px", self._rtsp_width.value())
         self._config.set("video.rtsp.net_interfaces", split_list(self._rtsp_interfaces.text()))
@@ -147,16 +145,3 @@ class VideoTab(AbstractConfigTab):
 
         self._config.set("video.display.gamma", self._gamma.value())
         self._config.set("video.display.clahe_clip", self._clahe_clip.value())
-
-
-def _get_codec_label(codec: str) -> str:
-    """Valor de `codec` -> texto que se muestra. Uno desconocido se muestra tal cual."""
-    for label, value in _CODECS.items():
-        if value == codec:
-            return label
-    return codec
-
-
-def _get_codec_value(codec_label: str) -> str:
-    """Texto que se muestra -> valor de `codec`. Uno desconocido vuelve tal cual."""
-    return _CODECS.get(codec_label, codec_label)

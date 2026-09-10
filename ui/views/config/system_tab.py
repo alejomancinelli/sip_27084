@@ -17,8 +17,8 @@ from system.config_manager import ConfigManager
 from ui.strings import LANGUAGES, tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
-    add_check_row, add_form_row, build_combo_box, build_group_box, build_line_edit,
-    build_readonly_line_edit, join_list, set_combo_value, split_list,
+    add_check_row, add_form_row, add_hint_row, build_combo_box, build_group_box,
+    build_line_edit, build_readonly_line_edit, join_list, set_combo_value, split_list,
 )
 
 _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -65,6 +65,7 @@ class SystemTab(AbstractConfigTab):
             form, tr("sys_language"), build_combo_box(list(LANGUAGES), "es")
         )
         self._dark_mode = add_check_row(form, tr("sys_dark_mode"), True)
+        add_hint_row(form, tr("sys_interface_note"))
         return box
 
     def _build_monitor_box(self) -> QWidget:

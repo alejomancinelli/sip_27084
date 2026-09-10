@@ -179,7 +179,7 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Área central del monitor** — `ui/views/monitor_view.py`: `set_content()` es el punto
   de extensión de la vista de operador; el resto de la UI no conoce ese widget.
 - **Textos de la UI** — `ui/strings.py`: la clave es estable y en inglés, el texto sale
-  por `tr()` en el idioma de `ui.language`.
+  por `tr()` en el idioma de `ui.language`, que queda fijo por corrida.
 - **Señales de Qt** — cada una documenta su payload y su frecuencia donde se declara.
 
 ## Decisiones vigentes
@@ -209,7 +209,15 @@ Lo que no se deduce leyendo un archivo suelto:
   abajo a la derecha, junto al `project_id`, y se sube en el commit que cierra el cambio.
 - **En las cámaras no se ajusta nada en caliente.** Exposición, ganancia, fps y
   `enabled` se cambian en `config.yaml` —desde la UI o a mano— y se reinicia la app. Lo
-  único que la UI aplica sin reiniciar son el idioma y el tema.
+  único que la UI aplica sin reiniciar es el tema.
+- **El idioma queda fijo por corrida.** Cada widget resuelve su texto con `tr()` cuando
+  se construye, así que cambiarlo en caliente sólo alcanzaba a lo que se armaba después y
+  dejaba la pantalla partida en dos idiomas —y con un combo cuyas opciones quedaban en el
+  idioma anterior, el `save()` escribía la etiqueta traducida en el `config.yaml`—. Se
+  guarda como el resto del config y toma efecto al reiniciar, que es lo que dice la nota
+  al pie donde se lo elige. Retraducir en vivo pediría un `retranslate()` en cascada por
+  toda la UI: un invariante que cada widget nuevo tendría que recordar, y que al olvidarse
+  no falla, sólo queda mezclado.
 - Un hilo por cámara, y el ritmo lo pone la cámara (free-run). Si alguna vez se
   captura por trigger, el ritmo y el orden de los disparos son de quien orqueste
   la captura, no del hilo.
@@ -398,9 +406,15 @@ Lo que no se deduce leyendo un archivo suelto:
   agrega como opción y vuelve al archivo tal como estaba: `setCurrentText()` sobre un
   combo no editable es un no-op silencioso, así que sin eso abrir el panel de
   configuración y guardar alcanzaba para cambiar la marca de una cámara o el tipo de un
-  modelo que la fábrica todavía no registra. Lo hace `set_combo_value()`, y los mapeos de
-  rotación, modo y codec devuelven el valor crudo cuando no lo conocen en vez de caer a
-  un default.
+  modelo que la fábrica todavía no registra. Lo hace `set_combo_value()`, cuando el texto
+  del combo **es** el valor del config.
+- **Un combo con el texto traducido guarda el valor en el item, no en la etiqueta.**
+  Rotación, modo del dataset, marca de cámara y codec se arman con
+  `build_value_combo_box()` y se leen con `currentData()`: reconstruir el valor desde lo
+  que se ve lo ataba al idioma con el que se armó el combo, y alcanzaba con cambiar de
+  idioma para que el `save()` escribiera «Sob demanda» donde iba `on_demand`. Un valor
+  que no está entre las opciones sigue entrando como opción y volviendo al archivo tal
+  cual, que es lo que hace `set_combo_data()`.
 - **La UI no arma direcciones ni rutas de protocolo.** Las URLs de los streams le llegan
   hechas por `set_stream_urls()` desde el cableado, que las pide a cada servidor: la
   forma de la ruta es del servidor de video, y componerla en la UI la dejaría definida en

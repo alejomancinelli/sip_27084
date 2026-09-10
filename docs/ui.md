@@ -103,8 +103,11 @@ label = QLabel(tr("cam_box_roi"))
   partes.
 - Una clave que no existe devuelve la clave misma y deja un warning: el hueco se ve en
   pantalla en vez de romper la vista.
-- El idioma sale de `ui.language` del config; el panel de configuración lo cambia con
-  `set_language()` sin reiniciar.
+- El idioma sale de `ui.language` del config y **queda fijo por corrida**: cada widget
+  resuelve su texto al construirse, así que cambiarlo con la aplicación andando dejaría
+  la pantalla partida en dos idiomas. El panel lo guarda como cualquier otra clave y la
+  nota al pie del grupo «Interfaz» avisa que toma efecto al reiniciar. `set_language()`
+  queda para las pruebas y para quien arme la UI antes de mostrarla.
 - Para agregar un idioma: sumar su código a `LANGUAGES` y su entrada a cada texto.
 
 Los nombres del código siguen en inglés y los comentarios en español, como en todo el
@@ -265,10 +268,33 @@ estaba y se ve en pantalla que hay que elegir.
 set_combo_value(self._tipo, self._config.get("inference.models.model_1.type", "mock"))
 ```
 
-Lo mismo vale para los valores que se traducen a un texto —rotación, modo, codec—: las
-funciones de mapeo devuelven el valor crudo cuando no lo conocen, en vez de caer a un
-default. Un `rotation` que el repo no entiende se muestra tal cual; caer a «sin
-rotación» cambiaría en silencio cómo entra la imagen.
+**Y si el texto del combo se traduce, el valor no puede salir del texto.** Los niveles de
+log, los tipos de modelo o la paridad se muestran tal como se guardan, así que ahí el par
+de arriba alcanza. Pero rotación, modo del dataset, marca de cámara y codec muestran una
+etiqueta y guardan otra cosa, y reconstruir el valor desde la etiqueta lo ata al idioma
+con el que se armó el combo: después de cambiar de idioma el mapeo no encontraba nada y
+el `save()` escribía «Sob demanda» donde iba `on_demand`. Esos combos se arman con
+`build_value_combo_box()` —el valor va en el item— y se leen con `currentData()`:
+
+```python
+self._mode_combo = add_form_row(
+    form, tr("col_mode"),
+    build_value_combo_box({tr(key): value for key, value in _MODES.items()},
+                          _MODE_ON_DEMAND),
+)
+...
+set_combo_data(self._mode_combo, self._config.get("image_collector.mode", _MODE_ON_DEMAND))
+...
+self._config.set("image_collector.mode", self._mode_combo.currentData())
+```
+
+`set_combo_data()` mantiene la red de arriba: un valor que no está entre las opciones
+entra como opción con su forma cruda y vuelve al archivo igual. Un `rotation` que el repo
+no entiende se muestra tal cual; caer a «sin rotación» cambiaría en silencio cómo entra
+la imagen.
+
+Un combo así se conecta por `currentIndexChanged` y no por `currentTextChanged`: el
+índice es lo que identifica la opción cuando el texto no la identifica.
 
 ## Agregar una pestaña de diagnóstico
 
