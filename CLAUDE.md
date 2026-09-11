@@ -128,6 +128,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       model_protection/       cifra unos pesos y los abre en memoria; mide el costo
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
+    build/                    compilar con Nuitka y armar el entregable; ver su README
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
                               licensing.md (cómo se pide y se renueva una licencia)
@@ -307,7 +308,7 @@ Lo que no se deduce leyendo un archivo suelto:
   y fingir que protege algo sería peor que decir que no protege nada. La marca la pone
   Nuitka (`__compiled__` o `sys.frozen`) y **no hay variable de entorno ni clave de config
   que lo apague**: un `LICENSE_DEV=1` es un string en el binario y es lo primero que se
-  busca. Sin compilar (roadmap B3), todo esto es un cartel.
+  busca. Sin compilar, todo esto es un cartel; `build/` ya compila con Nuitka.
 - **Lo que ata el equipo es la huella, no los nombres.** `client` y `project_id` se
   comparan contra `project:` del config —que el cliente edita— así que son una alarma de
   archivo equivocado, no un control. El lock es el N-de-M sobre las fuentes de hardware:
@@ -508,19 +509,21 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
   —cupo de cámaras, features por pipeline, vencimiento, huella, bit al PLC y pestaña de
   diagnóstico— pero le faltan dos cosas para servir de algo: la **clave pública real** en
-  `system/license/public_key.py`, que hoy tiene una de prueba, y **compilar** (roadmap B3),
-  sin lo cual la validación se saltea borrando un `if`. El diseño completo está en
+  `system/license/public_key.py`, que hoy tiene una de prueba. **Compilar ya no es lo que
+  falta** —`build/` arma el entregable con Nuitka— pero sin la clave real la validación
+  igual pasa: sigue verificando contra la de prueba. El diseño completo está en
   `.claude/plans/licensing.md`.
 - **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
   El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero
   hacen falta la **clave real de cada fork** —la genera y la custodia el repositorio de
-  firma— y **compilar** (roadmap B3): sin compilar, saltear el descifrado es borrar un `if`
-  y la clave está en un `.py`. El diseño está en `.claude/plans/model-protection.md` y lo
-  operativo en `docs/model_protection.md`.
+  firma. **Compilar ya no es lo que falta** —`build/` arma el entregable con Nuitka, y
+  compilado la clave queda adentro del binario y no en un `.py` suelto— pero sigue
+  haciendo falta generarla en el repositorio de firma para cada cliente. El diseño está
+  en `.claude/plans/model-protection.md` y lo operativo en `docs/model_protection.md`.
 - Las próximas líneas de trabajo —visuales de configuración, lo que falta de la protección
-  del entregable (hash del modelo, compilar) y rendimiento/despliegue (optimización en
-  Jetson, Docker)— están en `.claude/plans/roadmap.md`, con qué hay que averiguar antes de
-  empezar cada una.
+  del entregable (hash del modelo, ahora que compilar ya no es lo pendiente) y
+  rendimiento/despliegue (optimización en Jetson, Docker)— están en
+  `.claude/plans/roadmap.md`, con qué hay que averiguar antes de empezar cada una.
 
 ## Dónde va lo que se escribe
 
