@@ -6,6 +6,12 @@ Uso — hay que invocarlo con el intérprete del venv, no con el `.py` a secas:
     Windows:  .venv\\Scripts\\python.exe manual_test\\ui\\ui_app.py
     Linux:    .venv/bin/python manual_test/ui/ui_app.py
 
+    --simulate-no-license   fuerza el marcador de build compilado para ver, sin compilar
+                            de verdad, el cartel de arranque y el chip rojo del footer que
+                            aparecen en un equipo entregado sin licencia. No hay
+                            `license.lic` al lado de este config, así que el estado que se
+                            ve es `absent`.
+
 Lee el `config.yaml` que tiene al lado —**no** el de la app— con el ConfigManager real,
 y hace de `main.py` mientras `main.py` no exista: cablea la ventana con los subsistemas
 de verdad y no con dobles.
@@ -97,9 +103,15 @@ Qué mirar:
   - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble
     —el módulo de GPIO todavía no existe en el repo—. Las salidas conmutan y las
     entradas se mueven solas cada dos segundos.
+  - **Sin licencia instalada, el equipo abre igual.** Correr con `--simulate-no-license`
+    para verlo: al abrir la ventana aparece un cartel, y el footer muestra un chip rojo
+    «SIN LICENCIA» todo el tiempo que dure el estado. Sin el flag, corriendo desde
+    fuentes, ninguno de los dos aparece —es el estado `unlicensed_build`, que no cuenta
+    como inválido—, que es la corrida normal de esta prueba.
   - Ctrl+C en la consola, o cerrar la ventana, baja los hilos ordenadamente.
 """
 
+import argparse
 import io
 import logging
 import random
@@ -130,6 +142,7 @@ from system.inference.engine import InferenceThread                      # noqa:
 from system.inference.metrics import compute_metrics                     # noqa: E402
 from system.inference.pipeline import Pipeline                           # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
+from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
 from system.license.request import save_request                          # noqa: E402
 from system.logger import logger                                         # noqa: E402
@@ -277,7 +290,8 @@ class _DemoApp(QObject):
     en el hilo que emite, tocando widgets desde afuera del hilo de la GUI.
     """
 
-    def __init__(self, config: ConfigManager, parent=None):
+    def __init__(self, config: ConfigManager, *, simulate_no_license: bool = False,
+                 parent=None):
         super().__init__(parent)
         self._config = config
         self._capture_threads: list = []
@@ -294,6 +308,14 @@ class _DemoApp(QObject):
         # ── Licencia ─────────────────────────────────────────────────────────
         # Corriendo desde fuentes el estado es `unlicensed_build` y no se enforcea nada,
         # que es justamente lo que hay que poder ver en la pestaña.
+        #
+        # `--simulate-no-license` fuerza el marcador de build compilado para ver el
+        # cartel de arranque y el chip rojo del footer sin compilar de verdad: no hay
+        # `license.lic` al lado de este config, así que el estado que resulta es
+        # `absent`. No es un atajo que salte una verificación —sigue siendo la firma la
+        # que decide si un archivo real validaría—, sólo cambia si el subsistema mira.
+        if simulate_no_license:
+            license_manager_module.IS_COMPILED = True
         self._license = LicenseManager(config)
         self._window.update_license(self._license.get_status())
         self._window.license_export_requested.connect(self._on_license_export_requested)
@@ -682,7 +704,17 @@ def _diff_config(before: dict, after: dict, prefix: str = "") -> list:
     return changes
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Prueba manual de la interfaz completa.")
+    parser.add_argument(
+        "--simulate-no-license", action="store_true",
+        help="fuerza el build como compilado para ver el cartel y el chip de licencia "
+             "sin licencia instalada, sin compilar de verdad.")
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = _parse_args()
     if not _CONFIG_PATH.exists():
         print(f"Falta {_CONFIG_PATH}.")
         return 2
@@ -690,7 +722,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     config = ConfigManager(str(_CONFIG_PATH))
 
-    demo = _DemoApp(config)
+    demo = _DemoApp(config, simulate_no_license=args.simulate_no_license)
     app.aboutToQuit.connect(demo.stop)
     demo.start()
 

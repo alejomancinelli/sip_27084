@@ -29,10 +29,13 @@ La licencia y el estado de reloj se leen y se escriben **en esta carpeta**, no e
 del repo: la prueba no ensucia la instalación de desarrollo.
 
 Qué mirar:
-    - **Sin `license.lic`**: estado `absent`, y el reporte muestra que igual arrancan las
-      cuatro cámaras y los tres pipelines. Es a propósito: sin licencia no se sabe qué se
-      compró, así que no se restringe nada y lo que aplica es la política sobre el estado
-      inválido. Bloquear todo sería un hard stop escrito como si fuera un aviso.
+    - **Sin `license.lic`**: estado `absent`. Las cuatro cámaras siguen arrancando —el
+      feed en vivo no depende de la licencia, es lo que sirve para verificar el cableado
+      en la puesta en marcha— pero ningún pipeline arranca y la publicación queda
+      bloqueada sin importar la política. Antes esto frenaba el arranque del proceso
+      entero; ahora en cambio abre en este modo restringido, porque un equipo entregado
+      sin licencia necesita poder llegar a la pestaña de licencia sin una computadora
+      aparte.
     - **Con una licencia válida de dos cámaras**: arrancan camera_1 y camera_2. Comentar
       camera_1 en el config y volver a correr: tienen que arrancar camera_2 y camera_3.
     - **Con `features: [core]`**: pipeline_2 no arranca y el motivo dice «feature no
@@ -171,8 +174,11 @@ def _print_pipelines(config: ConfigManager, license_manager: LicenseManager):
     pipelines = config.get("inference.pipelines", {}) or {}
 
     print("\n── Pipelines ─────────────────────────────────────────────────────────")
-    granted = license_manager.features
-    print(f"  Features licenciados: {', '.join(granted) or 'sin lista (no se restringe)'}")
+    if license_manager.state in manager.NO_LICENSE_STATES:
+        print("  Sin licencia utilizable: ningún pipeline arranca, sin importar el feature.")
+    else:
+        granted = license_manager.features
+        print(f"  Features licenciados: {', '.join(granted) or 'sin lista (no se restringe)'}")
     for slot in pipelines:
         # Se lee con el mismo helper que usará el cableado, así lo que se muestra acá es
         # exactamente lo que se compara contra la licencia — errores de config incluidos.
@@ -190,6 +196,10 @@ def _print_publishing(license_manager: LicenseManager):
     print("\n── Publicación de mediciones ─────────────────────────────────────────")
     if license_manager.is_publishing_allowed():
         print("  Permitida: las métricas salen al PLC y a la telemetría.")
+    elif license_manager.state in manager.NO_LICENSE_STATES:
+        print("  BLOQUEADA: sin licencia utilizable no se publica nada, sin importar la")
+        print("  política por defecto. El canal Modbus SIGUE sirviendo: heartbeat, salud")
+        print("  y palabras de estado se publican igual.")
     else:
         print("  BLOQUEADA por la política `degrade`. El canal Modbus SIGUE sirviendo:")
         print("  heartbeat, salud y palabras de estado se publican igual, y el bit de")

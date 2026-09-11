@@ -220,13 +220,40 @@ class TestEntitlements:
         assert license_manager.state == manager.STATE_EXPIRED
         assert license_manager.allowed_camera_slots(("camera_1", "camera_2")) == ("camera_1",)
 
-    def test_without_a_license_nothing_is_restricted(self, build_manager):
-        # Sin archivo no se sabe qué se compró: bloquear todo sería un hard stop escrito
-        # como si fuera un aviso. Lo que aplica es la política, no el cupo.
+    def test_without_a_license_the_camera_feed_still_works(self, build_manager):
+        # El equipo abre en modo de puesta en marcha y no se niega a arrancar: el feed en
+        # vivo es lo que permite verificar el cableado sin licencia, así que las cámaras
+        # no se restringen por esto.
         license_manager = build_manager()
-        assert license_manager.allowed_camera_slots(("camera_1", "camera_2")) == \
-               ("camera_1", "camera_2")
+        assert license_manager.allowed_camera_slots(("camera_1", "camera_2")) ==                ("camera_1", "camera_2")
+
+    def test_without_a_license_no_pipeline_runs(self, build_manager):
+        # Sin nada que diga qué se compró, lo más restrictivo es lo que corresponde: antes
+        # esto frenaba el arranque entero, ahora bloquea todos los pipelines en vez de
+        # abortar el proceso.
+        license_manager = build_manager()
+        assert not license_manager.has_feature("lo_que_sea")
+        assert not license_manager.has_feature(None)
+
+    def test_an_unverifiable_license_no_pipeline_runs_either(self, build_manager):
+        # Un .lic que no verifica no es mejor que ninguno: no se sabe qué se compró.
+        license_manager = build_manager("no soy una licencia")
+        assert license_manager.state == manager.STATE_INVALID
+        assert not license_manager.has_feature("lo_que_sea")
+
+    def test_running_from_sources_stays_fully_permissive(self, monkeypatch, tmp_path):
+        # unlicensed_build no es NO_LICENSE_STATES: sin esto no habría forma de correr el
+        # repo ni de probar un pipeline nuevo sin una licencia de prueba a mano.
+        monkeypatch.setattr(manager, "IS_COMPILED", False)
+        monkeypatch.setattr(fingerprint, "read_components", lambda **kwargs: {})
+
+        license_manager = manager.LicenseManager(
+            FakeConfig(), license_path=str(tmp_path / "license.lic"),
+            state_path=str(tmp_path / "estado.bin"))
+
+        assert license_manager.state == manager.STATE_UNLICENSED_BUILD
         assert license_manager.has_feature("lo_que_sea")
+        assert license_manager.allowed_camera_slots(("camera_1", "camera_2")) ==                ("camera_1", "camera_2")
 
 
 class TestPolicy:
@@ -246,74 +273,21 @@ class TestPolicy:
                                                                 sign_license):
         assert build_manager(sign_license(policy="degrade")).is_publishing_allowed()
 
-
-
-class TestRefuseStart:
-    """
-    El equipo no arranca sin licencia utilizable, y sí arranca con una que falló por algo
-    que la licencia misma puede decidir.
-
-    La línea divisoria es de dónde sale la decisión: con `absent` e `invalid` no hay
-    payload firmado que consultar, así que manda el build; en los otros tres sí lo hay.
-    """
-
-    def test_no_file_refuses_to_start(self, build_manager):
+    def test_without_a_license_publishing_is_blocked_regardless_of_the_default_policy(
+            self, build_manager):
+        # DEFAULT_POLICY es "warn", que normalmente NO bloquea publicación. Sin licencia
+        # utilizable esto no puede depender de esa política: no hay payload firmado del
+        # que leerla, así que el bloqueo es incondicional.
         license_manager = build_manager()
         assert license_manager.state == manager.STATE_ABSENT
-        assert license_manager.should_refuse_start()
+        assert license_manager.policy == policy.DEFAULT_POLICY
+        assert not license_manager.is_publishing_allowed()
 
-    def test_an_unverifiable_file_refuses_to_start(self, build_manager):
-        # Un .lic que no verifica no es mejor que ninguno: no se sabe qué se compró.
+    def test_an_unverifiable_license_also_blocks_publishing_unconditionally(
+            self, build_manager):
         license_manager = build_manager("no soy una licencia")
         assert license_manager.state == manager.STATE_INVALID
-        assert license_manager.should_refuse_start()
-
-    def test_a_valid_license_starts(self, build_manager, sign_license):
-        assert not build_manager(sign_license()).should_refuse_start()
-
-    def test_an_expired_license_still_starts(self, build_manager, sign_license):
-        # Vencida hay payload firmado y su `policy` manda: frenar acá le sacaría a la
-        # licencia una decisión que sí puede tomar.
-        token = sign_license(policy="degrade", expires_at="2026-01-01T00:00:00Z")
-        license_manager = build_manager(token)
-        assert license_manager.state == manager.STATE_EXPIRED
-        assert not license_manager.should_refuse_start()
-
-    def test_a_foreign_license_still_starts(self, build_manager, sign_license, monkeypatch):
-        monkeypatch.setattr(fingerprint, "read_components",
-                            lambda **kwargs: {"board_uuid": fingerprint.hash_value(
-                                "board_uuid", "OTRA-MAQUINA")})
-        license_manager = build_manager(sign_license())
-        assert license_manager.state == manager.STATE_FOREIGN
-        assert not license_manager.should_refuse_start()
-
-    def test_a_rolled_back_clock_still_starts(self, build_manager, sign_license):
-        # El único de los cinco que se dispara solo —una BIOS sin pila, un NTP que todavía
-        # no sincronizó—, así que frenar el arranque pararía la línea sin que nadie toque
-        # nada.
-        token = sign_license()
-        build_manager(token)
-        rewound = build_manager(token, now=NOW - timedelta(days=400))
-        assert rewound.state == manager.STATE_TAMPERED
-        assert not rewound.should_refuse_start()
-
-    def test_running_from_sources_never_refuses(self, monkeypatch, tmp_path):
-        # Sin licencia Y sin compilar: el estado es `unlicensed_build`, que no está en
-        # NO_LICENSE_STATES. Sin esto, no habría forma de correr el repo.
-        monkeypatch.setattr(manager, "IS_COMPILED", False)
-        monkeypatch.setattr(fingerprint, "read_components", lambda **kwargs: {})
-
-        license_manager = manager.LicenseManager(
-            FakeConfig(), license_path=str(tmp_path / "license.lic"),
-            state_path=str(tmp_path / "estado.bin"))
-
-        assert license_manager.state == manager.STATE_UNLICENSED_BUILD
-        assert not license_manager.should_refuse_start()
-
-    def test_the_decision_is_a_single_switch(self, build_manager, monkeypatch):
-        # Aflojar la decisión es cambiar una constante y nada más.
-        monkeypatch.setattr(manager, "REFUSE_START_WITHOUT_LICENSE", False)
-        assert not build_manager().should_refuse_start()
+        assert not license_manager.is_publishing_allowed()
 
 
 class TestExpiryCountdown:
@@ -427,10 +401,11 @@ class TestStatus:
     def test_status_carries_the_documented_keys(self, build_manager, sign_license):
         status = build_manager(sign_license(expires_at=days_from_now(90))).get_status()
         expected = {
-            "state", "policy", "reason", "license_id", "client", "project_id",
-            "issued_at", "expires_at", "days_remaining", "is_perpetual",
-            "fingerprint_matches", "fingerprint_required", "fingerprint_sources",
-            "max_cameras", "features", "is_compiled", "uptime_s",
+            "state", "policy", "reason", "should_report_invalid", "license_id",
+            "client", "project_id", "issued_at", "expires_at", "days_remaining",
+            "is_perpetual", "fingerprint_matches", "fingerprint_required",
+            "fingerprint_sources", "max_cameras", "features", "is_compiled",
+            "uptime_s",
         }
         assert set(status) == expected
 
