@@ -51,6 +51,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       inference/
         models/               una implementación por framework, detrás del mismo contrato
           abstract_model.py   el contrato del modelo: ciclo de vida y coordenadas propias
+          encrypted_weights.py nivel 1 — dueño del formato de los pesos cifrados
+          model_key.py        de dónde sale la clave con la que se abren esos pesos
           model_factory.py    único archivo que conoce las clases concretas
           mock_model.py       detecciones sintéticas, sin framework
           null_model.py       lo que devuelve la fábrica ante una config inválida
@@ -123,12 +125,14 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
     manual_test/              pruebas con hardware o pantalla, con su config.yaml al lado
       ui/                     levanta la app entera con cámaras mock; hace de main.py
       license/                emite la solicitud y simula el binario para probar la licencia
+      model_protection/       cifra unos pesos y los abre en memoria; mide el costo
     setup/                    instalación de SDK de cámara (en inglés, ver skill)
     packages/                 wheels que no están en PyPI (stapipy)
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
                               licensing.md (cómo se pide y se renueva una licencia)
-                              mqtt.md (la misma estructura, en tópicos y JSON)
+                              mqtt.md (la misma estructura, en tópicos y JSON) y
+                              model_protection.md (cómo se protege y se reemplaza un modelo)
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -147,6 +151,10 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Modelo de inferencia** — `system/inference/models/abstract_model.py`: el ciclo de vida,
   las coordenadas en el espacio del frame recibido, el umbral por detección y el
   vocabulario de `task` con el que `_verify_task()` confronta los pesos.
+- **Pesos protegidos** — `system/inference/models/encrypted_weights.py`: la disposición
+  del contenedor cifrado, qué claves entiende su metadata y qué se levanta cuando no abre.
+  De dónde sale la clave es de `model_key.py`, y cómo se protege un modelo está en
+  `docs/model_protection.md`.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
   etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. El
   pipeline concreto es `system/inference/pipeline.py`.
@@ -340,6 +348,37 @@ Lo que no se deduce leyendo un archivo suelto:
   de dos etapas y la segunda —sacar la clave vieja de la tabla— es la que cierra el
   agujero. El repositorio que firma es privado y aparte; su encargo está en
   `.claude/plans/licensing-signer-repo.md`.
+- **Los pesos del modelo se protegen con cifrado autenticado, no con un hash.** AES-256-GCM
+  da confidencialidad e integridad en una sola pasada: si el archivo abre, es auténtico y
+  está íntegro; si le cambiaron un bit, no abre. Por eso **no hay ningún hash que guardar
+  ni manifiesto que mantener**, y por eso el campo `model_hashes` de la licencia queda
+  vacío en las entregas normales: con el hash adentro de la licencia, cada reentrenamiento
+  —que al principio de un proyecto es frecuente— obligaría a reemitirla. Con la clave
+  estable, reentrenar es cifrar el modelo nuevo y copiarlo: sin reemitir y sin recompilar.
+  El cifrado y la licencia son independientes y no se acoplan: uno frena la extracción del
+  archivo, la otra la instalación copiada, y ninguno reemplaza al otro.
+- **Que los pesos estén cifrados lo dice el archivo, no el config.** Un encabezado mágico
+  lo declara y unos pesos en claro se devuelven tal cual, así que desde fuentes todo anda
+  sin clave y sin configuración: la protección aparece en el build entregado y no estorba
+  el desarrollo, igual que la licencia. Descifrar es del contrato —`_read_weights()` en
+  `AbstractModel`— y no de cada implementación, que carga **desde bytes y nunca desde una
+  ruta**: escribir el plano a un archivo temporal para que el framework lo lea tiraría a
+  la basura casi todo el beneficio.
+- **La metadata del modelo viaja adentro de los pesos y le gana al config.** Los nombres
+  de clase, el umbral y la tarea van cifrados en el mismo archivo, porque si no el
+  `config.yaml` —un archivo de texto al lado del ejecutable— cuenta qué detecta el modelo.
+  Le gana al config porque viaja autenticada y el config lo edita el cliente; las dos
+  únicas claves que no puede pisar son `path` y `type`, que serían un archivo diciendo
+  cómo abrirse.
+- **Una clave de modelo por fork, derivada y no escrita entera.** Una clave sacada del
+  binario de un cliente expone el modelo de ese cliente y de ningún otro. No se guarda
+  como 32 bytes seguidos —eso se encuentra con un volcado de strings incluso compilado—
+  sino que se deriva con HKDF de fragmentos y un salt que el build pone en un
+  `_model_key.py` gitignoreado. Sube el costo, no cierra la puerta: los pesos en claro
+  existen igual en la memoria del equipo mientras el modelo infiere, y lo que esto termina
+  es la extracción casual, que es la amenaza realista. La custodia y la herramienta de
+  cifrado son del repositorio de firma; el encargo está en
+  `.claude/plans/model-protection-signer-repo.md`.
 - **Los dos backends de telemetría publican el mismo dato.** `PersistenceThread` arma el
   registro una sola vez y se lo pasa igual a InfluxDB y a MQTT, así que no hay una lista
   de campos por destino: los nombres se eligen una vez y valen para los dos. Lo que cambia
@@ -458,6 +497,12 @@ La tabla completa, archivo por archivo, está en `README.md`.
   `system/license/public_key.py`, que hoy tiene una de prueba, y **compilar** (roadmap B3),
   sin lo cual la validación se saltea borrando un `if`. El diseño completo está en
   `.claude/plans/licensing.md`.
+- **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
+  El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero
+  hacen falta la **clave real de cada fork** —la genera y la custodia el repositorio de
+  firma— y **compilar** (roadmap B3): sin compilar, saltear el descifrado es borrar un `if`
+  y la clave está en un `.py`. El diseño está en `.claude/plans/model-protection.md` y lo
+  operativo en `docs/model_protection.md`.
 - Las próximas líneas de trabajo —visuales de configuración, lo que falta de la protección
   del entregable (hash del modelo, compilar) y rendimiento/despliegue (optimización en
   Jetson, Docker)— están en `.claude/plans/roadmap.md`, con qué hay que averiguar antes de

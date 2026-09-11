@@ -1,0 +1,43 @@
+# Config de la prueba manual de pesos protegidos. NO es el config de la app: sólo trae
+# la sección que un modelo lee, que es una.
+#
+# Este archivo es la mitad editable de la prueba: se cambia acá, se vuelve a correr
+# `check_protected_weights.py`, y se compara el reporte con lo que debería pasar. Cada
+# escenario está marcado con ESCENARIO y dice qué esperar.
+#
+# `path` no está declarado a propósito: lo pone el script con el archivo que acaba de
+# cifrar, porque las rutas relativas del config se anclan a la raíz del repo y no a esta
+# carpeta.
+
+project:
+  client: ACME
+  project_id: LINEA_3
+
+inference:
+  models:
+    model_1:
+      # El mock no interpreta los bytes de los pesos, pero los lee por el mismo camino
+      # que un modelo real. Eso es lo que deja probar el descifrado, la metadata y los
+      # motivos de falla en un equipo sin GPU y sin framework instalado.
+      type: mock
+
+      # ESCENARIO «la metadata gana sobre el config»: estos nombres son los que se ven si
+      # los pesos van en claro (`--plain`). Con los pesos cifrados manda la lista que
+      # viaja adentro del archivo, y el reporte tiene que mostrar la de adentro.
+      class_names:
+        - del_config_1
+        - del_config_2
+        - del_config_3
+
+      # ESCENARIO «umbral protegido»: con los pesos cifrados vale el que va adentro, y
+      # este número queda ignorado. Subirlo a 99 y volver a correr con `--plain` tiene
+      # que dejar el modelo sin detecciones; sin `--plain`, no cambia nada.
+      min_confidence_pct: 50.0
+
+      params:
+        detection_count: 3
+
+      # ESCENARIO «tarea en desacuerdo»: correr con `--task segmentation`. La tarea viaja
+      # adentro de los pesos, así que no hay nada que tocar acá. Esperado: el modelo
+      # queda en error ANTES del primer frame, con el motivo diciendo que los pesos son
+      # de una tarea y el modelo los carga como otra.
