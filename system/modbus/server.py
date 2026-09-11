@@ -119,10 +119,19 @@ class SharedModbusServer:
     Los métodos de escritura y lectura de registros son thread-safe y se pueden
     llamar desde cualquier hilo, esté el servidor corriendo o no. `run()` bloquea
     el hilo que lo llama; todo lo demás se llama desde afuera.
+
+    `blocked_reason` lo pone el cableado cuando hay algo por lo que este servidor no
+    puede servir aunque el config lo pida —hoy, un mapa de registros que no se pudo
+    leer—. Con eso puesto los dos transportes quedan en `STATUS_ERROR` y ninguno toma su
+    puerto. Que no arranque es mejor que servir un datastore vacío: un PLC leyendo ceros
+    no puede distinguir «no hay medición» de «falta el mapa», y sin conexión ni latido esa
+    ambigüedad desaparece. Este módulo no sabe qué es un mapa de registros y no tiene por
+    qué saberlo: recibe el motivo ya escrito.
     """
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, blocked_reason: str = ""):
         self._config = config_manager
+        self._blocked_reason = blocked_reason
         self._lock = threading.Lock()
         self._tcp_status = STATUS_DISABLED
         self._rtu_status = STATUS_DISABLED
@@ -234,8 +243,24 @@ class SharedModbusServer:
 
     # ── Servidores async ─────────────────────────────────────────────────────
 
+    def _blocked(self, transport: str, status_attribute: str) -> bool:
+        """
+        True si hay un motivo para no servir. Deja el transporte en error y lo loguea.
+
+        Se pregunta antes que por el `enabled` del config: el motivo no es una decisión
+        de la instalación sino algo que no funciona, y decir «deshabilitado» cuando lo
+        que pasa es que falta el mapa manda a mirar el config equivocado.
+        """
+        if not self._blocked_reason:
+            return False
+        setattr(self, status_attribute, STATUS_ERROR)
+        logger.error(f"[Modbus] {transport} no arranca: {self._blocked_reason}")
+        return True
+
     async def run_tcp_server(self):
         """Levanta el servidor TCP y no vuelve hasta que se lo cancela."""
+        if self._blocked("TCP", "_tcp_status"):
+            return
         tcp_config = self._config.get("modbus.tcp", {})
         if not tcp_config.get("enabled", True):
             self._tcp_status = STATUS_DISABLED
@@ -273,6 +298,8 @@ class SharedModbusServer:
 
     async def run_rtu_server(self):
         """Levanta el servidor RTU y no vuelve hasta que se lo cancela."""
+        if self._blocked("RTU", "_rtu_status"):
+            return
         rtu_config = self._config.get("modbus.rtu", {})
         if not rtu_config.get("enabled", False):
             self._rtu_status = STATUS_DISABLED

@@ -66,9 +66,11 @@ class _FakeProbe:
         self.stdout = stdout
         self.error = error
         self.calls = []
+        self.kwargs = []
 
     def __call__(self, argv: list, **kwargs) -> subprocess.CompletedProcess:
         self.calls.append(argv)
+        self.kwargs.append(kwargs)
         if self.error is not None:
             raise self.error
         return subprocess.CompletedProcess(argv, 0, self.stdout, "")
@@ -488,6 +490,15 @@ class TestNvidiaSmi:
         windows._read_nvidia_smi()
         assert sm._NVIDIA_SMI not in windows._disabled_probes
 
+    def test_the_probe_does_not_inherit_stdin(self, windows, monkeypatch):
+        """Compilado y lanzado sin consola, el stdin heredado es un handle inválido y
+        CreateProcess falla con WinError 6 antes de correr la sonda. En el venv siempre
+        hay consola, así que el bug sólo aparece en la planta."""
+        fake = _FakeProbe("37, 54, 22.11")
+        monkeypatch.setattr(sm.subprocess, "run", fake)
+        windows._read_nvidia_smi()
+        assert fake.kwargs[0]["stdin"] == subprocess.DEVNULL
+
     def test_disabling_one_probe_does_not_disable_the_other(self, windows, monkeypatch):
         """Las sondas comparten la política de corte, no el contador."""
         fake = _FakeProbe(error=OSError("sin driver"))
@@ -603,15 +614,15 @@ class TestDisk:
                             lambda path: _Usage(free=53 * 1024 ** 3 + 500))
         assert _monitor()._read_disk_free_gb() == 53
 
-    def test_a_relative_path_hangs_off_the_repo_root(self, monkeypatch):
+    def test_a_relative_path_hangs_off_the_installation_root(self, monkeypatch):
         """Relativa al CWD, la métrica cambiaría según desde dónde se lanzó la app."""
         monitored = _monitor(**{"system_monitor.disk_path": "data/dataset"})
         assert self._recorded_path(monitored, monkeypatch) == os.path.normpath(
-            os.path.join(sm._PROJECT_ROOT, "data", "dataset")
+            os.path.join(sm.DATA_DIR, "data", "dataset")
         )
 
-    def test_the_default_is_the_repo_root(self, monkeypatch):
-        assert self._recorded_path(_monitor(), monkeypatch) == sm._PROJECT_ROOT
+    def test_the_default_is_the_installation_root(self, monkeypatch):
+        assert self._recorded_path(_monitor(), monkeypatch) == sm.DATA_DIR
 
     def test_an_absolute_path_is_used_as_is(self, monkeypatch, tmp_path):
         monitored = _monitor(**{"system_monitor.disk_path": str(tmp_path)})

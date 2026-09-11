@@ -26,6 +26,7 @@ import threading
 import yaml
 
 from system.logger import logger
+from system.paths import DATA_DIR
 
 _CONFIG_FILENAME = "config.yaml"
 _BACKUP_SUFFIX = ".bak"   # copia de la versión anterior, una sola
@@ -41,9 +42,14 @@ _FALLBACK_CONFIG = {
 
 
 def _default_config_path() -> str:
-    """config.yaml en la raíz del repo, sin depender del CWD del proceso."""
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(project_root, _CONFIG_FILENAME)
+    """
+    `config.yaml` en la raíz de la instalación, sin depender del CWD del proceso.
+
+    Sale de `DATA_DIR` y no del `__file__` de este archivo: compilado, este módulo vive
+    adentro de la distribución —de sólo lectura y reemplazada al actualizar—, y el config
+    es justamente lo que la app escribe y lo que no se puede perder.
+    """
+    return os.path.join(DATA_DIR, _CONFIG_FILENAME)
 
 
 class ConfigManager:
@@ -84,6 +90,18 @@ class ConfigManager:
         self.load()
 
     # ── API pública ──────────────────────────────────────────────────────────
+
+    @property
+    def config_path(self) -> str:
+        """
+        Qué archivo se leyó y cuál va a reescribir `save()`.
+
+        Es para mostrarlo, no para abrirlo: quien necesite leer o escribir el config lo
+        hace por `get` y `set`. Existe porque desde que el programa y la instalación son
+        dos raíces distintas, «el config» ya no es un lugar único, y una herramienta que
+        avisa que va a cambiar una medición tiene que poder decir en qué archivo.
+        """
+        return self._config_path
 
     @property
     def is_using_fallback(self) -> bool:

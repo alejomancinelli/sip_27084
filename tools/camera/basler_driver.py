@@ -9,8 +9,16 @@ from .abstract_driver import AbstractCameraDriver
 try:
     from pypylon import pylon, genicam
     _PYPYLON_AVAILABLE = True
-except ImportError:
+    _IMPORT_ERROR = ""
+except ImportError as error:
     _PYPYLON_AVAILABLE = False
+    # El motivo, por lo mismo que en `st_driver`: «no está» y «está pero no cargan sus
+    # DLL» se arreglan en lugares distintos y Windows levanta `ImportError` en los dos.
+    #
+    # Acá el caso normal es el primero: pypylon trae adentro todo el runtime de pylon
+    # —los transport layer, los GenICam—, así que no depende de que haya un SDK
+    # instalado. Si no se puede importar, es que el paquete no viajó.
+    _IMPORT_ERROR = str(error)
 
 # Clase de dispositivo GenICam con la que pypylon expone las GigE de Basler.
 _DEVICE_CLASS_GIGE = "BaslerGigE"
@@ -52,7 +60,10 @@ class BaslerDriver(AbstractCameraDriver):
 
     def connect(self) -> bool:
         if not _PYPYLON_AVAILABLE:
-            logger.error("El módulo nativo pypylon no está instalado. No se puede abrir la Basler.")
+            logger.error(
+                f"[BaslerDriver] No se pudo cargar pypylon ({_IMPORT_ERROR}). pypylon "
+                f"trae su propio runtime de pylon, así que no hace falta instalar el SDK "
+                f"de Basler: lo que falta es el paquete. No se puede abrir la Basler.")
             return False
 
         with _pylon_connect_lock:
@@ -219,9 +230,28 @@ class BaslerDriver(AbstractCameraDriver):
         gain = float(self._acquisition.get("gain", _DEFAULT_GAIN))
         fps_limit = float(self._acquisition.get("fps_limit", _DEFAULT_FPS_LIMIT))
 
+        # **Free-run declarado, no heredado.** El modo de disparo vive en la memoria no
+        # volátil de la cámara: una que viene de otro montaje con `TriggerMode` en On abre,
+        # acepta exposición y ganancia, arranca la adquisición y no entrega un solo frame.
+        # pylon lo reporta como «Grab timed out», que se lee como un problema de red — es
+        # una de las tres causas que su propio mensaje enumera, y la única que no se
+        # arregla tocando el equipo.
+        set_node("TriggerMode", "Off")
         set_node("ExposureAuto", "Off")
         set_node("ExposureTime", exposure_time_us)
         set_node("GainAuto", "Off")
         set_node("Gain", gain)
         set_node("AcquisitionFrameRateEnable", True)
         set_node("AcquisitionFrameRate", fps_limit)
+
+        # Tamaño de paquete y demora entre paquetes. Deciden si llega alguna imagen y son
+        # de la cámara, no del equipo: un paquete más grande que el MTU de la placa se
+        # descarta entero, así que el canal de control anda perfecto y no entra una sola
+        # imagen. Sin esta clave la única forma de corregirlo sería el visor del
+        # fabricante, y en la planta no está instalado. Vacío o 0 = no se toca.
+        packet_size_bytes = int(self._acquisition.get("packet_size_bytes", 0) or 0)
+        if packet_size_bytes > 0:
+            set_node("GevSCPSPacketSize", packet_size_bytes)
+        packet_delay_ns = int(self._acquisition.get("packet_delay_ns", 0) or 0)
+        if packet_delay_ns > 0:
+            set_node("GevSCPD", packet_delay_ns)

@@ -254,6 +254,46 @@ class TestFontScale:
         assert _changed_pixels(frame[:, -1:], np.zeros((80, 1, 3), np.uint8)) == 0
 
 
+class TestTextPanelColours:
+    """
+    Un panel puede pintar cada línea de su color, y es lo que deja que el resumen de
+    clases coincida con el color de las máscaras. Lo que no se declara cae en el del panel.
+    """
+
+    _LINES = ["primera", "segunda"]
+
+    def _colours(self, frame_bgr: np.ndarray) -> set:
+        return {tuple(int(c) for c in colour) for colour in frame_bgr.reshape(-1, 3)}
+
+    def test_each_line_takes_its_own_colour(self):
+        frame = _frame()
+        colours = ((1, 2, 3), (4, 5, 6))
+        overlay.draw_text_panel(frame, self._LINES, line_colors_bgr=colours)
+        assert set(colours) <= self._colours(frame)
+
+    def test_a_line_without_a_colour_falls_back_to_the_panel(self):
+        """`None` es «no tengo color propio», no «negro»."""
+        frame = _frame()
+        overlay.draw_text_panel(frame, self._LINES, text_bgr=(9, 9, 9),
+                                line_colors_bgr=((1, 2, 3), None))
+        painted = self._colours(frame)
+        assert (1, 2, 3) in painted and (9, 9, 9) in painted
+
+    def test_fewer_colours_than_lines_is_not_an_error(self):
+        frame = _frame()
+        overlay.draw_text_panel(frame, self._LINES, text_bgr=(9, 9, 9),
+                                line_colors_bgr=((1, 2, 3),))
+        painted = self._colours(frame)
+        assert (1, 2, 3) in painted and (9, 9, 9) in painted
+
+    def test_without_colours_the_panel_is_of_one_colour(self):
+        """El comportamiento de siempre: quien no los pasa no cambia de dibujo."""
+        frame, plain = _frame(), _frame()
+        overlay.draw_text_panel(frame, self._LINES, line_colors_bgr=())
+        overlay.draw_text_panel(plain, self._LINES)
+        assert np.array_equal(frame, plain)
+
+
 class TestTextThickness:
     """El grosor del trazo acompaña al tamaño: un texto grande con trazo de 1 px se ve
     pálido y roto, que es lo que pasaba después de escalarlo con el ancho del frame."""

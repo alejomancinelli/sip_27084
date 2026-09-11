@@ -291,6 +291,51 @@ class TestStartupFailures:
         assert server.rtu_status == STATUS_DISABLED
 
 
+class TestBlockedByAMissingMap:
+    """
+    Sin mapa de registros no se sirve, y se dice por qué.
+
+    No arrancar es mejor que servir el datastore vacío: un PLC leyendo ceros no puede
+    distinguir «no hay medición» de «falta el mapa». Sin conexión y sin latido, sí.
+    """
+
+    _REASON = "No se pudo cargar register_map.yaml: [Errno 2] No such file or directory"
+
+    def test_tcp_does_not_serve(self, caplog):
+        server = SharedModbusServer(_MockConfig(), blocked_reason=self._REASON)
+        with caplog.at_level("ERROR"):
+            asyncio.run(server.run_tcp_server())
+        assert server.tcp_status == STATUS_ERROR
+        assert self._REASON in caplog.text
+
+    def test_rtu_does_not_serve(self, caplog):
+        """Aunque el config lo pida explícitamente."""
+        config = _MockConfig(**{"modbus.rtu": {"enabled": True}})
+        server = SharedModbusServer(config, blocked_reason=self._REASON)
+        with caplog.at_level("ERROR"):
+            asyncio.run(server.run_rtu_server())
+        assert server.rtu_status == STATUS_ERROR
+        assert self._REASON in caplog.text
+
+    def test_it_is_an_error_and_not_a_disabled(self, caplog):
+        """
+        `disabled` es una decisión de la instalación y manda a mirar el config; esto no
+        es eso, y confundirlos hace buscar el problema en el archivo equivocado.
+        """
+        config = _MockConfig(**{"modbus.tcp": {"enabled": False}})
+        server = SharedModbusServer(config, blocked_reason=self._REASON)
+        with caplog.at_level("INFO"):
+            asyncio.run(server.run_tcp_server())
+        assert server.tcp_status == STATUS_ERROR
+        assert "deshabilitado" not in caplog.text
+
+    def test_without_a_reason_nothing_changes(self):
+        """El caso normal: el mapa cargó y el servidor se comporta como siempre."""
+        server = SharedModbusServer(_MockConfig(**{"modbus.rtu": {"enabled": False}}))
+        asyncio.run(server.run_rtu_server())
+        assert server.rtu_status == STATUS_DISABLED
+
+
 class TestBecomingActive:
     def test_a_transport_that_survives_the_grace_period_turns_active(self, monkeypatch):
         monkeypatch.setattr(modbus_server, "_STARTUP_GRACE_S", 0.01)
