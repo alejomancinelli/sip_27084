@@ -271,12 +271,18 @@ def text_thickness(font_scale: float) -> int:
 
 def draw_text_panel(frame_bgr: np.ndarray, lines: list[str], *,
                     options: OverlayOptions | None = None,
-                    text_bgr: tuple[int, int, int] = _PANEL_TEXT_BGR):
+                    text_bgr: tuple[int, int, int] = _PANEL_TEXT_BGR,
+                    line_colors_bgr: tuple = ()):
     """
     Dibuja in-place un panel de texto con fondo opaco, arriba a la izquierda.
 
     El fondo opaco no es estética: sobre un frame claro el texto sin fondo no se lee, y
     el operador mira esto para decidir.
+
+    `line_colors_bgr` pinta línea por línea, en el mismo orden que `lines`; lo que sobra,
+    falta o venga en `None` cae en `text_bgr`. Es lo que deja que un panel que enumera
+    clases use el color con el que están dibujadas: dos referencias del mismo dato que no
+    coinciden de color obligan a leer el nombre para saber qué es cuál.
     """
     if frame_bgr is None or frame_bgr.size == 0 or not lines:
         return
@@ -297,8 +303,9 @@ def draw_text_panel(frame_bgr: np.ndarray, lines: list[str], *,
 
     for i, line in enumerate(lines):
         y_px = _MARGIN_PX + _INNER_PAD_PX + (i + 1) * line_height_px + i * _LINE_PAD_PX
+        color = line_colors_bgr[i] if i < len(line_colors_bgr) else None
         cv2.putText(frame_bgr, line, (_MARGIN_PX + _INNER_PAD_PX, y_px),
-                    _FONT, font_scale, text_bgr, thickness, cv2.LINE_AA)
+                    _FONT, font_scale, color or text_bgr, thickness, cv2.LINE_AA)
 
 
 def draw_timestamp(frame_bgr: np.ndarray, timestamp_s: float, *,

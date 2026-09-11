@@ -60,6 +60,12 @@ class RealtimeChart(QWidget):
         self._axis_y.setRange(y_min, y_max)
         self._axis_y.setLabelFormat("%.0f")
         self._axis_y.setTickCount(_Y_TICK_COUNT)
+        # Cuando las `_Y_TICK_COUNT` etiquetas no entran a lo alto, QtCharts trunca y por
+        # defecto las deja a todas en '...': el eje queda sin un solo número. Apagado,
+        # dibuja las que entran y saltea el resto, que es lo que uno quiere de una
+        # gráfica apretada. Aparece con la pestaña de hardware en una pantalla baja,
+        # donde cada gráfica se achica hasta `_MIN_HEIGHT_PX`.
+        self._axis_y.setTruncateLabels(False)
 
         self._chart.addAxis(self._axis_x, Qt.AlignBottom)
         self._chart.addAxis(self._axis_y, Qt.AlignLeft)

@@ -26,6 +26,10 @@ from dataclasses import dataclass, fields
 
 import yaml
 
+from system.paths import DATA_DIR
+
+_MAP_FILENAME = "register_map.yaml"
+
 # Rango de un holding register.
 UINT16_MAX = 0xFFFF
 
@@ -268,5 +272,18 @@ class RegisterSchema:
 
 
 def default_map_path() -> str:
-    """Ruta del mapa que acompaña a este paquete."""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "register_map.yaml")
+    """
+    Dónde está el mapa: primero en la raíz de la instalación, si no al lado de este módulo.
+
+    Son dos lugares porque el archivo cumple dos papeles. En el repo vive junto al esquema
+    que lo valida, que es donde se lo edita y se lo lee. En un entregable compilado es un
+    archivo de la instalación —lo acuerda el integrador y cambia en cada planta—, así que
+    va al lado del ejecutable, en `DATA_DIR`, y no adentro de la distribución, que se
+    reemplaza entera al actualizar.
+
+    Gana `DATA_DIR`: si alguien puso un mapa ahí, es el de esa planta y no el de fábrica.
+    """
+    installed = os.path.join(DATA_DIR, _MAP_FILENAME)
+    if os.path.isfile(installed):
+        return installed
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), _MAP_FILENAME)

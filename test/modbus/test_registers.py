@@ -144,3 +144,55 @@ class TestLookupsUsedByTheApp:
 
     def test_readback_addrs_are_a_subset_of_the_map(self):
         assert set(SCHEMA.readback_addrs()) <= {r.addr for r in REGISTERS}
+
+
+class TestAMissingMapDoesNotKillTheImport:
+    """
+    Un mapa que falta deja el motivo y un mapa vacío, y no levanta.
+
+    El módulo carga el YAML **durante su import**, así que una excepción acá mata el
+    proceso antes de que exista el logger con archivo y antes de que haya una ventana.
+    Compilado y lanzado sin consola —que es como arranca en la planta— eso es un
+    programa que no abre y no deja nada en pantalla. El motivo lo publica el servidor
+    Modbus en su `status`, y el resto del equipo sigue midiendo.
+    """
+
+    def _reload_with(self, monkeypatch, map_path: str) -> tuple:
+        """
+        `(REGISTERS, LOAD_ERROR)` de recargar el módulo con el mapa apuntando a otro lado.
+
+        Devuelve los valores y no el módulo: `reload` muta el objeto en su lugar, así
+        que dejarlo salir de acá lo entregaría ya restaurado y el test no diría nada.
+        """
+        import importlib
+
+        from system.modbus import registers, schema
+
+        monkeypatch.setattr(schema, "default_map_path", lambda: map_path)
+        try:
+            importlib.reload(registers)
+            return list(registers.REGISTERS), registers.LOAD_ERROR
+        finally:
+            # Se recarga con el real para no dejarle a los demás tests un SCHEMA vacío:
+            # `registers` es de módulo y lo comparten todos.
+            monkeypatch.undo()
+            importlib.reload(registers)
+
+    def test_a_map_that_is_not_there_leaves_the_reason(self, monkeypatch, tmp_path):
+        found, reason = self._reload_with(monkeypatch, str(tmp_path / "no-existe.yaml"))
+        assert found == []
+        assert "no-existe.yaml" in reason
+
+    def test_a_broken_map_leaves_the_reason(self, monkeypatch, tmp_path):
+        """Un YAML que carga pero no es una lista de registros es el otro caso."""
+        broken = tmp_path / "roto.yaml"
+        broken.write_text("esto: no es una lista\n", encoding="utf-8")
+        found, reason = self._reload_with(monkeypatch, str(broken))
+        assert found == []
+        assert "roto.yaml" in reason
+
+    def test_a_map_that_loads_leaves_no_reason(self):
+        """El caso normal, sobre el mapa de verdad: no hay motivo que publicar."""
+        from system.modbus.registers import LOAD_ERROR
+
+        assert LOAD_ERROR == ""

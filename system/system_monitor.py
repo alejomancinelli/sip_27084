@@ -48,6 +48,7 @@ import psutil
 
 from system.config_manager import ConfigManager
 from system.logger import logger
+from system.paths import DATA_DIR
 
 _MB = 1024 ** 2
 _GB = 1024 ** 3
@@ -56,7 +57,7 @@ _KELVIN_OFFSET_C = 273.15       # WMI las expone en décimas de kelvin
 
 # Ruta relativa a la raíz del repo, como el resto de las rutas del config.
 _DEFAULT_DISK_PATH = "."
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 # Rango físico plausible: una zona deshabilitada no desaparece, reporta absurdos.
 _MIN_TEMP_C = -40.0
@@ -421,9 +422,9 @@ class SystemMonitor:
         """GiB libres en la partición de `system_monitor.disk_path`."""
         path = self._config.get("system_monitor.disk_path", _DEFAULT_DISK_PATH)
         if not os.path.isabs(path):
-            # Relativa a la raíz del repo, no al CWD: la métrica no puede depender
+            # Relativa a la raíz de la instalación, no al CWD: la métrica no puede depender
             # de desde dónde se lanzó el proceso.
-            path = os.path.join(_PROJECT_ROOT, path)
+            path = os.path.join(DATA_DIR, path)
         return int(psutil.disk_usage(path).free / _GB)
 
     def _read_net_mbps(self) -> dict:
@@ -487,14 +488,24 @@ class SystemMonitor:
         if probe in self._disabled_probes:
             return None
         try:
+            # `stdin=DEVNULL` no es por higiene: compilado y lanzado sin consola, el
+            # stdin heredado es un handle inválido y CreateProcess falla con WinError 6
+            # antes de correr la sonda. Con eso, la temperatura no se leía en la planta
+            # y sí en el venv, que siempre tiene consola.
             completed = subprocess.run(argv, capture_output=True, text=True,
-                                       check=True, timeout=timeout_s, **_NO_WINDOW)
+                                       check=True, timeout=timeout_s,
+                                       stdin=subprocess.DEVNULL, **_NO_WINDOW)
         except (OSError, subprocess.SubprocessError) as e:
             self._probe_failures[probe] = self._probe_failures.get(probe, 0) + 1
             logger.debug(f"[SystemMonitor] {probe} falló: {e}")
             if self._probe_failures[probe] >= _PROBE_MAX_FAILURES:
                 self._disabled_probes.add(probe)
-                logger.warning(f"[SystemMonitor] {probe} no responde; se deja de consultar.")
+                # El motivo va en la misma línea que el corte: es la única que se ve con
+                # el nivel de log de la planta, y sin él «no responde» no distingue una
+                # sonda que no existe de una que no se pudo lanzar.
+                logger.warning(
+                    f"[SystemMonitor] {probe} no responde; se deja de consultar. Último "
+                    f"fallo: {e}")
             return None
 
         self._probe_failures[probe] = 0

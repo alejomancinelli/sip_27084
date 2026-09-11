@@ -242,7 +242,10 @@ class InferenceThread(QThread):
         stages = ", ".join(status["models"]) or "ninguna"
         logger.info(f"[Inference/{self.pipeline_slot}] Hilo iniciado. Etapas: {stages}.")
         if status["synthetic"]:
-            logger.warning(
+            # Mismo criterio que el aviso del modelo: es una condición declarada y no
+            # una falla, y viaja igual en `is_synthetic` del resultado. Acá además
+            # sería el segundo aviso del mismo hecho en dos líneas del log.
+            logger.debug(
                 f"[Inference/{self.pipeline_slot}] Alguna etapa es un modelo sintético: "
                 f"los resultados no son una medición del proceso."
             )

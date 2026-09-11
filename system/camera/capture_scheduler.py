@@ -341,7 +341,10 @@ class CaptureScheduler(QObject):
         cycle.known_keys_by_camera[camera_slot] = tuple(metrics)
 
         representative = analysis.pick_representative(valid) or valid[0]
-        logger.info(
+        # DEBUG: sale una vez por cámara y por ciclo, así que a INFO tapa el log con lo
+        # que anda bien. Lo que sí queda en INFO es lo que cambió de estado, y las
+        # mediciones ya viajan al dataset, a la telemetría y al PLC.
+        logger.debug(
             f"[Scheduler] {pipeline_slot}/{camera_slot}: ciclo con "
             f"{len(valid)}/{len(cycle.results)} frames — {_describe(metrics)}")
         # `replace` y no mutación: ese resultado ya viajó a la UI y a los streams.
