@@ -31,7 +31,7 @@ from system.config_manager import ConfigManager
 from system.logger import logger
 from system.version import APP_VERSION
 
-from ui import strings, theme
+from ui import theme
 from ui.strings import tr
 from ui.views.config_view import ConfigView
 from ui.views.diagnostics_view import DiagnosticsView
@@ -388,13 +388,19 @@ class MainWindow(QMainWindow):
 
     def _on_config_saved(self):
         """
-        El idioma y el tema son lo único que se aplica sin reiniciar.
+        El tema es lo único que se aplica sin reiniciar.
 
-        El resto —cámaras, servidores, modelos— se lee al arrancar cada subsistema, y
-        el propio panel avisa que hay que reiniciar. Reenvía la señal para que el
-        cableado haga lo suyo.
+        El resto —cámaras, servidores, modelos, el idioma— se lee al arrancar y el
+        propio panel avisa que hay que reiniciar. Reenvía la señal para que el cableado
+        haga lo suyo.
+
+        **El idioma no se cambia en caliente.** Cada widget resuelve su texto con `tr()`
+        cuando se construye, así que cambiarlo acá sólo alcanza a lo que se arme después
+        —un diálogo, el ConfigView si todavía no se abrió— y deja la pantalla partida en
+        dos idiomas. Peor: un combo cuyas opciones quedaron en el idioma anterior ya no
+        se puede leer por texto, que es lo que devolvía la etiqueta traducida al
+        `config.yaml`.
         """
-        strings.set_language(str(self._config.get("ui.language", "es")))
         self.apply_theme()
         self.set_status_message(tr("status_config_saved"))
         self.config_saved.emit()

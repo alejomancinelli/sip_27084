@@ -125,6 +125,9 @@ def set_combo_value(combo: QComboBox, value: object):
     es un **no-op silencioso** cuando el item no existe, así que el combo se queda en
     su primera opción y el `save()` la escribe encima del valor del config. Con esto un
     valor desconocido se ve en pantalla y vuelve al archivo tal como estaba.
+
+    Sólo para los combos cuyo texto **es** el valor del config. Si el texto se traduce,
+    el par es `build_value_combo_box()` + `set_combo_data()`.
     """
     text = "" if value is None else str(value)
     if not text:
@@ -132,6 +135,46 @@ def set_combo_value(combo: QComboBox, value: object):
     if combo.findText(text) < 0:
         combo.insertItem(0, text)
     combo.setCurrentText(text)
+
+
+def build_value_combo_box(options: dict, current: object) -> QComboBox:
+    """
+    Combo cuyo valor de config viaja en el item, no en el texto que se muestra.
+
+    `options` va del texto visible al valor que va al config, y ese valor se lee con
+    `currentData()`. Es lo que corresponde cuando el texto se traduce: reconstruir el
+    valor a partir de lo que se ve lo ata al idioma con el que se armó el combo, y
+    después de cambiar de idioma el `save()` escribe la etiqueta —«Sob demanda»— en
+    lugar del valor.
+
+    Un `current` que no está entre los valores se agrega como opción con su forma
+    cruda, por el mismo motivo que en `build_combo_box()`.
+    """
+    combo = QComboBox()
+    for label, value in options.items():
+        combo.addItem(str(label), value)
+    set_combo_data(combo, current)
+    return combo
+
+
+def set_combo_data(combo: QComboBox, value: object):
+    """
+    Selecciona el item cuyo dato es `value`, agregándolo como opción si no está.
+
+    El par de `build_value_combo_box()` para el `load()` de una pestaña: busca por el
+    valor del config y no por el texto, que cambia con el idioma. Un valor desconocido
+    se agrega mostrando su forma cruda y queda elegido, así vuelve al archivo tal como
+    estaba; uno vacío deja el combo donde está, porque no hay nada que mostrar.
+    """
+    for index in range(combo.count()):
+        if combo.itemData(index) == value:
+            combo.setCurrentIndex(index)
+            return
+    text = "" if value is None else str(value)
+    if not text:
+        return
+    combo.insertItem(0, text, value)
+    combo.setCurrentIndex(0)
 
 
 def build_line_edit(value: str, placeholder: str = "") -> QLineEdit:

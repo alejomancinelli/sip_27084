@@ -5,11 +5,13 @@ Tabla de datos, no maquinaria: la clave es un identificador estable en inglés y
 valor es el texto que ve el operador en cada idioma. Ningún widget escribe un
 literal visible: pide `tr("nav_monitor")` y el texto sale de acá.
 
-El idioma sale de `ui.language` del config y se puede cambiar con `set_language()`,
-que es lo que hace el panel de configuración al guardar. Un idioma que no está en
-la tabla cae a `_FALLBACK_LANGUAGE` y lo avisa una sola vez; una clave que falta
-devuelve la clave misma, para que el hueco se vea en pantalla en vez de romper la
-vista.
+El idioma sale de `ui.language` del config y queda fijo por corrida: cada widget
+resuelve su texto al construirse, así que cambiarlo con la aplicación andando dejaría
+la pantalla partida en dos idiomas. El panel de configuración lo guarda y avisa que
+toma efecto al reiniciar; `set_language()` está para las pruebas y para quien arme la
+UI. Un idioma que no está en la tabla cae a `_FALLBACK_LANGUAGE` y lo avisa una sola
+vez; una clave que falta devuelve la clave misma, para que el hueco se vea en pantalla
+en vez de romper la vista.
 
 Para agregar un idioma se suma su código a LANGUAGES y su entrada a cada texto. Un
 texto sin traducir cae al idioma de respaldo, así que se puede traducir de a partes
@@ -438,6 +440,12 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "en": "Dataset folder:","pt": "Pasta do dataset:"},
     "sys_language":           {"es": "Idioma:",        "en": "Language:",     "pt": "Idioma:"},
     "sys_dark_mode":          {"es": "Modo oscuro",    "en": "Dark mode",     "pt": "Modo escuro"},
+    "sys_interface_note":     {"es": "El tema se aplica al guardar. El idioma toma "
+                                     "efecto al reiniciar la aplicación.",
+                               "en": "The theme is applied on save. The language takes "
+                                     "effect when the application restarts.",
+                               "pt": "O tema é aplicado ao salvar. O idioma tem efeito "
+                                     "ao reiniciar a aplicação."},
     "sys_disk_path":          {"es": "Partición reportada:",
                                "en": "Reported partition:",
                                "pt": "Partição reportada:"},

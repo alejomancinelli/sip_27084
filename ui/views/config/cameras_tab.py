@@ -21,11 +21,13 @@ from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
     add_check_row, add_form_row, add_hint_row, build_combo_box, build_double_spin_box,
     build_group_box, build_line_edit, build_readonly_line_edit, build_spin_box,
-    set_combo_value, wire_enable_toggle,
+    build_value_combo_box, set_combo_data, wire_enable_toggle,
 )
 
-# Texto que ve el operador -> valor de `rotation` en el config. El valor es el que
-# entiende el driver: no se traduce en el camino.
+# Clave de idioma -> valor de `rotation` en el config. El valor es el que entiende el
+# driver y viaja en el item del combo: no se reconstruye desde el texto, que cambia
+# con el idioma. Una rotación que el repo no conoce entra como opción y vuelve al
+# config tal cual; caer a «sin rotación» cambiaría, en silencio, cómo entra la imagen.
 _ROTATIONS = {
     "rotation_none":  None,
     "rotation_90cw":  "90cw",
@@ -110,7 +112,8 @@ class _CameraForm(QWidget):
         self._name_edit = add_form_row(form, tr("field_name"), build_line_edit(""))
         self._brand_combo = add_form_row(
             form, tr("cam_brand"),
-            build_combo_box([entry["label"] for entry in CAMERA_CATALOG.values()], ""),
+            build_value_combo_box(
+                {entry["label"]: key for key, entry in CAMERA_CATALOG.items()}, ""),
         )
         self._model_combo = add_form_row(form, tr("cam_model"), build_combo_box([], ""))
         self._address_edit = add_form_row(
@@ -118,9 +121,10 @@ class _CameraForm(QWidget):
         )
         self._rotation_combo = add_form_row(
             form, tr("cam_rotation"),
-            build_combo_box([tr(key) for key in _ROTATIONS], tr("rotation_none")),
+            build_value_combo_box({tr(key): value for key, value in _ROTATIONS.items()},
+                                  None),
         )
-        self._brand_combo.currentTextChanged.connect(self._on_brand_changed)
+        self._brand_combo.currentIndexChanged.connect(self._on_brand_changed)
         return box
 
     def _build_acquisition_box(self) -> QWidget:
@@ -170,15 +174,14 @@ class _CameraForm(QWidget):
         self._enabled_check.setChecked(bool(self._config.get(f"{self._prefix}.enabled", True)))
         self._name_edit.setText(str(self._config.get(f"{self._prefix}.name", "") or ""))
 
-        brand_label = _get_brand_label(str(self._config.get(f"{self._prefix}.brand", "")))
+        brand_key = str(self._config.get(f"{self._prefix}.brand", "") or "")
         self._brand_combo.blockSignals(True)
-        set_combo_value(self._brand_combo, brand_label)
+        set_combo_data(self._brand_combo, brand_key)
         self._brand_combo.blockSignals(False)
-        self._reload_models(brand_label, str(self._config.get(f"{self._prefix}.model", "")))
+        self._reload_models(brand_key, str(self._config.get(f"{self._prefix}.model", "")))
 
         self._address_edit.setText(str(self._config.get(f"{self._prefix}.address", "") or ""))
-        rotation = self._config.get(f"{self._prefix}.rotation", None)
-        set_combo_value(self._rotation_combo, _get_rotation_label(rotation))
+        set_combo_data(self._rotation_combo, self._config.get(f"{self._prefix}.rotation", None))
 
         acquisition = self._config.get(f"{self._prefix}.acquisition", {}) or {}
         self._fps_spin.setValue(int(acquisition.get("fps_limit", 15)))
@@ -218,7 +221,7 @@ class _CameraForm(QWidget):
             spin.setValue(int(roi.get(key, 0)))
 
     def save(self):
-        brand_key = _get_brand_key(self._brand_combo.currentText())
+        brand_key = self._brand_combo.currentData()
         self._config.set(f"{self._prefix}.enabled", self._enabled_check.isChecked())
         self._config.set(f"{self._prefix}.name", self._name_edit.text())
         self._config.set(f"{self._prefix}.brand", brand_key)
@@ -231,8 +234,7 @@ class _CameraForm(QWidget):
         if driver:
             self._config.set(f"{self._prefix}.driver", driver)
         self._config.set(f"{self._prefix}.address", self._address_edit.text())
-        self._config.set(f"{self._prefix}.rotation",
-                         _get_rotation_value(self._rotation_combo.currentText()))
+        self._config.set(f"{self._prefix}.rotation", self._rotation_combo.currentData())
 
         self._config.set(f"{self._prefix}.acquisition.fps_limit", self._fps_spin.value())
         self._config.set(f"{self._prefix}.acquisition.exposure_time_us",
@@ -246,17 +248,17 @@ class _CameraForm(QWidget):
 
     # ── Internos ─────────────────────────────────────────────────────────────
 
-    def _on_brand_changed(self, brand_label: str):
-        self._reload_models(brand_label, "")
+    def _on_brand_changed(self):
+        self._reload_models(self._brand_combo.currentData(), "")
 
-    def _reload_models(self, brand_label: str, current_model: str):
+    def _reload_models(self, brand_key: str, current_model: str):
         """
         Rearma la lista de modelos del fabricante elegido.
 
         Un driver simulado no tiene dirección de red: el campo se apaga para que no
         quede una IP escrita que no se usa.
         """
-        entry = CAMERA_CATALOG.get(_get_brand_key(brand_label), {})
+        entry = CAMERA_CATALOG.get(brand_key, {})
         models = list(entry.get("models", []))
         # Un modelo que no está en el catálogo se agrega como opción en vez de perderse:
         # ver el porqué en `build_combo_box`.
@@ -269,38 +271,3 @@ class _CameraForm(QWidget):
             self._model_combo.setCurrentText(current_model)
         self._model_combo.blockSignals(False)
         self._address_edit.setEnabled(entry.get("driver") != "mock")
-
-
-def _get_brand_label(brand_key: str) -> str:
-    """Clave de `brand` del config -> texto que muestra el catálogo."""
-    entry = CAMERA_CATALOG.get(brand_key, {})
-    return str(entry.get("label", brand_key))
-
-
-def _get_brand_key(brand_label: str) -> str:
-    """Texto del catálogo -> clave de `brand` del config."""
-    for key, entry in CAMERA_CATALOG.items():
-        if entry.get("label") == brand_label:
-            return key
-    return brand_label
-
-
-def _get_rotation_label(rotation: object) -> str:
-    """
-    Valor de `rotation` -> texto que se muestra.
-
-    Una rotación que el repo no conoce se muestra tal cual y vuelve al config igual:
-    caer a «sin rotación» cambiaría, en silencio, cómo entra la imagen.
-    """
-    for key, value in _ROTATIONS.items():
-        if value == rotation:
-            return tr(key)
-    return "" if rotation is None else str(rotation)
-
-
-def _get_rotation_value(rotation_label: str) -> object:
-    """Texto que se muestra -> valor de `rotation`. Uno desconocido vuelve tal cual."""
-    for key, value in _ROTATIONS.items():
-        if tr(key) == rotation_label:
-            return value
-    return rotation_label or None

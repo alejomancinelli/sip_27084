@@ -19,15 +19,17 @@ from system.config_manager import ConfigManager
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
-    add_check_row, add_form_row, add_hint_row, build_combo_box, build_group_box,
-    build_spin_box, set_combo_value, wire_enable_toggle,
+    add_check_row, add_form_row, add_hint_row, build_group_box, build_spin_box,
+    build_value_combo_box, set_combo_data, wire_enable_toggle,
 )
 
-# Texto que ve el operador -> valor de `image_collector.mode`.
+# Clave de idioma -> valor de `image_collector.mode`. El valor viaja en el item del
+# combo y no en el texto, que cambia con el idioma.
 _MODES = {
     "col_mode_on_demand": "on_demand",
     "col_mode_interval":  "interval",
 }
+_MODE_ON_DEMAND = "on_demand"
 _MODE_INTERVAL = "interval"
 
 _MAX_INTERVAL_S = 86400
@@ -59,7 +61,8 @@ class CollectorTab(AbstractConfigTab):
         self._enabled = add_check_row(form, tr("field_enabled"), False)
         self._mode_combo = add_form_row(
             form, tr("col_mode"),
-            build_combo_box([tr(key) for key in _MODES], tr("col_mode_on_demand")),
+            build_value_combo_box({tr(key): value for key, value in _MODES.items()},
+                                  _MODE_ON_DEMAND),
         )
         add_hint_row(form, tr("col_mode_note"))
         self._interval_min = add_form_row(
@@ -108,14 +111,14 @@ class CollectorTab(AbstractConfigTab):
         # Los intervalos dependen además del modo, y eso se resuelve después del toggle,
         # que es el que los deja habilitados sin mirar el modo.
         self._enabled.toggled.connect(self._refresh_interval_fields)
-        self._mode_combo.currentTextChanged.connect(self._refresh_interval_fields)
+        self._mode_combo.currentIndexChanged.connect(self._refresh_interval_fields)
 
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 
     def load(self):
         self._enabled.setChecked(bool(self._config.get("image_collector.enabled", False)))
-        mode = str(self._config.get("image_collector.mode", "on_demand"))
-        set_combo_value(self._mode_combo, _get_mode_label(mode))
+        set_combo_data(self._mode_combo,
+                       self._config.get("image_collector.mode", _MODE_ON_DEMAND))
         self._interval_min.setValue(int(self._config.get("image_collector.interval_min_s", 60)))
         self._interval_max.setValue(int(self._config.get("image_collector.interval_max_s", 600)))
         self._max_images.setValue(int(self._config.get("image_collector.max_images", 10000)))
@@ -145,7 +148,7 @@ class CollectorTab(AbstractConfigTab):
 
     def save(self):
         self._config.set("image_collector.enabled", self._enabled.isChecked())
-        self._config.set("image_collector.mode", _get_mode_value(self._mode_combo.currentText()))
+        self._config.set("image_collector.mode", self._mode_combo.currentData())
         self._config.set("image_collector.interval_min_s", self._interval_min.value())
         self._config.set("image_collector.interval_max_s", self._interval_max.value())
         self._config.set("image_collector.max_images", self._max_images.value())
@@ -162,22 +165,6 @@ class CollectorTab(AbstractConfigTab):
     def _refresh_interval_fields(self):
         """Los intervalos: sólo con la recolección prendida y el modo por intervalo."""
         is_usable = (self._enabled.isChecked()
-                     and _get_mode_value(self._mode_combo.currentText()) == _MODE_INTERVAL)
+                     and self._mode_combo.currentData() == _MODE_INTERVAL)
         for spin in (self._interval_min, self._interval_max):
             spin.setEnabled(is_usable)
-
-
-def _get_mode_label(mode: str) -> str:
-    """Valor de `mode` -> texto que se muestra. Uno desconocido se muestra tal cual."""
-    for key, value in _MODES.items():
-        if value == mode:
-            return tr(key)
-    return mode
-
-
-def _get_mode_value(mode_label: str) -> str:
-    """Texto que se muestra -> valor de `mode`. Uno desconocido vuelve tal cual."""
-    for key, value in _MODES.items():
-        if tr(key) == mode_label:
-            return value
-    return mode_label
