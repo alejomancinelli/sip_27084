@@ -119,6 +119,10 @@ trae:
 - **`license.lic`** — la licencia es de una máquina y no sirve en otra, así que no se
   versiona ninguna. Desde el código fuente no hace falta: la validación sólo corre en un
   build compilado. Ver `docs/licensing.md`.
+- **`system/inference/models/_model_key.py`** — la clave con la que el build entregado
+  abre sus pesos cifrados. La genera el build y nunca se commitea, igual que la clave
+  privada de la firma. Sin ella los pesos en claro cargan igual, que es el caso de
+  desarrollo. Ver `docs/model_protection.md`.
 
 ## Cómo se arranca un fork
 
@@ -134,7 +138,12 @@ trae:
 3. **El modelo**: implementar `AbstractModel` en un archivo nuevo de `system/inference/models/` y
    registrarlo con una línea en `model_factory.py`. Una clase por tarea —clasificación,
    detección, segmentación—, porque lo que cambia entre ellas es cómo se decodifica la
-   salida. Los pesos afinados no son una clase nueva: son `path` en el config.
+   salida. Los pesos afinados no son una clase nueva: son `path` en el config. Los pesos
+   se leen con `_read_weights()` del contrato, que devuelve **bytes**, y se cargan desde
+   memoria —`torch.load(BytesIO(...))`, `InferenceSession(bytes)`,
+   `deserialize_cuda_engine(bytes)`—: así el mismo modelo anda con los pesos cifrados de
+   la entrega y con los pesos en claro del desarrollo, sin una línea de diferencia. Ver
+   [docs/model_protection.md](docs/model_protection.md).
 4. **`inference.models`** en el config: un slot por modelo, con su `type`, `path`,
    umbral y nombres de clase. El dispositivo no se configura: la implementación usa la
    GPU si hay CUDA y cae a CPU si no.

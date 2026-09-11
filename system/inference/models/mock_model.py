@@ -34,6 +34,10 @@ class MockModel(AbstractModel):
     Dos extras propios en `params` de su sección del config:
         detection_count : cuántas detecciones devuelve por frame
         with_masks      : agrega a cada detección una máscara elíptica del tamaño del bbox
+
+    No necesita pesos, pero si su sección declara `path` los lee igual: es lo que deja
+    ejercitar de punta a punta unos pesos protegidos —y los nombres de clase que viajan
+    adentro— en un equipo sin framework de inferencia.
     """
 
     is_synthetic = True
@@ -41,6 +45,11 @@ class MockModel(AbstractModel):
 
     def load(self):
         if self.is_loaded:
+            return
+        # El mock no interpreta los bytes: los lee para que el camino de los pesos
+        # protegidos —descifrado, metadata, motivo del fallo— se pueda probar sin GPU.
+        path = self._get_model_path()
+        if path and not self._read_weights(path):
             return
         # Pasa por la misma guarda que un modelo real, con la tarea que declara su propio
         # config: un slot configurado como segmentación no puede quedar sirviendo cajas.
