@@ -570,6 +570,23 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "en": "Licence file (*.lic)",
                                "pt": "Arquivo de licença (*.lic)"},
 
+    # Chip persistente en el footer, y cartel al abrir. Los dos usan el mismo criterio que
+    # el bit que va al PLC —`should_report_invalid()`— así que aparecen juntos y dicen lo
+    # mismo: no se agrega un tercer vocabulario de "¿está mal la licencia?" en la UI.
+    "footer_license_alert":      {"es": "SIN LICENCIA", "en": "NO LICENCE", "pt": "SEM LICENÇA"},
+    "lic_startup_warning_title": {"es": "Licencia",     "en": "Licence",    "pt": "Licença"},
+    "lic_startup_warning_body": {
+        "es": "El equipo está funcionando sin una licencia válida:\n\n{reason}\n\n"
+              "Para generar la solicitud o instalar la licencia recibida, ir a "
+              "Diagnóstico → Licencia.",
+        "en": "The equipment is running without a valid licence:\n\n{reason}\n\n"
+              "To generate a request or install the licence you received, go to "
+              "Diagnostics → Licence.",
+        "pt": "O equipamento está funcionando sem uma licença válida:\n\n{reason}\n\n"
+              "Para gerar a solicitação ou instalar a licença recebida, ir a "
+              "Diagnóstico → Licença.",
+    },
+
     # ── Servicios ────────────────────────────────────────────────────────────
     "service_modbus_tcp":     {"es": "Modbus TCP",     "en": "Modbus TCP",    "pt": "Modbus TCP"},
     "service_modbus_rtu":     {"es": "Modbus RTU",     "en": "Modbus RTU",    "pt": "Modbus RTU"},

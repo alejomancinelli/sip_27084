@@ -118,11 +118,6 @@ from ui import service_status
 # `MainWindow` y `CameraGrid` se importan dentro de `_QtUi`: en headless no se construye
 # ninguna ventana y no hace falta cargar el árbol de vistas.
 
-# Código de salida del equipo que no arranca por falta de licencia. Propio y distinto de
-# 1, para que el supervisor del servicio pueda distinguirlo de una caída y no reintente en
-# loop: sin licencia, reintentar no arregla nada.
-_EXIT_NO_LICENSE = 3
-
 _METRICS_INTERVAL_S = 1.0         # cada cuánto se pide una métrica de hardware
 _REGISTERS_INTERVAL_MS = 1000     # cada cuánto se escriben los registros
 _STATUS_INTERVAL_MS = 1000        # cada cuánto se releen los `status` de los subsistemas
@@ -1467,12 +1462,12 @@ def main(argv: list | None = None) -> int:
     # del entorno cuando arrancan, y de qué se cargó tiene que quedar constancia.
     load_env_file()
 
-    # Antes de Qt y de cualquier subsistema: un equipo entregado sin licencia utilizable no
-    # arranca. Acá no se tomó ninguna cámara, no se abrió el puerto Modbus y no se publicó
-    # nada, así que abortar es salir, no desarmar.
+    # Antes de Qt y de cualquier subsistema, para que el veredicto quede en el log pase lo
+    # que pase después. Un equipo sin licencia utilizable YA NO aborta acá: abre igual, en
+    # modo de puesta en marcha —sin pipelines, sin publicar nada—, porque un binario
+    # compilado no tiene detrás un intérprete donde correr la CLI para generar la
+    # solicitud o instalar el archivo que vuelve. La pestaña de licencia es ese lugar.
     license_manager = LicenseManager(config)
-    if license_manager.should_refuse_start():
-        return _refuse_start(license_manager, config)
 
     headless = args.headless or not config.get("ui.enabled", True)
     # `QCoreApplication` en headless: `QApplication` necesita una plataforma gráfica y en
@@ -1496,27 +1491,6 @@ def main(argv: list | None = None) -> int:
 
     exit_code = app.exec()
     return _exit(exit_code, config)
-
-
-def _refuse_start(license_manager: LicenseManager, config: ConfigManager) -> int:
-    """
-    Aborta el arranque de un equipo compilado sin licencia utilizable, con el motivo.
-
-    Sólo se llega acá con `absent` o `invalid`, que son los dos estados en los que no hay
-    política firmada que consultar (ver `REFUSE_START_WITHOUT_LICENSE` en el manager). El
-    log ya sale por consola y por archivo, así que un equipo en gabinete y sin pantalla
-    deja escrito por qué no arrancó, que es lo único que va a poder mirar el que llegue.
-    """
-    logger.error(f"[Licencia] {license_manager.reason}")
-    # La línea que el manager ya logueó nombra una política —el default del build— que acá
-    # no decide nada, y sin esta aclaración se lee como que se contradicen.
-    logger.error("[Licencia] El equipo no arranca sin una licencia válida. La política no "
-                 "aplica en este caso: sin un archivo que verifique no hay política "
-                 "firmada que leer, así que la decisión es del build.")
-    logger.error("[Licencia] Generar la solicitud con `python -m system.license request` "
-                 "y, con el .lic recibido, instalarlo con "
-                 "`python -m system.license install <archivo>`.")
-    return _exit(_EXIT_NO_LICENSE, config)
 
 
 def _interrupt_signals() -> tuple:

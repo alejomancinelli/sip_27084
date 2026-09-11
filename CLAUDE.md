@@ -314,23 +314,32 @@ Lo que no se deduce leyendo un archivo suelto:
   la licencia declara cuántas tienen que seguir coincidiendo, y con eso un disco o una
   placa de red reemplazados no dejan afuera al cliente que pagó. Esa es la falla que
   hunde estos esquemas, y por eso el N-de-M no es un lujo.
-- **Sin archivo de licencia el equipo no arranca, y eso se decide en el build.** La
-  política —avisar, o además dejar de publicar— viaja firmada adentro de la licencia, así
-  que se elige por cliente sin recompilar; pero cuando no hay archivo no hay política que
-  leer, y por eso ese caso lo fija `REFUSE_START_WITHOUT_LICENSE` y vale para todo el
-  build. El corte es de arranque: una licencia que se cae a mitad de un turno no baja la
-  línea, porque ahí ya hay cámaras tomadas y números publicados.
+- **Sin licencia utilizable el equipo abre igual, en modo de puesta en marcha.** `absent`
+  e `invalid` ya no frenan el arranque: son los dos estados que MÁS restringen. Ningún
+  pipeline arranca y ninguna medición sale, sin importar la política por defecto —no hay
+  payload firmado del que leerla, así que la decisión es del build (`NO_LICENSE_STATES`)—;
+  las cámaras siguen capturando y la interfaz completa sigue disponible, empezando por la
+  pestaña de licencia. La razón es práctica: un binario compilado no tiene un intérprete
+  de Python detrás para generar la solicitud o instalar el archivo que vuelve si el
+  programa se negara a abrir. Instalar una licencia no reinicia pipelines ni cámaras
+  solo: eso se decide una vez al abrir, así que hace falta reiniciar la aplicación.
 - **Con la política `degrade` el canal sigue sirviendo y lo que para es la medición.** El
   heartbeat, la salud del equipo y las palabras de estado se publican igual; los registros
   de proceso quedan con su último valor y el bit de licencia dice por qué. Bajar el Modbus
   dejaría al PLC viendo un enlace muerto, indistinguible de un cable cortado, y mandaría
   al integrador a buscar el problema equivocado.
-- **Los entitlements sólo restringen cuando hay una licencia que los declare.** Sin
-  archivo no se sabe qué se compró: el cupo de cámaras y los features no bloquean nada y
-  lo que aplica es la política sobre el estado inválido. Con una licencia que parsea
-  —aunque esté vencida o sea de otra máquina— sus entitlements sí se aplican, porque ahí
-  sí se sabe qué se vendió. Una cámara sobre el cupo no desaparece de la pantalla: se
-  publica su estado con el motivo, porque un hueco manda a revisar un cable que está bien.
+- **El estado inválido se ve en cuatro lados a la vez, con el mismo criterio.** El chip de
+  la pestaña, el bit y el registro que van al PLC, un chip rojo persistente en el footer
+  y un cartel modal al abrir la ventana —una sola vez por corrida, no en cada recheck
+  horario— salen todos de `should_report_invalid()`: ninguno puede decir que está mal
+  mientras otro dice que está bien.
+- **Los entitlements restringen distinto según si hay una licencia real que los declare.**
+  Sin archivo utilizable (`absent`/`invalid`) el corte es total —nada arranca, nada se
+  publica, sin importar la política—: no hay nada que decir qué se compró, así que lo más
+  restrictivo es lo que corresponde. Con una licencia que parsea —aunque esté vencida o
+  sea de otra máquina— sus entitlements se aplican tal como los declara, porque ahí sí se
+  sabe qué se vendió. Una cámara sobre el cupo no desaparece de la pantalla: se publica su
+  estado con el motivo, porque un hueco manda a revisar un cable que está bien.
 - **Un feature por pipeline, y dos propósitos son dos pipelines.** Medir un proceso y
   vigilar una zona no se juntan aunque miren la misma cámara: son dos hilos, sus
   resultados ya se separan por el par `(cámara, pipeline)`, y se venden por separado.
@@ -506,10 +515,11 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
 - **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
-  —cupo de cámaras, features por pipeline, vencimiento, huella, bit al PLC y pestaña de
-  diagnóstico— pero le faltan dos cosas para servir de algo: la **clave pública real** en
-  `system/license/public_key.py`, que hoy tiene una de prueba, y **compilar** (roadmap B3),
-  sin lo cual la validación se saltea borrando un `if`. El diseño completo está en
+  —cupo de cámaras, features por pipeline, vencimiento, huella, modo de puesta en marcha
+  sin licencia, bit y reloj al PLC, pestaña de diagnóstico, chip de footer y cartel de
+  arranque— pero le faltan dos cosas para servir de algo: la **clave pública real** en
+  `system/license/public_key.py`, que hoy está **vacía**, y **compilar** (roadmap B3), sin
+  lo cual la validación se saltea borrando un `if`. El diseño completo está en
   `.claude/plans/licensing.md`.
 - **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
   El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero

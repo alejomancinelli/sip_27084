@@ -20,11 +20,20 @@ proceso, por el motivo que ese módulo ya explica: un servicio arranca en
 `C:\\Windows\\system32`. En un build standalone de Nuitka esa raíz es la carpeta del
 ejecutable, que es donde también queda el `config.yaml`.
 
-**Los entitlements sólo restringen cuando hay una licencia que los declare.** Sin archivo
-no se sabe qué se compró, así que el cupo de cámaras y los features no bloquean nada: lo
-que aplica ahí es la política sobre el estado inválido —avisar, o además dejar de
-publicar—. Con una licencia que parsea, aunque esté vencida o sea de otra máquina, sus
-entitlements sí se aplican: ahí sí se sabe qué se vendió.
+**Sin licencia utilizable, el equipo abre igual, en modo de puesta en marcha.** `absent`
+e `invalid` ya no frenan el arranque: en vez de eso son los dos estados que MÁS
+restringen. Sin nada que diga qué se compró, ningún pipeline arranca
+(`has_feature()` da `False` para cualquier nombre) y ninguna medición sale
+(`is_publishing_allowed()` da `False`), sin importar `policy.DEFAULT_POLICY`. Las cámaras
+siguen capturando —el feed en vivo es lo que permite verificar el cableado durante la
+puesta en marcha— y la interfaz completa sigue disponible, empezando por la pestaña de
+licencia: sin eso, un equipo entregado sin licencia no tendría cómo generar la solicitud
+ni instalar el archivo que vuelve, porque no hay un intérprete de Python a mano en un
+binario compilado.
+
+Con una licencia que sí parsea —vencida, de otra máquina, con el reloj atrasado— hay un
+payload firmado y su `policy` decide qué tan tolerante ser: ahí sí se sabe qué se vendió,
+así que sus entitlements se aplican tal como la licencia los declara.
 
 El orden en que se diagnostica importa y no es alfabético: primero si hay archivo, después
 si la firma cierra, después si es de este equipo, y **el retroceso de reloj antes que el
@@ -55,8 +64,13 @@ STATE_UNLICENSED_BUILD = "unlicensed_build"  # corriendo desde fuentes: no se en
 INVALID_STATES = (STATE_ABSENT, STATE_INVALID, STATE_FOREIGN, STATE_EXPIRED, STATE_TAMPERED)
 
 #: Estados sin licencia utilizable: no hay archivo, o el que hay no se puede verificar.
-#: Son los dos que caen en `policy.DEFAULT_POLICY` y no en la política de la licencia,
-#: porque no hay payload firmado del que sacarla.
+#: No hay payload firmado del que leer una política, así que la decisión no es de la
+#: licencia sino del build, y es la más restrictiva que hay: `has_feature()` niega
+#: cualquier nombre e `is_publishing_allowed()` da `False`, sin mirar
+#: `policy.DEFAULT_POLICY` para nada de esto. Lo que NO restringen es la cámara
+#: (`allowed_camera_slots()` sigue permisivo: el feed en vivo es lo que sirve durante la
+#: puesta en marcha) ni la interfaz, que es donde se instala la licencia que saca al
+#: equipo de este estado.
 NO_LICENSE_STATES = (STATE_ABSENT, STATE_INVALID)
 
 DESCRIPTIONS = {
@@ -71,19 +85,6 @@ DESCRIPTIONS = {
 
 #: Feature que declara un pipeline que no es un addon. Ausente en el config = éste.
 DEFAULT_FEATURE = "core"
-
-# Decisión tomada: un equipo compilado sin licencia utilizable no arranca.
-#
-# **No es una política de `policy.py` y no puede serlo.** La política viaja firmada DENTRO
-# de la licencia, y acá justamente no hay licencia de la que leerla: sin archivo —o con uno
-# cuya firma no cierra, que es igual de inservible— lo único que queda es lo que se decidió
-# al compilar. Por eso ésta sale igual en todos los equipos y no se vende por instalación.
-#
-# `foreign`, `expired` y `tampered` NO entran acá, y es a propósito: en esos tres hay un
-# payload firmado y su `policy` manda, que es donde sí se puede ser estricto con una planta
-# y tolerante con otra. Frenar el arranque por un reloj atrasado además pararía la línea
-# por algo que se dispara solo —una BIOS sin pila, un NTP que todavía no sincronizó—.
-REFUSE_START_WITHOUT_LICENSE = True
 
 # TODO: decisión pendiente — cada cuánto revalida el proceso en caliente. Una hora alcanza
 # para que congelar el reloj y no reiniciar nunca deje de ser una estrategia; bajarlo no
@@ -252,37 +253,43 @@ class LicenseManager:
         """
         True si la licencia habilita ese addon. Un feature por pipeline.
 
-        Espera el nombre ya leído del config con `read_feature()`, que es quien avisa si
-        viene con una forma que no corresponde. Cualquier cosa que no sea uno de los
-        nombres de la licencia devuelve False: ante la duda no se habilita.
+        Corriendo desde fuentes (`unlicensed_build`) es siempre True: no hay nada que
+        enforcear. **Sin licencia utilizable (`absent`/`invalid`) es siempre False**: no
+        hay nada que diga qué se compró, así que ningún pipeline arranca. Antes esos dos
+        estados frenaban el arranque entero; ahora, en vez de abortar el proceso, son los
+        que más restringen dentro de él.
 
-        Sin licencia que parsee no hay lista de features y devuelve True: no se puede
-        bloquear lo que no se sabe qué es. El estado inválido se reporta por su lado.
+        Con una licencia que sí parsea —vencida, de otro equipo, con el reloj atrasado—
+        hay un payload firmado y sus features mandan como siempre. Espera el nombre ya
+        leído del config con `read_feature()`, que es quien avisa si viene con una forma
+        que no corresponde; cualquier cosa que no sea uno de los nombres de la licencia
+        devuelve False, porque ante la duda no se habilita.
         """
-        if not self._enforces_entitlements() or self._license is None:
+        if self._state == STATE_UNLICENSED_BUILD:
+            return True
+        if self._state in NO_LICENSE_STATES:
+            return False
+        if not self._enforces_entitlements():
             return True
         return str(feature or DEFAULT_FEATURE).strip() in self._license.features
 
     def is_publishing_allowed(self) -> bool:
-        """True si las mediciones pueden salir hacia el PLC y hacia la telemetría."""
+        """
+        True si las mediciones pueden salir hacia el PLC y hacia la telemetría.
+
+        Sin licencia utilizable esto es siempre False, sin mirar la política: no hay
+        payload firmado que la declare, así que no hay nada tolerante que consultar. Con
+        una licencia que sí parsea, manda su `policy` como siempre.
+        """
         if self.is_valid:
             return True
+        if self._state in NO_LICENSE_STATES:
+            return False
         return not policy.should_block_publishing(self._policy)
 
     def should_report_invalid(self) -> bool:
         """True si el estado tiene que verse en el bit, el registro y la UI."""
         return self._state in INVALID_STATES and policy.should_report_invalid(self._policy)
-
-    def should_refuse_start(self) -> bool:
-        """
-        True si el arranque tiene que abortar en vez de seguir sin licencia.
-
-        Corriendo desde fuentes nunca da True y no hace falta preguntarlo: `_evaluate()`
-        corta antes en `unlicensed_build`, que no está en `NO_LICENSE_STATES`. Repetir
-        acá la pregunta por `IS_COMPILED` invitaría a que un día las dos digan cosas
-        distintas.
-        """
-        return REFUSE_START_WITHOUT_LICENSE and self._state in NO_LICENSE_STATES
 
     # ── Ciclo de vida ────────────────────────────────────────────────────────
 
@@ -340,7 +347,11 @@ class LicenseManager:
 
         self._evaluate()
         self._log_state()
-        return True, f"Licencia {candidate.license_id} instalada."
+        # Cámaras y pipelines se deciden una sola vez, al construir la aplicación: instalar
+        # una licencia no los reinstancia. Sin este aviso, alguien podría instalar la
+        # licencia correcta y seguir viendo el mismo modo restringido, sin saber por qué.
+        return True, (f"Licencia {candidate.license_id} instalada. Reiniciar la aplicación "
+                      "para que tome el cupo de cámaras y los features habilitados.")
 
     def get_status(self) -> dict:
         """
@@ -362,11 +373,14 @@ class LicenseManager:
             features              tupla de addons habilitados
             is_compiled           si este build enforcea
             uptime_s              segundos de reloj monótono desde el arranque
+            should_report_invalid si el estado tiene que verse en el bit, el registro,
+                                   el chip del footer y el cartel de arranque
         """
         return {
             "state": self._state,
             "policy": self._policy,
             "reason": self._reason,
+            "should_report_invalid": self.should_report_invalid(),
             "license_id": self.license_id,
             "client": self._license.client if self._license else "",
             "project_id": self._license.project_id if self._license else "",
