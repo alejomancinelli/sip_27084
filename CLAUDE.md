@@ -509,7 +509,7 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, siete pestañas de configuración, cinco de diagnóstico— salvo dos
+  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
   huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
   `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
   `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
