@@ -1393,7 +1393,10 @@ def _build_inference_fields(results: list) -> dict:
         uno de los motivos de descarte.
       - **Las métricas del proyecto**, con media, desvío y rango, vía
         `analysis.summarize_metrics()`, que ya devuelve el dict plano que los fields
-        necesitan y agrega `sample_count`.
+        necesitan y agrega `sample_count`. Lo que el ciclo YA resumió viaja tal cual: con
+        `frames_per_cycle` en más de uno acá llega un solo ciclo por tick, así que derivar
+        de nuevo daría desvío 0 y rango nulo sobre una sola muestra, y taparía la
+        dispersión de los N frames, que es la que mide algo.
     """
     valid = [r for r in results if r.is_valid]
     last_invalid = next((r for r in reversed(results) if not r.is_valid), None)
@@ -1423,6 +1426,12 @@ def _build_inference_fields(results: list) -> dict:
         fields.update(_mean_field(f"stage_{model_slot}_ms", samples))
 
     fields.update(analysis.summarize_metrics(results))
+    # Los estadísticos que ya trae el ciclo pisan a los recién derivados: `sample_count`
+    # pasa a ser cuántos frames entraron a la medición —cuántos ciclos entraron al punto ya
+    # lo dice `result_count`— y el desvío, el de esos frames.
+    fields.update({name: value
+                   for name, value in analysis.average_metrics(results).items()
+                   if analysis.is_summary_key(name)})
     return fields
 
 

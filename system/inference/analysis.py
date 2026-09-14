@@ -122,6 +122,12 @@ def summarize_metrics(results: Iterable[InferenceResult], *,
     respuesta correcta —no hay dispersión que reportar—, y `sample_count` deja ver que fue
     una sola.
 
+    **Lo ya agregado no se vuelve a agregar.** Una métrica que entra con un sufijo de esta
+    función —porque el ciclo que la cerró ya la resumió— se saltea. Sin esto la segunda
+    pasada deriva `algo_max_max` y, peor, pisa `algo_max` con el máximo de UNA muestra —el
+    promedio del ciclo—: los nombres limpios pasan a ser los que mienten y el máximo real
+    queda escondido detrás de un sufijo que nadie mira.
+
     Mismo criterio que `average_metrics` para qué entra: sólo valores numéricos, y sólo
     resultados confiables salvo que se pida lo contrario.
     """
@@ -129,6 +135,8 @@ def summarize_metrics(results: Iterable[InferenceResult], *,
     samples = _collect_numeric(selected, valid_only=False)
     summary: dict = {"sample_count": len(selected)}
     for key in sorted(samples):
+        if is_summary_key(key):
+            continue
         values = samples[key]
         summary[f"{key}_mean"] = round(statistics.fmean(values), 2)
         summary[f"{key}_std"] = round(statistics.pstdev(values), 2)
