@@ -117,6 +117,15 @@ class TestSummarizeMetrics:
     def test_without_results_only_the_count(self):
         assert analysis.summarize_metrics([]) == {"sample_count": 0}
 
+    def test_it_does_not_summarize_what_it_already_summarized(self):
+        """El ciclo resume los N frames y después el tick resume los ciclos: sin esto la
+        segunda pasada deriva `load_pct_max_max` y pisa `load_pct_max` con el máximo de una
+        sola muestra, así que el nombre limpio queda siendo el que miente."""
+        cycle = _result({"load_pct": 50.0, "load_pct_std": 10.0, "load_pct_max": 60.0})
+        assert analysis.summarize_metrics([cycle]) == {
+            "sample_count": 1, "load_pct_mean": 50.0, "load_pct_std": 0.0,
+            "load_pct_min": 50.0, "load_pct_max": 50.0}
+
     def test_it_accepts_a_generator(self):
         results = (_result({"load_pct": value}) for value in (40.0, 60.0))
         assert analysis.summarize_metrics(results)["sample_count"] == 2
