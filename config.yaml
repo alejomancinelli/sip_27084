@@ -285,6 +285,29 @@ modbus:
     parity: N                   # N | E | O
     stop_bits: 1
 
+lens_health:
+  # Detección de lente sucio (system/camera/lens_health.py). Mide la nitidez del ROI de
+  # cada cámara —la varianza del Laplaciano, que el polvo sobre el vidrio hace caer— y
+  # prende el bit de lente sucio de la palabra de estado de esa cámara, que es el mismo
+  # que lee el PLC. No agrega registros: el bit ya existe en el mapa.
+  #
+  # LA REFERENCIA DE VIDRIO LIMPIO NO VA ACÁ. Es de cada cámara y vive en
+  # `cameras.<slot>.lens_health.reference`, porque depende del lente, de la exposición y
+  # de lo que esa cámara tenga enfrente: un número compartido entre dos montajes no
+  # compara nada. Acá van sólo los parámetros del método, que sí son iguales para todas.
+  enabled: true
+  interval_s: 10              # cada cuánto se mide cada cámara; medir cuesta milisegundos
+  window_s: 28800             # 8 h
+  # La nitidez es el MÁXIMO de la ventana, no un promedio: lo que pase por delante sólo
+  # puede bajar la varianza, nunca subirla por encima de lo que la óptica permite. Por eso
+  # la ventana es larga — con una corta, un rato de cinta vacía se confunde con un vidrio
+  # sucio— y por eso la alarma recién se afirma cuando pasó entera.
+  threshold_pct: 50           # nitidez mínima, en % de la referencia calibrada de esa cámara
+  analysis_width_px: 960      # ancho al que se reduce el recorte antes de medir
+  calibration_samples: 30     # muestras que junta la calibración antes de fijar la referencia
+  # `analysis_width_px` cambia la escala de la varianza: tocarlo invalida las referencias
+  # ya calibradas y obliga a calibrar de nuevo cada cámara.
+
 cameras:
   # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
   # slot: es la identidad con la que la cámara aparece en el resto del sistema.
@@ -307,6 +330,23 @@ cameras:
       width_px: 0
       height_px: 0
     illumination_min: 50        # brillo medio mínimo del ROI 0–100
+    lens_health:
+      # Referencia de vidrio limpio de ESTA cámara, contra la que se compara la nitidez
+      # medida. La escribe la calibración desde la pantalla; a mano se toca sólo para
+      # copiar la de un equipo gemelo. `variance: 0` = sin calibrar, y esa cámara queda
+      # declarada como «no disponible» en vez de reportar un vidrio limpio que nadie midió.
+      #
+      # Se calibra con el lente recién limpiado y la cámara ya apuntada: lo que se está
+      # guardando es el techo de nitidez de ese montaje. `conditions` deja constancia de
+      # con qué exposición, ganancia, rotación y ROI se midió — si después cambian, la
+      # pantalla avisa que el número puede haberse movido sin que el vidrio se ensucie.
+      reference:
+        variance: 0.0         # varianza del Laplaciano con el lente limpio
+        luma: 0.0             # nivel de gris medio de esa calibración, 0–255
+        dispersion_pct: 0.0   # cuánto se parecían entre sí las muestras; alto = recalibrar
+        sample_count: 0
+        calibrated_at: ''     # fecha local de la calibración, ISO-8601
+        conditions: {}
     calibration:
       # Intrínsecos del lente, para corregir la distorsión (tools/image/undistort.py). Son
       # del lente y del montaje, no del proceso. Con esto declarado, main.py le pasa al

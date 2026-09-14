@@ -285,6 +285,16 @@ Lo que no se deduce leyendo un archivo suelto:
   `.pt` y un `.engine` entran por el mismo `type` del config, y cuando el runtime informa
   qué exportó, `load()` lo confronta y un desacuerdo deja el modelo en error antes del
   primer frame. Olfatear el archivo daría números creíbles con el postproceso equivocado.
+- **El lente sucio se detecta por cámara y no agrega un solo registro.** La nitidez es un
+  techo y no un promedio —lo que pase por delante sólo puede bajarla—, así que el
+  veredicto es el máximo de una ventana de horas contra una referencia calibrada, y la
+  alarma recién se afirma cuando la ventana pasó entera. Esa referencia va en
+  `cameras.<slot>.lens_health.reference` porque depende del lente y del montaje:
+  compartirla entre cámaras no da un error, da un equipo que nunca avisa. Sale al PLC por
+  el bit 6 de la palabra de estado de esa cámara, que ya existía en el mapa; el índice de
+  nitidez es una tendencia y va por telemetría, donde sirve para ver el vidrio ensuciarse
+  semanas antes de que el bit se prenda. Sin calibrar, el estado es «no disponible» y
+  nunca alarma: un vidrio limpio que nadie midió no se afirma.
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
@@ -508,6 +518,10 @@ La tabla completa, archivo por archivo, está en `README.md`.
   los annotators—. Lo que sigue faltando es el contenido: qué se mide y qué se publica.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
+- De la salud de la óptica no falta nada: el módulo, el cableado, la sección
+  `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
+  están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
+  que es lo que llena `cameras.<slot>.lens_health.reference`—.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
   andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
   huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
