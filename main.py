@@ -77,6 +77,7 @@ import signal
 import statistics
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -87,6 +88,8 @@ from PySide6.QtWidgets import QApplication, QWidget
 from system import paths
 from system.camera.capture_scheduler import CaptureScheduler
 from system.camera.capture_thread import CaptureThread
+from system.camera import lens_health
+from system.camera.lens_health import LensHealthMonitor
 from system.config_manager import ConfigManager
 from system.env import load_env_file
 from system.formats import camera_health, com_status, system_status
@@ -125,6 +128,8 @@ _THREAD_STOP_TIMEOUT_MS = 5000    # espera a cada QThread al cerrar
 _SERVER_STOP_TIMEOUT_S = 5.0      # espera al hilo del servidor Modbus al cerrar
 
 _HEARTBEAT_MAX = 65535            # el registro es uint16: el contador da la vuelta ahí
+_LENS_DEFAULT_INTERVAL_S = 10.0   # cada cuánto se mide la nitidez, si el config no lo dice
+_LENS_MIN_INTERVAL_S = 1.0        # medir más seguido que esto no llena antes una ventana de horas
 _SIGNAL_POLL_INTERVAL_MS = 200     # timer al vacío para que Qt atienda Ctrl+C y SIGTERM
 
 # Status de una cámara declarada que la licencia deja afuera. Las claves son las estables
@@ -299,6 +304,13 @@ class _HeadlessUi:
                                  install_slot: Callable[[str], None]):
         """En headless nadie aprieta un botón: el mismo flujo va por `python -m system.license`."""
 
+    def connect_lens_calibration(self, calibrate_slot: Callable[[str], None]):
+        """Sin pantalla no hay quién limpie el vidrio y apriete calibrar: se hereda la
+        referencia que ya tenga el config."""
+
+    def refresh_lens_reference(self, camera_slot: str):
+        pass
+
 
 class _QtUi:
     """
@@ -370,6 +382,12 @@ class _QtUi:
                                  install_slot: Callable[[str], None]):
         self._window.license_export_requested.connect(export_slot)
         self._window.license_install_requested.connect(install_slot)
+
+    def connect_lens_calibration(self, calibrate_slot: Callable[[str], None]):
+        self._window.lens_calibration_requested.connect(calibrate_slot)
+
+    def refresh_lens_reference(self, camera_slot: str):
+        self._window.refresh_lens_reference(camera_slot)
 
 
 def create_ui(config: ConfigManager, *, headless: bool):
@@ -550,6 +568,26 @@ class Application(QObject):
             self._forward_status_to_content(thread)
             self._capture_threads[camera_slot] = thread
 
+        # ── Salud de la óptica ───────────────────────────────────────────────
+        # Una ventana y una referencia por cámara: el veredicto es un máximo, así que
+        # compartirlas dejaría que un solo vidrio limpio tape a todos los demás.
+        self._lens_monitor = LensHealthMonitor(
+            window_s=float(config.get("lens_health.window_s", 28800) or 28800),
+            threshold_pct=float(config.get("lens_health.threshold_pct", 50) or 50),
+            analysis_width_px=int(config.get("lens_health.analysis_width_px", 960) or 960),
+        )
+        for camera_slot in declared_cameras:
+            self._lens_monitor.set_reference(
+                camera_slot,
+                config.get(f"cameras.{camera_slot}.lens_health.reference.variance", 0.0),
+            )
+        # Último frame crudo de cada cámara, para medirlo en el tick. Es la referencia al
+        # array, no una copia: medir por frame costaría milisegundos por cámara y la
+        # ventana es de horas, así que alcanza con el último que haya cuando toque.
+        self._last_raw_frame: dict[str, np.ndarray] = {}
+        # Cámaras calibrando ahora: slot -> (varianzas, lumas). Vacío casi siempre.
+        self._lens_calibrations: dict[str, tuple[list, list]] = {}
+
         # ── Hardware y timers ────────────────────────────────────────────────
         self._monitor = SystemMonitor(config)
         self._metrics_poller = _MetricsPoller(self._monitor, _METRICS_INTERVAL_S)
@@ -561,12 +599,14 @@ class Application(QObject):
             self._start_timer(_STATUS_INTERVAL_MS, self._on_status_tick),
             self._start_timer(_SAMPLE_INTERVAL_MS, self._on_telemetry_tick),
             self._start_timer(RECHECK_INTERVAL_MS, self._on_license_tick),
+            self._start_timer(self._read_lens_interval_ms(), self._on_lens_tick),
         ]
         self._warn_if_telemetry_margin_is_thin()
 
         self._ui.connect_config_saved(self._on_config_saved)
         self._ui.connect_license_requests(self._on_license_export_requested,
                                           self._on_license_install_requested)
+        self._ui.connect_lens_calibration(self._on_lens_calibration_requested)
         self._ui.update_license(self._license.get_status())
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
@@ -730,6 +770,10 @@ class Application(QObject):
         self._rtsp_video.push_raw(camera_slot, display_bgr)
         if frame_bgr is None or frame_bgr.size == 0:
             return
+        # Para el tick de la óptica, que mide cada varios segundos y no por frame. Se
+        # guarda el crudo: la nitidez se mide sobre lo que entrega el sensor, no sobre la
+        # imagen con gamma, que le cambiaría el contraste y con él la varianza.
+        self._last_raw_frame[camera_slot] = frame_bgr
         for engine in self._engines:
             # El ciclo decide si este frame entra: con `frames_per_cycle: 1` siempre
             # que sí, y el ritmo lo sigue poniendo el `interval_s` del motor. El permiso
@@ -957,6 +1001,99 @@ class Application(QObject):
             service_status.SERVICE_VIDEO_RTSP, self._rtsp_video.get_stream_urls()
         )
 
+    # ── Salud de la óptica ───────────────────────────────────────────────────
+
+    def _read_lens_interval_ms(self) -> int:
+        """Cada cuánto se mide la nitidez. Se fija al arrancar, como el resto de timers."""
+        interval_s = float(self._config.get("lens_health.interval_s",
+                                            _LENS_DEFAULT_INTERVAL_S)
+                           or _LENS_DEFAULT_INTERVAL_S)
+        return int(max(_LENS_MIN_INTERVAL_S, interval_s) * 1000)
+
+    def _on_lens_tick(self):
+        """
+        Mide la nitidez del último frame de cada cámara y sostiene la ventana de todas.
+
+        Se mide acá y no en `_on_frame_ready` porque la ventana es de horas: una pasada del
+        Laplaciano por cámara cada varios segundos la llena de sobra, y hacerlo por frame
+        le comería milisegundos a la captura sin agregar información.
+
+        Con la detección apagada las ventanas igual envejecen, así que al prenderla de
+        nuevo nadie hereda un veredicto viejo de cuando nadie estaba mirando.
+        """
+        now_s = time.monotonic()
+        if not self._config.get("lens_health.enabled", True):
+            self._lens_monitor.discard_expired(now_s)
+            return
+
+        for camera_slot in (self._config.get("cameras", {}) or {}):
+            roi = self._config.get(f"cameras.{camera_slot}.roi", {}) or {}
+            try:
+                # Con la cámara caída el frame es None: el monitor envejece la ventana
+                # igual y esa cámara pasa a «no disponible» sola.
+                measurement = self._lens_monitor.update(
+                    camera_slot, self._last_raw_frame.get(camera_slot), roi, now_s=now_s)
+            except Exception as error:
+                # Nunca tumbar el tick por una medición. Sin muestras la ventana se vacía
+                # y el estado pasa a «no disponible», que es lo que corresponde.
+                logger.error(f"[Main] No se pudo medir la nitidez de {camera_slot}: {error}")
+                continue
+            if measurement is not None and camera_slot in self._lens_calibrations:
+                self._collect_lens_calibration(camera_slot, measurement)
+
+    def _is_lens_dirty(self, camera_slot: str) -> bool:
+        """True sólo con el veredicto de alarma: «no disponible» no es un vidrio sucio."""
+        return self._lens_monitor.get_state(
+            camera_slot, now_s=time.monotonic()) == lens_health.STATE_ALARM
+
+    @Slot(str)
+    def _on_lens_calibration_requested(self, camera_slot: str):
+        """
+        Arranca la calibración de esa cámara: junta N muestras y fija su referencia.
+
+        Se calibra con el lente recién limpiado, porque lo que se está guardando es el
+        techo de nitidez de ese montaje. Cada cámara se calibra por su cuenta y las que ya
+        lo estaban siguen vigiladas mientras tanto.
+        """
+        sample_count = int(self._config.get("lens_health.calibration_samples", 30) or 30)
+        self._lens_calibrations[camera_slot] = ([], [])
+        logger.info(f"[Main] Calibrando la óptica de {camera_slot}: "
+                    f"{sample_count} muestras, una cada "
+                    f"{self._read_lens_interval_ms() / 1000:.0f} s.")
+
+    def _collect_lens_calibration(self, camera_slot: str, measurement):
+        """Suma una muestra y, al llegar al total, escribe la referencia en el config."""
+        variances, lumas = self._lens_calibrations[camera_slot]
+        variances.append(measurement.variance)
+        lumas.append(measurement.luma)
+        target_count = int(self._config.get("lens_health.calibration_samples", 30) or 30)
+        if len(variances) < target_count:
+            return
+
+        del self._lens_calibrations[camera_slot]
+        reference = lens_health.summarize_calibration(variances, lumas)
+        if reference is None:
+            return
+        reference["calibrated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        # Con qué exposición, ganancia, rotación y ROI se midió. No invalida nada: si
+        # después cambian, la pantalla avisa que el número puede haberse movido.
+        reference["conditions"] = lens_health.get_current_conditions(
+            self._config.get(f"cameras.{camera_slot}.acquisition", {}) or {},
+            self._config.get(f"cameras.{camera_slot}.rotation", None),
+            self._config.get(f"cameras.{camera_slot}.roi", {}) or {},
+        )
+        prefix = f"cameras.{camera_slot}.lens_health.reference"
+        for key, value in reference.items():
+            self._config.set(f"{prefix}.{key}", value)
+        self._config.save()
+        self._lens_monitor.set_reference(camera_slot, reference["variance"])
+        self._ui.refresh_lens_reference(camera_slot)
+        logger.info(
+            f"[Main] Óptica de {camera_slot} calibrada: varianza={reference['variance']:.1f} "
+            f"luma={reference['luma']:.1f} dispersión={reference['dispersion_pct']:.1f} % "
+            f"({reference['sample_count']} muestras)."
+        )
+
     def _on_telemetry_tick(self):
         """
         Publica las series de salud: hardware, estado por cámara y canales de salida.
@@ -973,10 +1110,12 @@ class Application(QObject):
                 tags=self._telemetry_tags,
             )
 
+        now_s = time.monotonic()
         for camera_slot in (self._config.get("cameras", {}) or {}):
             status = self._camera_status.get(camera_slot)
             if status is None:
                 continue
+            lens = self._lens_monitor.get_status(camera_slot, now_s=now_s)
             self._telemetry.push_data(
                 _MEASUREMENT_CAMERA,
                 {
@@ -986,6 +1125,10 @@ class Application(QObject):
                     "fps_estimated": float(status.get("fps_estimated", 0.0)),
                     "temperature_c": float(status.get("temperature", 0.0)),
                     "illumination_pct": int(self._camera_illumination.get(camera_slot, 0)),
+                    # La nitidez como tendencia: es lo que deja ver en el dashboard que el
+                    # vidrio se va ensuciando semanas antes de que el bit se prenda.
+                    "lens_state": int(lens["state"]),
+                    "lens_sharpness_pct": int(lens["sharpness_max_pct"]),
                 },
                 tags={**self._telemetry_tags, "camera": camera_slot},
             )
@@ -1073,6 +1216,16 @@ class Application(QObject):
         # por cada prueba los volvería inusables. Es la excepción que se puede hacer sin
         # riesgo: no tocan la medición, sólo cómo se ve.
         self._display_adjust = self._read_display_adjust()
+        # La referencia de cada óptica también: es el número que la pantalla deja editar a
+        # mano para copiar el de un equipo gemelo, y esperar un reinicio para que tome
+        # efecto haría parecer que no se guardó. El umbral y la ventana sí esperan, como
+        # el resto de lo que se fija al arrancar.
+        for camera_slot in (self._config.get("cameras", {}) or {}):
+            self._lens_monitor.set_reference(
+                camera_slot,
+                self._config.get(f"cameras.{camera_slot}.lens_health.reference.variance",
+                                 0.0),
+            )
 
     # ── Licencia ─────────────────────────────────────────────────────────────
 
@@ -1215,6 +1368,9 @@ class Application(QObject):
                     fps_estimated=float(status.get("fps_estimated", 0.0)),
                     capture_enabled=bool(status.get("capture_enabled", True)),
                     is_synthetic=self._is_synthetic(camera_slot),
+                    # El bit 6 es independiente de la adquisición: el vidrio puede estar
+                    # sucio con la cámara sana. No hace falta ningún registro nuevo.
+                    dirty_lens=self._is_lens_dirty(camera_slot),
                 )
                 candidates[f"{camera_slot}_temperature_c"] = status.get("temperature", 0.0)
                 candidates[f"{camera_slot}_fps"] = status.get("fps_estimated", 0.0)

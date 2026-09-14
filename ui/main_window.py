@@ -83,6 +83,9 @@ class MainWindow(QMainWindow):
     config_saved = Signal()      # se persistió el config.yaml; reenvía el del ConfigView
     # Rutas que el operador eligió en la pestaña de licencia; las reenvía la vista de
     # diagnóstico. Quien abre los archivos es el cableado, no la ventana.
+    # Slot de la cámara cuya óptica hay que calibrar. Lo atiende `main.py`, que es
+    # quien tiene los frames: la UI no mide.
+    lens_calibration_requested = Signal(str)
     license_export_requested = Signal(str)
     license_install_requested = Signal(str)
 
@@ -435,6 +438,8 @@ class MainWindow(QMainWindow):
         self._config_view = ConfigView(self._config)
         self._config_view.config_saved.connect(self._on_config_saved)
         self._config_view.open_roi_requested.connect(self._on_open_roi_requested)
+        self._config_view.calibrate_lens_requested.connect(
+            self._on_calibrate_lens_requested)
 
         placeholder = self._stack.widget(VIEW_CONFIG)
         self._stack.removeWidget(placeholder)
@@ -485,6 +490,30 @@ class MainWindow(QMainWindow):
             panel.frame_updated.disconnect(dialog.update_frame)
         if self._config_view is not None:
             self._config_view.refresh_roi_fields(camera_slot)
+
+    def _on_calibrate_lens_requested(self, camera_slot: str):
+        """
+        Avisa que la calibración arrancó y deja que `main.py` junte las muestras.
+
+        El cartel dice cuánto va a tardar porque son varios minutos —N muestras, una
+        por intervalo— y sin eso el botón parece no haber hecho nada.
+        """
+        samples = int(self._config.get("lens_health.calibration_samples", 30) or 30)
+        interval_s = int(self._config.get("lens_health.interval_s", 10) or 10)
+        self.lens_calibration_requested.emit(camera_slot)
+        QMessageBox.information(
+            self, tr("lens_calibrate_started"),
+            tr("lens_calibrate_body").format(
+                samples=samples,
+                camera=str(self._config.get(f"cameras.{camera_slot}.name", "")
+                           or camera_slot),
+                interval=interval_s),
+        )
+
+    def refresh_lens_reference(self, camera_slot: str):
+        """La calibración terminó y escribió el config: que la pantalla lo muestre."""
+        if self._config_view is not None:
+            self._config_view.refresh_lens_reference(camera_slot)
 
     def _on_gpio_clicked(self):
         if self._gpio_controller is None:

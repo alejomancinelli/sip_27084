@@ -22,6 +22,7 @@ from ui.strings import tr
 from ui.views.config.cameras_tab import CamerasTab
 from ui.views.config.collector_tab import CollectorTab
 from ui.views.config.inference_tab import InferenceTab
+from ui.views.config.lens_health_tab import LensHealthTab
 from ui.views.config.modbus_tab import ModbusTab
 from ui.views.config.process_tab import ProcessTab
 from ui.views.config.system_tab import SystemTab
@@ -33,6 +34,7 @@ from ui.widgets.form import wrap_in_card
 # una sección al config.
 _TAB_CLASSES = (
     CamerasTab,
+    LensHealthTab,
     VideoTab,
     InferenceTab,
     ProcessTab,      # vacía en el template: la llena cada fork
@@ -48,6 +50,7 @@ class ConfigView(QWidget):
 
     config_saved = Signal()               # el config.yaml se persistió sin errores
     open_roi_requested = Signal(str)      # slot de la cámara cuyo ROI hay que dibujar
+    calibrate_lens_requested = Signal(str)  # slot de la cámara cuya óptica hay que calibrar
 
     def __init__(self, config_manager: ConfigManager, parent=None):
         super().__init__(parent)
@@ -77,6 +80,9 @@ class ConfigView(QWidget):
         cameras_tab = self._get_cameras_tab()
         if cameras_tab is not None:
             cameras_tab.open_roi_requested.connect(self.open_roi_requested)
+        lens_tab = self._get_lens_health_tab()
+        if lens_tab is not None:
+            lens_tab.calibrate_requested.connect(self.calibrate_lens_requested)
 
         layout.addLayout(self._build_button_row())
         # Cargar acá y no dejarlo librado a cada pestaña: una que se olvide de hacerlo en
@@ -114,8 +120,6 @@ class ConfigView(QWidget):
         if cameras_tab is not None:
             cameras_tab.refresh_roi_fields(camera_slot)
 
-    # ── Internos ─────────────────────────────────────────────────────────────
-
     def _build_button_row(self) -> QHBoxLayout:
         discard_button = QPushButton(tr("config_discard"))
         discard_button.setObjectName("discardButton")
@@ -130,6 +134,20 @@ class ConfigView(QWidget):
         row.addWidget(discard_button)
         row.addWidget(save_button)
         return row
+
+    def refresh_lens_reference(self, camera_slot: str):
+        """Recarga la referencia de una cámara cuando la calibración terminó de escribirla."""
+        lens_tab = self._get_lens_health_tab()
+        if lens_tab is not None:
+            lens_tab.refresh_reference(camera_slot)
+
+    # ── Internos ─────────────────────────────────────────────────────────────
+
+    def _get_lens_health_tab(self) -> LensHealthTab | None:
+        for tab in self._tabs:
+            if isinstance(tab, LensHealthTab):
+                return tab
+        return None
 
     def _get_cameras_tab(self) -> CamerasTab | None:
         for tab in self._tabs:

@@ -41,6 +41,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+        lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
@@ -176,6 +177,11 @@ Son punteros: el contrato vive en el archivo, no acá.
   El mapa concreto es `system/modbus/register_map.yaml`.
 - **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
   documenta qué significa cada bit. Nadie corre bits afuera.
+- **Salud de la óptica** — `system/camera/lens_health.py`: el vocabulario `STATE_*`, qué
+  necesita calibrarse y cuándo la ventana habilita a afirmar que el vidrio está sucio. La
+  puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
+  las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
+  cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -279,6 +285,16 @@ Lo que no se deduce leyendo un archivo suelto:
   `.pt` y un `.engine` entran por el mismo `type` del config, y cuando el runtime informa
   qué exportó, `load()` lo confronta y un desacuerdo deja el modelo en error antes del
   primer frame. Olfatear el archivo daría números creíbles con el postproceso equivocado.
+- **El lente sucio se detecta por cámara y no agrega un solo registro.** La nitidez es un
+  techo y no un promedio —lo que pase por delante sólo puede bajarla—, así que el
+  veredicto es el máximo de una ventana de horas contra una referencia calibrada, y la
+  alarma recién se afirma cuando la ventana pasó entera. Esa referencia va en
+  `cameras.<slot>.lens_health.reference` porque depende del lente y del montaje:
+  compartirla entre cámaras no da un error, da un equipo que nunca avisa. Sale al PLC por
+  el bit 6 de la palabra de estado de esa cámara, que ya existía en el mapa; el índice de
+  nitidez es una tendencia y va por telemetría, donde sirve para ver el vidrio ensuciarse
+  semanas antes de que el bit se prenda. Sin calibrar, el estado es «no disponible» y
+  nunca alarma: un vidrio limpio que nadie midió no se afirma.
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
@@ -502,8 +518,12 @@ La tabla completa, archivo por archivo, está en `README.md`.
   los annotators—. Lo que sigue faltando es el contenido: qué se mide y qué se publica.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
+- De la salud de la óptica no falta nada: el módulo, el cableado, la sección
+  `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
+  están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
+  que es lo que llena `cameras.<slot>.lens_health.reference`—.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, siete pestañas de configuración, cinco de diagnóstico— salvo dos
+  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
   huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
   `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
   `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
