@@ -41,6 +41,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+        lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
@@ -176,6 +177,11 @@ Son punteros: el contrato vive en el archivo, no acá.
   El mapa concreto es `system/modbus/register_map.yaml`.
 - **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
   documenta qué significa cada bit. Nadie corre bits afuera.
+- **Salud de la óptica** — `system/camera/lens_health.py`: el vocabulario `STATE_*`, qué
+  necesita calibrarse y cuándo la ventana habilita a afirmar que el vidrio está sucio. La
+  puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
+  las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
+  cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
