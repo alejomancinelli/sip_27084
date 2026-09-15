@@ -30,7 +30,8 @@ Los campos, y quién los mira:
     issued_at       cuándo se emitió
     expires_at      instante de vencimiento; `null` = perpetua
     policy          qué hace el programa si la licencia no vale (ver `policy.py`)
-    fingerprint     `components` con un hash por fuente y `min_matches`, el N-de-M
+    fingerprint     `components` con un hash por fuente y `min_matches`, el N-de-M; las
+                    dos cosas con un piso, ver `FINGERPRINT_MIN_FLOOR`
     entitlements    `max_cameras`, `features` y `model_hashes`
 
 **`client` y `project_id` no son un control de seguridad.** El que ata el equipo es el
@@ -53,6 +54,14 @@ from system.license import policy
 
 #: Versión del formato. Se sube cuando cambia el significado de un campo existente.
 SCHEMA_VERSION = 1
+
+#: Piso de la huella: cuántas fuentes tiene que declarar una licencia y cuántas puede
+#: exigir como mínimo. Por debajo de esto la licencia vale en máquinas que no son la que
+#: se licenció —con la huella vacía, en todas—, que es la falla que hunde el esquema
+#: entero. El repositorio de firma se niega a emitirla y acá se niega a parsearla: que
+#: los dos lados lo frenen es a propósito, porque un solo lado es el que se puede
+#: reemplazar. El número es parte del formato y tiene que decir lo mismo en los dos repos.
+FINGERPRINT_MIN_FLOOR = 2
 
 _TOKEN_SEPARATOR = "."
 _B64URL_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
@@ -145,6 +154,12 @@ def parse_payload(payload_bytes: bytes) -> License:
         raise LicenseFormatError(
             f"La licencia exige {min_matches} coincidencias de huella pero declara "
             f"{len(components)} componentes: no puede validar en ninguna máquina."
+        )
+    if len(components) < FINGERPRINT_MIN_FLOOR or min_matches < FINGERPRINT_MIN_FLOOR:
+        raise LicenseFormatError(
+            f"La licencia declara {len(components)} fuentes de huella y exige "
+            f"{min_matches} coincidencias; el mínimo es {FINGERPRINT_MIN_FLOOR} de cada "
+            f"uno. Una licencia por debajo de ese piso no está atada a este equipo."
         )
 
     max_cameras = entitlements.get("max_cameras")

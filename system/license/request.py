@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from system import paths, version
 from system.config_manager import ConfigManager
-from system.license import fingerprint, manager
+from system.license import fingerprint, manager, schema
 
 #: Nombre con el que se guarda si no se pide otro.
 REQUEST_FILENAME = "license_request.json"
@@ -30,9 +30,28 @@ REQUEST_FILENAME = "license_request.json"
 REQUEST_SCHEMA_VERSION = 1
 
 
+class WeakFingerprintError(Exception):
+    """Este equipo no expone fuentes de huella suficientes para que le emitan una licencia."""
+
+
 def build_request(config: ConfigManager) -> dict:
-    """Arma el contenido de la solicitud para este equipo."""
+    """
+    Arma el contenido de la solicitud para este equipo.
+
+    Levanta `WeakFingerprintError` si el equipo no llega al piso de huella: el que firma
+    se va a negar a emitir de todos modos, y enterarse acá es enterarse con el equipo
+    delante, no por mail tres días después. Lo que hay que resolver está del lado del
+    hardware —una fuente que pide root, un DMI de relleno— y sale en el motivo.
+    """
     components = fingerprint.read_components()
+    if len(components) < schema.FINGERPRINT_MIN_FLOOR:
+        raise WeakFingerprintError(
+            f"Este equipo expone {_count_sources(len(components))} de huella y hacen falta "
+            f"al menos {schema.FINGERPRINT_MIN_FLOOR}: una licencia atada a una sola fuente "
+            f"valdría en cualquier equipo al que se le mueva esa pieza, así que no se "
+            f"emite. Leídas: {', '.join(sorted(components)) or 'ninguna'}."
+        )
+
     pipelines = config.get("inference.pipelines", {}) or {}
     cameras = config.get("cameras", {}) or {}
 
@@ -67,16 +86,25 @@ def save_request(config: ConfigManager, output_path: str | None = None) -> str:
     Escribe la solicitud y devuelve la ruta donde quedó.
 
     Sin ruta la deja en la raíz del repo, que es donde el operador ya sabe buscar el
-    `config.yaml`. Levanta `OSError` si no se pudo escribir: acá el llamador sí quiere
-    enterarse, porque el usuario está esperando un archivo.
+    `config.yaml`. Levanta `OSError` si no se pudo escribir y `WeakFingerprintError` si el
+    equipo no se puede licenciar: acá el llamador sí quiere enterarse de las dos, porque
+    el usuario está esperando un archivo.
     """
+    # El contenido se arma antes de abrir el archivo: si el equipo no se puede licenciar,
+    # no queda una solicitud vacía en la raíz con la que alguien se vaya a confundir.
+    content = build_request(config)
+
     path = output_path or os.path.join(paths.PROJECT_ROOT, REQUEST_FILENAME)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(build_request(config), handle, indent=2, ensure_ascii=False, sort_keys=True)
+        json.dump(content, handle, indent=2, ensure_ascii=False, sort_keys=True)
         handle.write("\n")
     return path
+
+
+def _count_sources(count: int) -> str:
+    return f"{count} fuente" if count == 1 else f"{count} fuentes"
 
 
 def _read_hostname() -> str:

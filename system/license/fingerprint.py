@@ -1,7 +1,8 @@
 """
 Huella de la máquina: un hash por componente de hardware.
 
-Módulo de infraestructura: sólo importa el logger. Sin Qt, sin ConfigManager, sin red.
+Módulo de infraestructura: el logger y el piso de huella que declara `schema`, que es del
+formato y no se copia acá. Sin Qt, sin ConfigManager, sin red.
 
 **Devuelve un hash por fuente y no uno solo de todo junto**, y esa decisión manda en el
 resto del archivo. Un hash único no sobrevive a un disco reemplazado en garantía:
@@ -46,6 +47,7 @@ import re
 import subprocess
 import sys
 
+from system.license import schema
 from system.logger import logger
 
 SOURCE_BOARD_UUID = "board_uuid"
@@ -61,10 +63,10 @@ MAC_SOURCE_PREFIX = "mac_"
 # cuando se emite una licencia; las MAC y el disco entran como refuerzo.
 STABLE_SOURCES = (SOURCE_BOARD_UUID, SOURCE_BOARD_SERIAL, SOURCE_MODULE_SERIAL)
 
-# TODO: decisión pendiente — cuántas fuentes tienen que seguir coincidiendo para aceptar
-# la licencia. Se define con la huella real de una Jetson y de un equipo de planta a la
-# vista; hasta entonces, dos de las que haya.
-DEFAULT_MIN_MATCHES = 2
+# Cuántas coincidencias sugiere la solicitud que se le exijan a la licencia. Es el piso
+# del formato y no un número aparte: pedir menos no lo emitiría el firmante, y pedir más
+# dejaría afuera al equipo al que le cambian una pieza, que es lo que el N-de-M evita.
+DEFAULT_MIN_MATCHES = schema.FINGERPRINT_MIN_FLOOR
 
 _MIN_VALUE_LENGTH = 4             # menos que esto no identifica nada
 _WINDOWS_PROBE_TIMEOUT_S = 20.0   # WMI en frío tarda varios segundos la primera vez
@@ -170,11 +172,18 @@ def is_match(components: dict[str, str], expected: dict[str, str], min_matches: 
     """
     True si la huella de la licencia corresponde a este equipo.
 
-    Una licencia sin componentes y con `min_matches` en 0 no está atada a ninguna máquina
-    y da True en todas: es un caso deliberado —una demo— y se ve como tal en el estado.
+    **Una licencia sin componentes, o que no exige ninguna coincidencia, no corresponde a
+    ningún equipo**: da False, no True. Que una huella vacía coincidiera con todo era lo
+    que hacía que una sola licencia forjada corriera en cualquier máquina, que es
+    exactamente lo que la huella existe para impedir.
+
+    Acá se cierra la comparación —responder «sí» sin mirar el hardware—; cuántas fuentes
+    tiene que declarar una licencia para ser aceptable es del formato y lo aplica
+    `schema.parse_payload()` con `FINGERPRINT_MIN_FLOOR`. Son dos puertas a propósito: la
+    de acá alcanza sola aunque alguien entre por otro lado que no sea el parser.
     """
-    if min_matches <= 0:
-        return not expected
+    if not expected or min_matches < 1:
+        return False
     return count_matches(components, expected) >= min_matches
 
 

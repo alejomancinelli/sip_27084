@@ -7,7 +7,7 @@ import pytest
 
 from system.license import schema
 
-from .conftest import build_payload
+from .conftest import TEST_COMPONENTS, build_payload
 
 
 def to_token(**overrides) -> bytes:
@@ -87,6 +87,30 @@ class TestParsePayload:
         # que se vea al abrirla, no al no arrancar en la planta.
         with pytest.raises(schema.LicenseFormatError):
             schema.parse_payload(to_token(fingerprint={"min_matches": 9}))
+
+    def test_a_license_without_a_fingerprint_does_not_even_parse(self):
+        # El otro extremo del mismo error, y el que importa: sin componentes la licencia
+        # vale en todas las máquinas en vez de en ninguna.
+        with pytest.raises(schema.LicenseFormatError):
+            schema.parse_payload(to_token(fingerprint={"components": {}, "min_matches": 0}))
+
+    def test_a_single_source_is_below_the_floor(self):
+        # Una sola fuente es una sola pieza que reemplazar para que la licencia viaje.
+        one_source = dict(list(TEST_COMPONENTS.items())[:1])
+        with pytest.raises(schema.LicenseFormatError):
+            schema.parse_payload(
+                to_token(fingerprint={"components": one_source, "min_matches": 1}))
+
+    def test_a_quorum_below_the_floor_is_rejected_even_with_components(self):
+        with pytest.raises(schema.LicenseFormatError):
+            schema.parse_payload(to_token(fingerprint={"min_matches": 1}))
+
+    def test_the_floor_itself_is_accepted(self):
+        two_sources = dict(list(TEST_COMPONENTS.items())[:schema.FINGERPRINT_MIN_FLOOR])
+        parsed = schema.parse_payload(to_token(
+            fingerprint={"components": two_sources,
+                         "min_matches": schema.FINGERPRINT_MIN_FLOOR}))
+        assert parsed.min_matches == schema.FINGERPRINT_MIN_FLOOR
 
     def test_a_boolean_is_not_a_camera_quota(self):
         with pytest.raises(schema.LicenseFormatError):

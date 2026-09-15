@@ -102,7 +102,7 @@ from system.inference.result import InferenceResult
 from system.license.manager import (
     PERPETUAL_DAYS_SENTINEL, RECHECK_INTERVAL_MS, LicenseManager, read_feature,
 )
-from system.license.request import save_request
+from system.license.request import WeakFingerprintError, save_request
 from system.logger import logger
 from system.modbus.registers import REGISTERS, SCHEMA
 from system.modbus.server import SharedModbusServer
@@ -1255,6 +1255,10 @@ class Application(QObject):
         """La pantalla eligió dónde escribir la solicitud; el archivo lo escribe acá."""
         try:
             written = save_request(self._config, path)
+        except WeakFingerprintError as e:
+            logger.error(f"[Licencia] {e}")
+            self._ui.show_license_result(False, str(e))
+            return
         except OSError as e:
             logger.error(f"[Licencia] No se pudo escribir la solicitud: {e}")
             self._ui.show_license_result(False, str(e))

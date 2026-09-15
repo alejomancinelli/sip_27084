@@ -110,6 +110,23 @@ class TestDiagnosis:
                                 "board_uuid", "OTRA-MAQUINA")})
         assert build_manager(sign_license()).state == manager.STATE_FOREIGN
 
+    def test_a_license_without_machine_lock_does_not_run_anywhere(self, build_manager,
+                                                                  sign_license, monkeypatch):
+        # La forja universal: una licencia sin huella validaba en cualquier equipo, así que
+        # una sola copia filtrada corría en toda la industria. El firmante ya no la emite;
+        # esto prueba que aunque alguien la emitiera, este equipo no la toma.
+        monkeypatch.setattr(fingerprint, "read_components",
+                            lambda **kwargs: {"board_uuid": fingerprint.hash_value(
+                                "board_uuid", "OTRA-MAQUINA")})
+        token = sign_license(fingerprint={"components": {}, "min_matches": 0})
+        assert build_manager(token).state == manager.STATE_INVALID
+
+    def test_a_single_source_license_does_not_validate_either(self, build_manager,
+                                                              sign_license):
+        one_source = dict(list(TEST_COMPONENTS.items())[:1])
+        token = sign_license(fingerprint={"components": one_source, "min_matches": 1})
+        assert build_manager(token).state == manager.STATE_INVALID
+
     def test_a_replaced_disk_still_validates(self, build_manager, sign_license, monkeypatch):
         # El caso que de verdad pasa: una pieza cambiada en garantía no puede dejar
         # afuera al cliente que pagó.
@@ -377,6 +394,19 @@ class TestInstall:
         is_installed, message = build_manager().install(str(incoming))
         assert not is_installed
         assert "equipo" in message
+
+    def test_a_license_issued_after_the_machine_clock_flags_the_clock(self, build_manager,
+                                                                     sign_license, tmp_path):
+        # La emisión es la única fecha firmada que el equipo ve al instalar: con el reloj
+        # ya atrasado de antes, el retroceso se nota ahora y no dentro de un año.
+        incoming = tmp_path / "recibida.lic"
+        incoming.write_text(sign_license(issued_at=days_from_now(30)), encoding="ascii")
+
+        license_manager = build_manager()
+        is_installed, _ = license_manager.install(str(incoming))
+
+        assert is_installed
+        assert license_manager.state == manager.STATE_TAMPERED
 
     def test_a_file_that_does_not_exist_is_reported_and_not_raised(self, build_manager):
         is_installed, message = build_manager().install("no/existe.lic")

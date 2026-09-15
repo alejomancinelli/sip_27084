@@ -69,8 +69,11 @@ class TestMatching:
         assert fingerprint.is_match(current, self.expected, min_matches=1)
         assert not fingerprint.is_match(current, self.expected, min_matches=2)
 
-    def test_empty_expected_with_zero_quorum_is_a_license_without_machine_lock(self):
-        assert fingerprint.is_match({"board_uuid": "x"}, {}, min_matches=0)
+    def test_a_license_without_machine_lock_corresponds_to_no_machine(self):
+        # Una huella vacía que coincidiera con todo es una sola licencia forjada corriendo
+        # en cualquier equipo, que es justo lo que la huella existe para impedir.
+        assert not fingerprint.is_match({"board_uuid": "x"}, {}, min_matches=0)
+        assert not fingerprint.is_match({}, {}, min_matches=0)
 
     def test_zero_quorum_with_components_does_not_match_anything(self):
         # Una licencia que declara huella pero pide cero coincidencias sería una puerta

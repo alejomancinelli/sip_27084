@@ -217,7 +217,7 @@ lo que falta es un punto de extensión, no un parche.
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
 | dataset | `system/image_collector/collector.py`, `conditions.py` |
-| licencia | `system/license/*` entero. La única línea que cambia es la clave pública de `public_key.py`, y la pone quien arma el build, no el fork |
+| licencia | `system/license/*` entero. La clave pública no se edita en ningún fork: la genera el repositorio de firma al compilar, en un `_public_key.py` que no se versiona |
 | interfaz | `ui/` entero salvo lo de arriba: `strings.py`, `theme.py`, `service_status.py`, `main_window.py`, las tres vistas, `views/config/*`, `views/diagnostics/*`, `widgets/*`, `dialogs/*`, `styles/*` |
 
 Dos excepciones acotadas: `model_factory.py` y `camera_factory.py` reciben **una línea**
