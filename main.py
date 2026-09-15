@@ -561,6 +561,7 @@ class Application(QObject):
                     f"declaradas."
                 )
                 self._on_camera_status(_UNLICENSED_CAMERA_STATUS, camera_slot)
+                self._push_status_to_content(_UNLICENSED_CAMERA_STATUS, camera_slot)
                 continue
             thread = CaptureThread(config, camera_slot)
             thread.frame_ready.connect(self._on_frame_ready)
@@ -1537,6 +1538,19 @@ class Application(QObject):
         content = self._ui.monitor_content
         if content is not None and hasattr(content, "update_status"):
             thread.status_updated.connect(content.update_status)
+
+    def _push_status_to_content(self, status: dict, camera_slot: str):
+        """
+        Empuja un status al widget del monitor para una cámara sin hilo propio.
+
+        Es el caso de la que queda afuera del cupo de la licencia: no hay `CaptureThread`
+        cuya señal conectar, así que sin esto el chip se queda con el placeholder de
+        arranque para siempre. Una cámara que dice «Iniciando» y no arranca nunca manda a
+        revisar un cable que está bien, que es justo lo que el cupo no tiene que provocar.
+        """
+        content = self._ui.monitor_content
+        if content is not None and hasattr(content, "update_status"):
+            content.update_status(status, camera_slot)
 
     def _store_metrics(self, result: InferenceResult):
         """Guarda las métricas del último resultado de cada cámara, para los registros."""
