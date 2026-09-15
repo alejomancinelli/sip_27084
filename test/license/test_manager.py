@@ -110,6 +110,23 @@ class TestDiagnosis:
                                 "board_uuid", "OTRA-MAQUINA")})
         assert build_manager(sign_license()).state == manager.STATE_FOREIGN
 
+    def test_a_license_without_machine_lock_does_not_run_anywhere(self, build_manager,
+                                                                  sign_license, monkeypatch):
+        # La forja universal: una licencia sin huella validaba en cualquier equipo, así que
+        # una sola copia filtrada corría en toda la industria. El firmante ya no la emite;
+        # esto prueba que aunque alguien la emitiera, este equipo no la toma.
+        monkeypatch.setattr(fingerprint, "read_components",
+                            lambda **kwargs: {"board_uuid": fingerprint.hash_value(
+                                "board_uuid", "OTRA-MAQUINA")})
+        token = sign_license(fingerprint={"components": {}, "min_matches": 0})
+        assert build_manager(token).state == manager.STATE_INVALID
+
+    def test_a_single_source_license_does_not_validate_either(self, build_manager,
+                                                              sign_license):
+        one_source = dict(list(TEST_COMPONENTS.items())[:1])
+        token = sign_license(fingerprint={"components": one_source, "min_matches": 1})
+        assert build_manager(token).state == manager.STATE_INVALID
+
     def test_a_replaced_disk_still_validates(self, build_manager, sign_license, monkeypatch):
         # El caso que de verdad pasa: una pieza cambiada en garantía no puede dejar
         # afuera al cliente que pagó.
