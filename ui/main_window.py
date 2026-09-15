@@ -5,7 +5,7 @@ Es la puerta de la UI para el cableado: `main.py` construye esta ventana y le ha
 sólo a ella —`set_service_status()`, `log_event()`, los slots de actualización—, sin
 saber qué vista dibuja cada cosa. Así agregar una vista no cambia el cableado.
 
-Dos cosas que no son obvias:
+Tres cosas que no son obvias:
 
   - **ConfigView se arma la primera vez que se navega a ella.** Son ocho pestañas con
     cientos de campos y el arranque de la aplicación no las necesita; hasta entonces su
@@ -13,6 +13,12 @@ Dos cosas que no son obvias:
   - **El botón de GPIO aparece sólo si hay controlador.** El template no trae el módulo
     de GPIO, así que `set_gpio()` es lo que lo habilita: sin eso el botón no está, en
     vez de estar y no hacer nada.
+  - **Sin licencia válida, el footer lo dice todo el tiempo y lo dice una sola vez al
+    abrir.** `update_license()` prende un chip rojo persistente en el footer mientras el
+    estado lo amerite —el mismo criterio que el bit que va al PLC— y, en el primer
+    `showEvent`, un cartel modal si el problema ya estaba ahí al arrancar. El cartel es
+    de una sola vez a propósito: molestar en cada recheck horario sería peor que el
+    problema que avisa.
 
 La ventana no toca hardware ni protocolos: reparte lo que recibe y persiste config a
 través del ConfigView.
@@ -23,8 +29,8 @@ import os
 from PySide6.QtCore import QTime, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout,
-    QWidget,
+    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
 from system.config_manager import ConfigManager
@@ -36,6 +42,7 @@ from ui.strings import tr
 from ui.views.config_view import ConfigView
 from ui.views.diagnostics_view import DiagnosticsView
 from ui.views.monitor_view import MonitorView
+from ui.widgets.status_chip import CHIP_ERROR, StatusChip
 
 # Índices de las vistas en el QStackedWidget.
 VIEW_MONITOR = 0
@@ -76,6 +83,9 @@ class MainWindow(QMainWindow):
     config_saved = Signal()      # se persistió el config.yaml; reenvía el del ConfigView
     # Rutas que el operador eligió en la pestaña de licencia; las reenvía la vista de
     # diagnóstico. Quien abre los archivos es el cableado, no la ventana.
+    # Slot de la cámara cuya óptica hay que calibrar. Lo atiende `main.py`, que es
+    # quien tiene los frames: la UI no mide.
+    lens_calibration_requested = Signal(str)
     license_export_requested = Signal(str)
     license_install_requested = Signal(str)
 
@@ -89,6 +99,10 @@ class MainWindow(QMainWindow):
         self._nav_buttons: list = []
         self._is_dark = True
         self._flash_step = 0
+        self._license_status: dict = {}
+        # El cartel de arranque es de una sola vez: sin este flag, minimizar y restaurar
+        # la ventana —que también dispara `showEvent`— lo mostraría de nuevo.
+        self._did_show_license_warning = False
 
         self.setWindowTitle(str(self._config.get("system.app_name", "")))
         self._apply_window_icon()
@@ -162,8 +176,17 @@ class MainWindow(QMainWindow):
         self.diagnostics_view.log_event(level, message, module)
 
     def update_license(self, status: dict):
-        """Estado de la licencia, tal como sale de `LicenseManager.get_status()`."""
+        """
+        Estado de la licencia, tal como sale de `LicenseManager.get_status()`.
+
+        Además de la pestaña, prende o apaga el chip persistente del footer. Se guarda el
+        último status recibido porque puede llegar antes de que la ventana se muestre —el
+        cableado lo publica en el arranque, antes de `show()`—, y el cartel modal necesita
+        ese valor recién en el primer `showEvent`.
+        """
+        self._license_status = status
         self.diagnostics_view.update_license(status)
+        self._update_license_chip(status)
 
     def show_license_result(self, is_ok: bool, message: str):
         """Resultado de instalar una licencia, para que el operador lo vea donde apretó."""
@@ -174,6 +197,21 @@ class MainWindow(QMainWindow):
         self._footer.setText(message or tr("status_ready"))
         self._flash_step = 0
         self._flash_timer.start(_FLASH_INTERVAL_MS)
+
+    def showEvent(self, event):
+        """
+        El cartel de licencia se muestra acá, y no cuando llega el status, para que
+        aparezca sobre una ventana ya visible en vez de flotar solo sobre el escritorio.
+
+        Sólo la primera vez: no hay recheck que vuelva a disparar esto durante la misma
+        corrida, y minimizar/restaurar la ventana no cuenta como una nueva apertura.
+        """
+        super().showEvent(event)
+        if self._did_show_license_warning:
+            return
+        self._did_show_license_warning = True
+        if self._license_status.get("should_report_invalid"):
+            QTimer.singleShot(0, lambda: self._warn_no_license(self._license_status))
 
     def apply_theme(self, dark: bool | None = None):
         """
@@ -296,10 +334,12 @@ class MainWindow(QMainWindow):
 
     def _build_footer(self) -> QWidget:
         """
-        Barra de estado: el mensaje a la izquierda y la versión pegada a la derecha.
+        Barra de estado: el mensaje a la izquierda, el chip de licencia y la versión a
+        la derecha.
 
         La versión no cambia nunca en la corrida, así que se arma una vez. El mensaje sí,
-        y es el que hace destellar la barra.
+        y es el que hace destellar la barra. El chip de licencia es el único de los tres
+        que empieza oculto: `update_license()` lo prende recién cuando corresponde.
         """
         self._footer_bar = QWidget()
         self._footer_bar.setObjectName("appFooter")
@@ -313,6 +353,13 @@ class MainWindow(QMainWindow):
         row.addWidget(self._footer)
         row.addStretch()
 
+        # Reutiliza el mismo chip que ya pintan los dos temas por `objectName`: ningún QSS
+        # nuevo, y el rojo es el mismo rojo que cualquier otro estado de error de la UI.
+        self._license_chip = StatusChip()
+        self._license_chip.setVisible(False)
+        row.addWidget(self._license_chip)
+        row.addSpacing(_GROUP_SPACING_PX)
+
         version_label = QLabel(self._build_version_text())
         version_label.setObjectName("footerVersion")
         row.addWidget(version_label)
@@ -320,6 +367,22 @@ class MainWindow(QMainWindow):
         self._flash_timer = QTimer(self)
         self._flash_timer.timeout.connect(self._on_flash_tick)
         return self._footer_bar
+
+    def _update_license_chip(self, status: dict):
+        """Prende o apaga el chip del footer. El mismo criterio que el bit que va al PLC."""
+        invalid = bool(status.get("should_report_invalid"))
+        self._license_chip.setVisible(invalid)
+        if invalid:
+            self._license_chip.set_state(CHIP_ERROR, tr("footer_license_alert"))
+            self._license_chip.setToolTip(str(status.get("reason") or ""))
+
+    def _warn_no_license(self, status: dict):
+        """Cartel modal de una sola vez. El motivo es el mismo que ya lee la pestaña."""
+        reason = str(status.get("reason") or "")
+        QMessageBox.warning(
+            self, tr("lic_startup_warning_title"),
+            tr("lic_startup_warning_body").format(reason=reason),
+        )
 
     def _build_version_text(self) -> str:
         """
@@ -375,6 +438,8 @@ class MainWindow(QMainWindow):
         self._config_view = ConfigView(self._config)
         self._config_view.config_saved.connect(self._on_config_saved)
         self._config_view.open_roi_requested.connect(self._on_open_roi_requested)
+        self._config_view.calibrate_lens_requested.connect(
+            self._on_calibrate_lens_requested)
 
         placeholder = self._stack.widget(VIEW_CONFIG)
         self._stack.removeWidget(placeholder)
@@ -425,6 +490,30 @@ class MainWindow(QMainWindow):
             panel.frame_updated.disconnect(dialog.update_frame)
         if self._config_view is not None:
             self._config_view.refresh_roi_fields(camera_slot)
+
+    def _on_calibrate_lens_requested(self, camera_slot: str):
+        """
+        Avisa que la calibración arrancó y deja que `main.py` junte las muestras.
+
+        El cartel dice cuánto va a tardar porque son varios minutos —N muestras, una
+        por intervalo— y sin eso el botón parece no haber hecho nada.
+        """
+        samples = int(self._config.get("lens_health.calibration_samples", 30) or 30)
+        interval_s = int(self._config.get("lens_health.interval_s", 10) or 10)
+        self.lens_calibration_requested.emit(camera_slot)
+        QMessageBox.information(
+            self, tr("lens_calibrate_started"),
+            tr("lens_calibrate_body").format(
+                samples=samples,
+                camera=str(self._config.get(f"cameras.{camera_slot}.name", "")
+                           or camera_slot),
+                interval=interval_s),
+        )
+
+    def refresh_lens_reference(self, camera_slot: str):
+        """La calibración terminó y escribió el config: que la pantalla lo muestre."""
+        if self._config_view is not None:
+            self._config_view.refresh_lens_reference(camera_slot)
 
     def _on_gpio_clicked(self):
         if self._gpio_controller is None:

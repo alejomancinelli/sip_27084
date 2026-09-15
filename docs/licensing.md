@@ -1,8 +1,8 @@
 # Licencia del equipo
 
 Cómo se pide, cómo se instala y cómo se renueva la licencia de una instalación. Es el
-documento de la puesta en marcha y del soporte: quien atiende un llamado de «no me
-arranca» lee esto.
+documento de la puesta en marcha y del soporte: quien atiende un llamado de «me aparece
+un cartel de licencia» o «el equipo no publica nada» lee esto.
 
 **Estado: implementado y sin usar en producción.** El subsistema es `system/license/` y
 está cableado en `main.py`, pero le faltan dos cosas para tener efecto: la clave pública
@@ -23,6 +23,36 @@ Ata un equipo entregado a la máquina para la que se emitió, y declara qué hab
 Lo que **no** hace: impedir que alguien con acceso físico y root al equipo se salga con la
 suya. Ningún esquema del lado del cliente hace eso. El objetivo es que copiar salga más
 caro que comprar y que sea deliberado y no accidental; el piso real es el contrato.
+
+## Sin licencia, el equipo abre igual: modo de puesta en marcha
+
+**El equipo no se niega a arrancar por no tener licencia.** Sin archivo, o con uno que no
+verifica, abre en un modo deliberadamente restringido en vez de no abrir:
+
+| Qué | Cómo queda |
+|---|---|
+| Cámaras | Siguen capturando y se ven en pantalla — el feed en vivo es lo que permite verificar el cableado durante la puesta en marcha |
+| Pipelines de inferencia | Ninguno arranca. No hay nada que diga qué modelo se compró |
+| Modbus, InfluxDB, MQTT | No se publica ninguna medición. El canal Modbus sigue respondiendo —heartbeat, salud, palabras de estado— para que no se lea como un cable cortado |
+| Configuración y diagnóstico | Enteros, sin restringir. Incluida la pestaña de licencia |
+
+La razón es práctica: un equipo entregado es un binario compilado, sin intérprete de
+Python detrás. Si el equipo se negara a abrir, no habría forma de llegar a la pestaña de
+licencia para generar la solicitud o instalar el archivo que vuelve — habría que llevar
+otra computadora. Abriendo en este modo, la pestaña de licencia **es** el lugar donde se
+resuelve.
+
+Esto es una decisión del build —`system/license/manager.py`, `NO_LICENSE_STATES`— y no de
+la política que viaja en la licencia: sin archivo, o con uno que no verifica, no hay
+payload firmado del que leer una `policy`, así que no hay nada tolerante que consultar.
+Una licencia que sí vale pero está vencida, es de otra máquina o tiene el reloj atrasado
+es un caso distinto — ahí sí hay un payload firmado y su `policy` decide qué tan estricto
+ser (ver más abajo).
+
+**Instalar una licencia válida no reinicia nada solo.** Qué cámaras y qué pipelines
+arrancan se decide una vez, al abrir el programa; instalarla desde la pestaña dice cómo
+hacerlo y **pide reiniciar la aplicación** para que el cupo y los features nuevos entren
+en efecto.
 
 ## Los tres archivos
 
@@ -67,16 +97,26 @@ Para ver qué licencia tiene el equipo y por qué vale o no:
 
 ## Qué se ve cuando algo anda mal
 
-El estado sale por tres lados a la vez, y los tres dicen lo mismo:
+El estado sale por varios lados a la vez, y todos dicen lo mismo:
 
-- **La pantalla**, en *Diagnóstico → Licencia*: un chip con el estado y, debajo, el motivo
-  en texto. Es lo que hay que leer por teléfono.
-- **El log**, en `data/logs/`. En headless es la única forma de verlo.
+- **Un cartel al abrir la ventana.** Una sola vez por corrida —no en cada recheck
+  horario—, y sólo si el problema ya estaba ahí al arrancar. Es lo primero que ve
+  cualquiera, sin tener que saber que existe una pestaña de licencia.
+- **Un chip rojo en el footer**, todo el tiempo que dure el estado. A diferencia del
+  cartel, éste no se cierra: sigue ahí mientras se navega por el resto de la interfaz.
+- **La pantalla**, en *Diagnóstico → Licencia*: el mismo chip con el estado y, debajo, el
+  motivo en texto completo. Es lo que hay que leer por teléfono.
+- **El log**, en `data/logs/`. En headless —sin cartel ni chip posibles— es la única
+  forma de verlo.
 - **El PLC**: el bit «licencia no válida» de la palabra de estado del sistema, el registro
   `license_days_remaining` con los días que faltan, y el reloj del equipo en
   `clock_epoch_s_high` / `clock_epoch_s_low`. Los nombres y direcciones están en el mapa generado
   (`docs/modbus_map.md`). Qué tiene que hacer el PLC con todo eso está más abajo, en
   «Hasta dónde llega la defensa del reloj».
+
+El cartel y el chip usan el mismo criterio que el bit del PLC —`should_report_invalid()`—
+así que los cuatro dicen lo mismo a la vez: no hay un estado que se vea inválido en un
+lado y válido en otro.
 
 `license_days_remaining` es el que sirve para **alarmar con anticipación**: una licencia
 anual avisa treinta días antes en el log y en la pantalla, y el PLC puede alarmar con el
@@ -88,8 +128,8 @@ licencia o con el reloj movido publica 0.
 | Estado | Qué pasó | Qué hacer |
 |---|---|---|
 | **Licencia válida** | Todo en orden | Nada |
-| **Sin licencia** | No hay `license.lic` | Instalarlo. **El equipo no arranca en este estado** |
-| **Licencia inválida** | La firma no cierra, el archivo está cortado o la firmó una clave que este programa no conoce | Pedir el archivo de nuevo. Si dice que no conoce la clave, el equipo necesita una versión más nueva del software |
+| **Sin licencia** | No hay `license.lic` | Instalarlo desde la pestaña de licencia — el equipo abre igual, en modo de puesta en marcha (ver más arriba) |
+| **Licencia inválida** | La firma no cierra, el archivo está cortado o la firmó una clave que este programa no conoce | Pedir el archivo de nuevo — mientras tanto, mismo modo de puesta en marcha que sin licencia. Si dice que no conoce la clave, el equipo necesita una versión más nueva del software |
 | **Licencia de otro equipo** | La huella no corresponde, o el `project_id` no es el de esta instalación | Verificar que sea el archivo de esta máquina. Si se reemplazó hardware, pedir reemisión |
 | **Licencia vencida** | Pasó `expires_at` | Renovar |
 | **Reloj del equipo atrasado** | Ver abajo | Ver abajo |
@@ -212,3 +252,6 @@ Antes de entregar el equipo:
 `manual_test/license/` simula un equipo compilado con su propio `config.yaml`: permite ver
 qué arranca y qué no con cada licencia, adelantar el reloj sin tocar el del equipo y
 comprobar que editar el `.lic` a mano lo invalida. El propio script explica cada escenario.
+
+Para ver el cartel de arranque y el chip rojo del footer con la interfaz de verdad, sin
+compilar nada: `manual_test/ui/ui_app.py --simulate-no-license`.

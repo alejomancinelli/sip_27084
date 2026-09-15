@@ -41,6 +41,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+        lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
@@ -177,6 +178,11 @@ Son punteros: el contrato vive en el archivo, no acá.
   El mapa concreto es `system/modbus/register_map.yaml`.
 - **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
   documenta qué significa cada bit. Nadie corre bits afuera.
+- **Salud de la óptica** — `system/camera/lens_health.py`: el vocabulario `STATE_*`, qué
+  necesita calibrarse y cuándo la ventana habilita a afirmar que el vidrio está sucio. La
+  puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
+  las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
+  cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -280,6 +286,16 @@ Lo que no se deduce leyendo un archivo suelto:
   `.pt` y un `.engine` entran por el mismo `type` del config, y cuando el runtime informa
   qué exportó, `load()` lo confronta y un desacuerdo deja el modelo en error antes del
   primer frame. Olfatear el archivo daría números creíbles con el postproceso equivocado.
+- **El lente sucio se detecta por cámara y no agrega un solo registro.** La nitidez es un
+  techo y no un promedio —lo que pase por delante sólo puede bajarla—, así que el
+  veredicto es el máximo de una ventana de horas contra una referencia calibrada, y la
+  alarma recién se afirma cuando la ventana pasó entera. Esa referencia va en
+  `cameras.<slot>.lens_health.reference` porque depende del lente y del montaje:
+  compartirla entre cámaras no da un error, da un equipo que nunca avisa. Sale al PLC por
+  el bit 6 de la palabra de estado de esa cámara, que ya existía en el mapa; el índice de
+  nitidez es una tendencia y va por telemetría, donde sirve para ver el vidrio ensuciarse
+  semanas antes de que el bit se prenda. Sin calibrar, el estado es «no disponible» y
+  nunca alarma: un vidrio limpio que nadie midió no se afirma.
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
@@ -315,23 +331,32 @@ Lo que no se deduce leyendo un archivo suelto:
   la licencia declara cuántas tienen que seguir coincidiendo, y con eso un disco o una
   placa de red reemplazados no dejan afuera al cliente que pagó. Esa es la falla que
   hunde estos esquemas, y por eso el N-de-M no es un lujo.
-- **Sin archivo de licencia el equipo no arranca, y eso se decide en el build.** La
-  política —avisar, o además dejar de publicar— viaja firmada adentro de la licencia, así
-  que se elige por cliente sin recompilar; pero cuando no hay archivo no hay política que
-  leer, y por eso ese caso lo fija `REFUSE_START_WITHOUT_LICENSE` y vale para todo el
-  build. El corte es de arranque: una licencia que se cae a mitad de un turno no baja la
-  línea, porque ahí ya hay cámaras tomadas y números publicados.
+- **Sin licencia utilizable el equipo abre igual, en modo de puesta en marcha.** `absent`
+  e `invalid` ya no frenan el arranque: son los dos estados que MÁS restringen. Ningún
+  pipeline arranca y ninguna medición sale, sin importar la política por defecto —no hay
+  payload firmado del que leerla, así que la decisión es del build (`NO_LICENSE_STATES`)—;
+  las cámaras siguen capturando y la interfaz completa sigue disponible, empezando por la
+  pestaña de licencia. La razón es práctica: un binario compilado no tiene un intérprete
+  de Python detrás para generar la solicitud o instalar el archivo que vuelve si el
+  programa se negara a abrir. Instalar una licencia no reinicia pipelines ni cámaras
+  solo: eso se decide una vez al abrir, así que hace falta reiniciar la aplicación.
 - **Con la política `degrade` el canal sigue sirviendo y lo que para es la medición.** El
   heartbeat, la salud del equipo y las palabras de estado se publican igual; los registros
   de proceso quedan con su último valor y el bit de licencia dice por qué. Bajar el Modbus
   dejaría al PLC viendo un enlace muerto, indistinguible de un cable cortado, y mandaría
   al integrador a buscar el problema equivocado.
-- **Los entitlements sólo restringen cuando hay una licencia que los declare.** Sin
-  archivo no se sabe qué se compró: el cupo de cámaras y los features no bloquean nada y
-  lo que aplica es la política sobre el estado inválido. Con una licencia que parsea
-  —aunque esté vencida o sea de otra máquina— sus entitlements sí se aplican, porque ahí
-  sí se sabe qué se vendió. Una cámara sobre el cupo no desaparece de la pantalla: se
-  publica su estado con el motivo, porque un hueco manda a revisar un cable que está bien.
+- **El estado inválido se ve en cuatro lados a la vez, con el mismo criterio.** El chip de
+  la pestaña, el bit y el registro que van al PLC, un chip rojo persistente en el footer
+  y un cartel modal al abrir la ventana —una sola vez por corrida, no en cada recheck
+  horario— salen todos de `should_report_invalid()`: ninguno puede decir que está mal
+  mientras otro dice que está bien.
+- **Los entitlements restringen distinto según si hay una licencia real que los declare.**
+  Sin archivo utilizable (`absent`/`invalid`) el corte es total —nada arranca, nada se
+  publica, sin importar la política—: no hay nada que decir qué se compró, así que lo más
+  restrictivo es lo que corresponde. Con una licencia que parsea —aunque esté vencida o
+  sea de otra máquina— sus entitlements se aplican tal como los declara, porque ahí sí se
+  sabe qué se vendió. Una cámara sobre el cupo no desaparece de la pantalla: se publica su
+  estado con el motivo, porque un hueco manda a revisar un cable que está bien.
 - **Un feature por pipeline, y dos propósitos son dos pipelines.** Medir un proceso y
   vigilar una zona no se juntan aunque miren la misma cámara: son dos hilos, sus
   resultados ya se separan por el par `(cámara, pipeline)`, y se venden por separado.
@@ -494,8 +519,12 @@ La tabla completa, archivo por archivo, está en `README.md`.
   los annotators—. Lo que sigue faltando es el contenido: qué se mide y qué se publica.
 - El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
   pero qué publica es lo más específico de cada fork y se declara al escribirlo.
+- De la salud de la óptica no falta nada: el módulo, el cableado, la sección
+  `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
+  están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
+  que es lo que llena `cameras.<slot>.lens_health.reference`—.
 - **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, siete pestañas de configuración, cinco de diagnóstico— salvo dos
+  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
   huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
   `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
   `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
@@ -507,11 +536,11 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
 - **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
-  —cupo de cámaras, features por pipeline, vencimiento, huella, bit al PLC y pestaña de
-  diagnóstico— pero le faltan dos cosas para servir de algo: la **clave pública real** en
-  `system/license/public_key.py`, que hoy tiene una de prueba. **Compilar ya no es lo que
-  falta** —`build/` arma el entregable con Nuitka— pero sin la clave real la validación
-  igual pasa: sigue verificando contra la de prueba. El diseño completo está en
+  —cupo de cámaras, features por pipeline, vencimiento, huella, modo de puesta en marcha
+  sin licencia, bit y reloj al PLC, pestaña de diagnóstico, chip de footer y cartel de
+  arranque— pero le faltan dos cosas para servir de algo: la **clave pública real** en
+  `system/license/public_key.py`, que hoy está **vacía**, y **compilar** (roadmap B3), sin
+  lo cual la validación se saltea borrando un `if`. El diseño completo está en
   `.claude/plans/licensing.md`.
 - **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
   El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero

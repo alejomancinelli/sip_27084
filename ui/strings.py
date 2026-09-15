@@ -116,6 +116,7 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "As alterações têm efeito ao reiniciar a aplicação."},
 
     "tab_cameras":            {"es": "Cámaras",        "en": "Cameras",       "pt": "Câmeras"},
+    "tab_lens_health":        {"es": "Óptica",         "en": "Optics",        "pt": "Óptica"},
     "tab_video":              {"es": "Video",          "en": "Video",         "pt": "Vídeo"},
     "tab_inference":          {"es": "Inferencia",     "en": "Inference",     "pt": "Inferência"},
     "tab_process":            {"es": "Proceso",        "en": "Process",       "pt": "Processo"},
@@ -182,6 +183,87 @@ _TEXTS: dict[str, dict[str, str]] = {
     "cam_calibration_unset":  {"es": "Sin corrección de lente",
                                "en": "No lens correction",
                                "pt": "Sem correção de lente"},
+
+    # ── Óptica / lente sucio (configuración) ─────────────────────────────────
+    "lens_box_detection":     {"es": "Detección de lente sucio",
+                               "en": "Dirty lens detection",
+                               "pt": "Detecção de lente suja"},
+    "lens_enabled":           {"es": "Detección habilitada",
+                               "en": "Detection enabled",
+                               "pt": "Detecção habilitada"},
+    "lens_interval":          {"es": "Intervalo de medición (s):",
+                               "en": "Measurement interval (s):",
+                               "pt": "Intervalo de medição (s):"},
+    "lens_window":            {"es": "Ventana de análisis (h):",
+                               "en": "Analysis window (h):",
+                               "pt": "Janela de análise (h):"},
+    "lens_threshold":         {"es": "Nitidez mínima (% de la referencia):",
+                               "en": "Minimum sharpness (% of reference):",
+                               "pt": "Nitidez mínima (% da referência):"},
+    "lens_analysis_width":    {"es": "Ancho de análisis (px):",
+                               "en": "Analysis width (px):",
+                               "pt": "Largura de análise (px):"},
+    "lens_calibration_samples": {"es": "Muestras de calibración:",
+                                 "en": "Calibration samples:",
+                                 "pt": "Amostras de calibração:"},
+    "lens_method_note":       {"es": "La nitidez se mide sobre el ROI de cada cámara y se "
+                                     "compara contra su propia referencia. La alarma recién "
+                                     "se afirma cuando pasó la ventana entera.",
+                               "en": "Sharpness is measured over each camera's ROI and "
+                                     "compared against its own reference. The alarm is only "
+                                     "raised once the full window has elapsed.",
+                               "pt": "A nitidez é medida sobre o ROI de cada câmera e "
+                                     "comparada com a sua própria referência. O alarme só é "
+                                     "afirmado quando a janela inteira passou."},
+    "lens_width_note":        {"es": "Cambiar el ancho de análisis invalida las referencias "
+                                     "ya calibradas: hay que calibrar de nuevo cada cámara.",
+                               "en": "Changing the analysis width invalidates the references "
+                                     "already calibrated: every camera must be recalibrated.",
+                               "pt": "Alterar a largura de análise invalida as referências já "
+                                     "calibradas: é preciso calibrar cada câmera de novo."},
+    "lens_box_reference":     {"es": "Referencia de vidrio limpio",
+                               "en": "Clean-glass reference",
+                               "pt": "Referência de vidro limpo"},
+    "lens_reference_variance": {"es": "Varianza de referencia:",
+                                "en": "Reference variance:",
+                                "pt": "Variância de referência:"},
+    "lens_reference_state":   {"es": "Estado:",        "en": "State:",        "pt": "Estado:"},
+    "lens_uncalibrated":      {"es": "Sin calibrar — la detección no informa nada",
+                               "en": "Not calibrated — detection reports nothing",
+                               "pt": "Sem calibrar — a detecção não informa nada"},
+    "lens_calibrated_on":     {"es": "Calibrada el {date} con {samples} muestras "
+                                     "(dispersión {dispersion} %)",
+                               "en": "Calibrated on {date} with {samples} samples "
+                                     "(dispersion {dispersion}%)",
+                               "pt": "Calibrada em {date} com {samples} amostras "
+                                     "(dispersão {dispersion} %)"},
+    "lens_calibrate":         {"es": "Calibrar con el lente limpio",
+                               "en": "Calibrate with a clean lens",
+                               "pt": "Calibrar com a lente limpa"},
+    "lens_calibrate_note":    {"es": "Limpiar el vidrio antes de calibrar: lo que se guarda "
+                                     "es el techo de nitidez de ese montaje. La referencia "
+                                     "se puede editar a mano para copiar la de un equipo "
+                                     "gemelo.",
+                               "en": "Clean the glass before calibrating: what gets stored is "
+                                     "that mount's sharpness ceiling. The reference can be "
+                                     "edited by hand to copy one from a twin unit.",
+                               "pt": "Limpar o vidro antes de calibrar: o que se guarda é o "
+                                     "teto de nitidez daquela montagem. A referência pode ser "
+                                     "editada à mão para copiar a de um equipamento gêmeo."},
+    "lens_calibrate_started": {"es": "Calibrando la óptica",
+                               "en": "Calibrating optics",
+                               "pt": "Calibrando a óptica"},
+    "lens_calibrate_body":    {"es": "Juntando {samples} muestras de «{camera}», una cada "
+                                     "{interval} s. La referencia se guarda sola al "
+                                     "terminar.",
+                               "en": "Collecting {samples} samples from “{camera}”, one every "
+                                     "{interval} s. The reference is saved automatically when "
+                                     "done.",
+                               "pt": "Juntando {samples} amostras de «{camera}», uma a cada "
+                                     "{interval} s. A referência é salva sozinha ao terminar."},
+    "lens_conditions_changed": {"es": "Cambiaron las condiciones desde la calibración: {reason}",
+                                "en": "Conditions changed since calibration: {reason}",
+                                "pt": "As condições mudaram desde a calibração: {reason}"},
     "rotation_none":          {"es": "Sin rotación",   "en": "No rotation",   "pt": "Sem rotação"},
     "rotation_90cw":          {"es": "90° horario",    "en": "90° clockwise", "pt": "90° horário"},
     "rotation_90ccw":         {"es": "90° antihorario",
@@ -569,6 +651,23 @@ _TEXTS: dict[str, dict[str, str]] = {
     "lic_license_filter":     {"es": "Archivo de licencia (*.lic)",
                                "en": "Licence file (*.lic)",
                                "pt": "Arquivo de licença (*.lic)"},
+
+    # Chip persistente en el footer, y cartel al abrir. Los dos usan el mismo criterio que
+    # el bit que va al PLC —`should_report_invalid()`— así que aparecen juntos y dicen lo
+    # mismo: no se agrega un tercer vocabulario de "¿está mal la licencia?" en la UI.
+    "footer_license_alert":      {"es": "SIN LICENCIA", "en": "NO LICENCE", "pt": "SEM LICENÇA"},
+    "lic_startup_warning_title": {"es": "Licencia",     "en": "Licence",    "pt": "Licença"},
+    "lic_startup_warning_body": {
+        "es": "El equipo está funcionando sin una licencia válida:\n\n{reason}\n\n"
+              "Para generar la solicitud o instalar la licencia recibida, ir a "
+              "Diagnóstico → Licencia.",
+        "en": "The equipment is running without a valid licence:\n\n{reason}\n\n"
+              "To generate a request or install the licence you received, go to "
+              "Diagnostics → Licence.",
+        "pt": "O equipamento está funcionando sem uma licença válida:\n\n{reason}\n\n"
+              "Para gerar a solicitação ou instalar a licença recebida, ir a "
+              "Diagnóstico → Licença.",
+    },
 
     # ── Servicios ────────────────────────────────────────────────────────────
     "service_modbus_tcp":     {"es": "Modbus TCP",     "en": "Modbus TCP",    "pt": "Modbus TCP"},
