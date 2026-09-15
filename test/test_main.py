@@ -3,6 +3,7 @@
 `main.py` no lo importa nadie, así que lo poco testeable de él es lo que decide sin
 depender de subsistemas. Acá no se arma la aplicación ni se levanta un event loop."""
 
+import asyncio
 import signal
 
 import numpy as np
@@ -12,6 +13,8 @@ from system.camera.lens_health import (
     CONDITION_KEYS, LensHealthMonitor, Measurement, Region,
 )
 from system.inference.result import InferenceResult
+from system.modbus import registers
+from system.modbus.server import STATUS_DISABLED, STATUS_ERROR
 
 _EXIT_CODE = 3
 
@@ -66,6 +69,52 @@ class TestUnlicensedCamera:
         assert main._UNLICENSED_CAMERA_STATUS.get("error")
 
 
+class TestUnlicensedCameraOnScreen:
+    """
+    Que la cámara fuera de cupo llegue al widget del monitor.
+
+    El status ya viaja por `_on_camera_status()`, que alimenta los chips de la UI, el FPS
+    del diagnóstico y la palabra que va al PLC. Lo que faltaba es el widget del área
+    central: se alimenta conectando la señal de un `CaptureThread`, y esta cámara no tiene
+    ninguno. Sin este empujón el chip se queda con el placeholder de arranque para
+    siempre, y una cámara que dice «Iniciando» y no arranca nunca manda a revisar un cable
+    que está bien.
+    """
+
+    class _Content:
+        """Widget del monitor que acepta status, que es lo único que se le pide."""
+
+        def __init__(self):
+            self.updates: list = []
+
+        def update_status(self, status: dict, camera_slot: str):
+            self.updates.append((camera_slot, status))
+
+    class _Ui:
+        def __init__(self, content):
+            self.monitor_content = content
+
+    def _application(self, content):
+        app = main.Application.__new__(main.Application)
+        app._ui = self._Ui(content)
+        return app
+
+    def test_the_status_reaches_the_monitor_widget(self):
+        content = self._Content()
+        self._application(content)._push_status_to_content(
+            main._UNLICENSED_CAMERA_STATUS, "camera_3")
+        assert content.updates == [("camera_3", main._UNLICENSED_CAMERA_STATUS)]
+
+    def test_a_widget_without_the_method_is_not_a_crash(self):
+        """El fork elige el widget del centro y no está obligado a aceptar status."""
+        content = object()
+        self._application(content)._push_status_to_content({}, "camera_3")
+
+    def test_headless_has_no_widget_to_push_to(self):
+        """Sin ventana `monitor_content` es None, y el cableado no pregunta si la hay."""
+        self._application(None)._push_status_to_content({}, "camera_3")
+
+
 class TestInterruptSignals:
     def test_ctrl_c_and_sigterm_are_always_handled(self):
         assert {signal.SIGINT, signal.SIGTERM} <= set(main._interrupt_signals())
@@ -75,6 +124,63 @@ class TestInterruptSignals:
         expected = hasattr(signal, "SIGBREAK")
         handled = any(getattr(s, "name", "") == "SIGBREAK" for s in main._interrupt_signals())
         assert handled is expected
+
+
+class TestModbusServerWiring:
+    """
+    Que el motivo por el que el mapa no cargó llegue al servidor.
+
+    `registers.py` sólo lo detecta y lo deja en `LOAD_ERROR`; quien decide es el
+    cableado. Si no se lo pasa, los dos transportes toman su puerto y sirven el datastore
+    vacío —un PLC leyendo ceros, indistinguible de «no hay medición»—, que es justo lo que
+    `registers.py` existe para evitar. Que el servidor sepa negarse ya está probado en
+    `test/modbus/test_server.py`; lo que se prueba acá es que se entere.
+    """
+
+    _REASON = "No se pudo cargar register_map.yaml: [Errno 2] No such file or directory"
+
+    class _MockConfig:
+        """ConfigManager mínimo, con lo que el servidor le pide al construirse.
+
+        Los dos transportes van apagados: el bloqueo le gana al `disabled`, así que la
+        diferencia se ve igual y ningún test de esta clase toma un puerto de verdad.
+        """
+
+        def __init__(self):
+            self._values = {
+                "modbus.slave_id": 1,
+                "modbus.tcp": {"enabled": False},
+                "modbus.rtu": {"enabled": False},
+            }
+
+        def get(self, key: str, default: object = None) -> object:
+            return self._values.get(key, default)
+
+    def test_without_a_map_the_server_refuses_to_serve(self, monkeypatch, caplog):
+        monkeypatch.setattr(main, "REGISTER_MAP_ERROR", self._REASON)
+        server = main._build_modbus_server(self._MockConfig())
+        with caplog.at_level("ERROR"):
+            asyncio.run(server.run_tcp_server())
+        assert server.tcp_status == STATUS_ERROR
+        assert self._REASON in caplog.text
+
+    def test_with_the_map_loaded_nothing_blocks_it(self, monkeypatch):
+        """
+        El caso normal, mirado donde se distingue: apagado por config el estado es
+        `disabled`. Si el bloqueo se disparara igual sería `error`, que es otra cosa y
+        manda a mirar otro archivo.
+        """
+        monkeypatch.setattr(main, "REGISTER_MAP_ERROR", "")
+        server = main._build_modbus_server(self._MockConfig())
+        asyncio.run(server.run_tcp_server())
+        assert server.tcp_status == STATUS_DISABLED
+
+    def test_it_passes_the_error_that_registers_reports(self):
+        """
+        No una copia ni un texto propio: el mismo valor. Un segundo vocabulario de «no
+        cargó el mapa» sería otra cosa más que mantener de acuerdo.
+        """
+        assert main.REGISTER_MAP_ERROR is registers.LOAD_ERROR
 
 
 class TestInferenceFields:

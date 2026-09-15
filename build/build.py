@@ -22,10 +22,11 @@ porque se reempaqueta mucho más seguido de lo que se recompila —cambiar el `c
 la planta no necesita cuarenta minutos de Nuitka.
 
 **Este archivo es maquinaria; los valores del bloque de más abajo son del fork.** Se
-cross-portea entero y sólo se editan las seis constantes marcadas: identidad del programa,
-icono y qué se excluye del build. Un fork que agrega un framework de inferencia pesado
-—TensorFlow, PyTorch— y no lo usa en el entregable lo suma a `_EXCLUDED`; uno que no
-excluye nada deja la tupla vacía y Nuitka empaqueta todo lo que `main.py` importa.
+cross-portea entero y sólo se editan las constantes de ese bloque: identidad del programa,
+icono, qué se excluye del build y qué opciones suma. Un fork que agrega un framework de
+inferencia pesado —TensorFlow, PyTorch— y no lo usa en el entregable lo suma a
+`_EXCLUDED`; uno que no excluye nada deja la tupla vacía y Nuitka empaqueta todo lo que
+`main.py` importa. Lo que no se arregla excluyendo un paquete va a `_EXTRA_FLAGS`.
 """
 
 import argparse
@@ -69,6 +70,18 @@ _ICON = "ui/icons/iea_100x100.ico"
 #     )
 _EXCLUDED: tuple = ()
 
+# Opciones de Nuitka que pide el proyecto y no valen para todos los forks. Vacía por
+# defecto. Acá va lo que arrastra un framework de inferencia y no se puede resolver
+# excluyendo un paquete — el caso típico es un import que hay que dejar entrar pero
+# desactivar. Ejemplo de un fork cuyo segmentador llega a `from numba import jit`:
+#
+#     _EXTRA_FLAGS = (
+#         # numba **no se puede excluir**: el paquete del modelo lo importa al cargarse.
+#         # Alcanza con que el import ande; la función decorada no se llama nunca.
+#         "--module-parameter=numba-disable-jit=yes",
+#     )
+_EXTRA_FLAGS: tuple = ()
+
 # Datos que viajan con el programa: los lee `paths.app_file()`, no `DATA_DIR`.
 _DATA_DIRS = ("ui/styles", "ui/icons")
 
@@ -97,6 +110,7 @@ def _flags(out_dir: str) -> list:
         "--assume-yes-for-downloads",
         f"--output-dir={out_dir}",
     ]
+    flags += list(_EXTRA_FLAGS)
     flags += [f"--nofollow-import-to={package}" for package in _EXCLUDED]
     flags += [f"--include-data-dir={directory}={directory}" for directory in _DATA_DIRS]
     return flags
