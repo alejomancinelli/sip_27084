@@ -284,7 +284,13 @@ def _read_mac_values() -> dict[str, str]:
 def _run_probe(argv: list) -> str:
     """Corre una consulta al sistema y devuelve su salida; cadena vacía si falla."""
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, check=True,
+        # `stdin=DEVNULL` a propósito: sin esto, subprocess hereda el STD_INPUT_HANDLE del
+        # proceso. Con `--windows-console-mode=attach`, ese handle queda atado a la consola
+        # que lanzó el ejecutable, y un lanzador que hace `start` y cierra su propia consola
+        # deja ahí un handle inválido — WinError 6 al duplicarlo, antes de llegar a correr
+        # la consulta. La sonda no necesita stdin, así que no hay motivo para heredar nada.
+        completed = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
+                                   text=True, check=True,
                                    timeout=_WINDOWS_PROBE_TIMEOUT_S, **_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning(f"No se pudo consultar el hardware ({argv[0]}): {e}.")

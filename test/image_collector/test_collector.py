@@ -252,9 +252,35 @@ class TestOnDemandMode:
 
         json_path = next(dataset_path.rglob("*.json"))
         payload = json.loads(json_path.read_text(encoding="utf-8"))
-        assert set(payload) == {"schema_version", "camera_slot", "timestamp_iso", "inference"}
+        assert set(payload) == {"schema_version", "camera_slot", "timestamp_iso",
+                                "context", "inference"}
         assert payload["camera_slot"] == "camera_1"
         assert payload["inference"] == {"confidence_pct": 90}
+        assert payload["context"] is None
+
+    def test_the_context_is_written_as_it_came(self, dataset_path, build_collector):
+        """
+        Los parámetros con los que se midió viajan con la medición.
+
+        Sin esto el dataset no se puede reanalizar: con la escala cambiada, nadie puede
+        saber después con qué números se calculó lo que quedó escrito.
+        """
+        collector = build_collector(_MockConfig(dataset_path))
+        collector.save_now("camera_1", _frame(1), inference={"confidence_pct": 90},
+                           context={"scale_px_per_cm": 23.11, "thresholds_um": {1: 5000}})
+
+        payload = json.loads(next(dataset_path.rglob("*.json")).read_text(encoding="utf-8"))
+        assert payload["context"] == {"scale_px_per_cm": 23.11,
+                                      "thresholds_um": {"1": 5000}}
+
+    def test_the_context_is_copied_at_the_call(self, dataset_path, build_collector):
+        collector = build_collector(_MockConfig(dataset_path))
+        context = {"scale_px_per_cm": 23.11}
+        collector.save_now("camera_1", _frame(1), inference={"ok": True}, context=context)
+        context["scale_px_per_cm"] = 999.0
+
+        payload = json.loads(next(dataset_path.rglob("*.json")).read_text(encoding="utf-8"))
+        assert payload["context"] == {"scale_px_per_cm": 23.11}
 
     def test_inference_is_copied_at_the_call(self, dataset_path, build_collector):
         """El llamador puede reusar su dict; lo que se guarda es lo que había."""

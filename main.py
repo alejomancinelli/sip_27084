@@ -104,7 +104,7 @@ from system.license.manager import (
 )
 from system.license.request import WeakFingerprintError, save_request
 from system.logger import logger
-from system.modbus.registers import REGISTERS, SCHEMA
+from system.modbus.registers import LOAD_ERROR as REGISTER_MAP_ERROR, REGISTERS, SCHEMA
 from system.modbus.server import SharedModbusServer
 from system.system_monitor import SystemMonitor
 from system.telemetry.persistence import PersistenceThread
@@ -490,7 +490,7 @@ class Application(QObject):
 
         # ── Modbus ───────────────────────────────────────────────────────────
         # `run()` bloquea hasta que `stop()` lo desarme, así que va en su propio hilo.
-        self._modbus = SharedModbusServer(config)
+        self._modbus = _build_modbus_server(config)
         self._modbus_thread = threading.Thread(
             target=self._modbus.run, name="modbus", daemon=True
         )
@@ -611,10 +611,10 @@ class Application(QObject):
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
-    # Cuatro decisiones del proyecto, juntas y marcadas para que un diff las muestre de
-    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta, y
-    # qué se dibuja además del resultado. Todo lo demás de este archivo es cableado
-    # genérico.
+    # Cinco decisiones del proyecto, juntas y marcadas para que un diff las muestre de
+    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta,
+    # qué se dibuja además del resultado, y con qué parámetros quedó medido lo que se
+    # guarda. Todo lo demás de este archivo es cableado genérico.
 
     def _build_monitor_content(self) -> QWidget:
         """
@@ -631,6 +631,24 @@ class Application(QObject):
         from ui.widgets.camera_grid import CameraGrid
 
         return CameraGrid(self._config)
+
+    def _build_dataset_context(self, camera_slot: str) -> dict | None:
+        """
+        Con qué parámetros se midió: lo que hace falta para reanalizar el dataset después.
+
+        Se guarda tal cual en el JSON de cada captura, y el colector no mira adentro.
+        **El template devuelve None porque su `process:` viene vacía**: no hay ningún
+        parámetro que declarar hasta que el fork diga qué mide.
+
+        Un fork que mide algo lo llena con lo que convierte su dato crudo en el número que
+        quedó escrito —una escala de píxel, un umbral, los límites de una clase—. No son
+        métricas y no van al PLC; existen porque sin ellas el dataset no se puede releer:
+        el área en píxeles se puede reconvertir con cualquier escala, pero saber **cuál**
+        estaba puesta cuando se guardó es lo único que dice si lo que quedó escrito sigue
+        siendo comparable con lo de hoy. Cambiar la escala entre dos muestras y no anotarlo
+        hace incomparables las dos.
+        """
+        return None
 
     def _build_classifier(self):
         """
@@ -829,11 +847,15 @@ class Application(QObject):
             self._http_video.push_annotated(result.camera_slot, annotated_bgr)
             self._rtsp_video.push_annotated(result.camera_slot, annotated_bgr)
 
-        # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector.
+        # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector. El
+        # contexto se arma una vez y vale para los dos modos: es del par (cámara, momento)
+        # y no del camino por el que se guarda.
+        context = self._build_dataset_context(result.camera_slot)
         if self._collector.mode == _COLLECTOR_MODE_INTERVAL:
             self._collector.push_frame(
                 result.camera_slot, result.source_bgr,
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
+                context=context,
             )
         elif self._scheduler.is_cycled(result.pipeline_slot):
             # En on_demand el que pide la captura es el ciclo, y es una por medición.
@@ -842,6 +864,7 @@ class Application(QObject):
             self._collector.save_now(
                 result.camera_slot, result.source_bgr,
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
+                context=context,
             )
 
         content = self._ui.monitor_content
@@ -1535,6 +1558,23 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true",
                         help="no abrir la ventana; también se puede con ui.enabled: false")
     return parser.parse_args(argv)
+
+
+def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:
+    """
+    El servidor Modbus, con el motivo por el que no debería arrancar si lo hay.
+
+    **`registers.py` detecta que el mapa no se pudo leer, pero no decide nada**: deja el
+    motivo en `LOAD_ERROR` y es el cableado el que se lo pasa al servidor. Sin eso los dos
+    transportes toman su puerto igual y sirven el datastore vacío, que es el peor de los
+    resultados: un PLC leyendo ceros no puede distinguir «no hay medición» de «falta el
+    mapa», y manda al integrador a buscar el problema al lado equivocado.
+
+    El resto del equipo sigue andando —mira, mide, guarda el dataset y publica a la
+    telemetría—: lo único que se cae es la publicación al PLC, que sin mapa no tendría a
+    dónde escribir.
+    """
+    return SharedModbusServer(config, blocked_reason=REGISTER_MAP_ERROR)
 
 
 def _build_inference_fields(results: list) -> dict:
