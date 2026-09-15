@@ -104,7 +104,7 @@ from system.license.manager import (
 )
 from system.license.request import WeakFingerprintError, save_request
 from system.logger import logger
-from system.modbus.registers import REGISTERS, SCHEMA
+from system.modbus.registers import LOAD_ERROR as REGISTER_MAP_ERROR, REGISTERS, SCHEMA
 from system.modbus.server import SharedModbusServer
 from system.system_monitor import SystemMonitor
 from system.telemetry.persistence import PersistenceThread
@@ -490,7 +490,7 @@ class Application(QObject):
 
         # ── Modbus ───────────────────────────────────────────────────────────
         # `run()` bloquea hasta que `stop()` lo desarme, así que va en su propio hilo.
-        self._modbus = SharedModbusServer(config)
+        self._modbus = _build_modbus_server(config)
         self._modbus_thread = threading.Thread(
             target=self._modbus.run, name="modbus", daemon=True
         )
@@ -1558,6 +1558,23 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true",
                         help="no abrir la ventana; también se puede con ui.enabled: false")
     return parser.parse_args(argv)
+
+
+def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:
+    """
+    El servidor Modbus, con el motivo por el que no debería arrancar si lo hay.
+
+    **`registers.py` detecta que el mapa no se pudo leer, pero no decide nada**: deja el
+    motivo en `LOAD_ERROR` y es el cableado el que se lo pasa al servidor. Sin eso los dos
+    transportes toman su puerto igual y sirven el datastore vacío, que es el peor de los
+    resultados: un PLC leyendo ceros no puede distinguir «no hay medición» de «falta el
+    mapa», y manda al integrador a buscar el problema al lado equivocado.
+
+    El resto del equipo sigue andando —mira, mide, guarda el dataset y publica a la
+    telemetría—: lo único que se cae es la publicación al PLC, que sin mapa no tendría a
+    dónde escribir.
+    """
+    return SharedModbusServer(config, blocked_reason=REGISTER_MAP_ERROR)
 
 
 def _build_inference_fields(results: list) -> dict:
