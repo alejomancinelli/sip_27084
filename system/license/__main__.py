@@ -15,7 +15,7 @@ import argparse
 import sys
 
 from system.config_manager import ConfigManager
-from system.license import fingerprint, manager, request
+from system.license import fingerprint, manager, request, schema
 
 
 def main(argv: list | None = None) -> int:
@@ -77,14 +77,21 @@ def _print_fingerprint() -> int:
 
     for source in sorted(components):
         print(f"{source:<20} {components[source]}")
-    print(f"\n{len(components)} fuentes; el default exige "
-          f"{min(fingerprint.DEFAULT_MIN_MATCHES, len(components))}.")
+    print(f"\n{len(components)} fuentes; una licencia exige al menos "
+          f"{schema.FINGERPRINT_MIN_FLOOR} coincidencias.")
+
+    if len(components) < schema.FINGERPRINT_MIN_FLOOR:
+        print("Con menos fuentes que eso no se puede emitir una licencia para este equipo.")
+        return 1
     return 0
 
 
 def _write_request(config: ConfigManager, output: str | None) -> int:
     try:
         path = request.save_request(config, output)
+    except request.WeakFingerprintError as e:
+        print(e, file=sys.stderr)
+        return 1
     except OSError as e:
         print(f"No se pudo escribir la solicitud: {e}", file=sys.stderr)
         return 1
