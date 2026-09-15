@@ -474,9 +474,10 @@ def main() -> int:
         if not _copy_into(os.path.join(_REPO_ROOT, source_rel),
                           os.path.join(installation, target_rel)):
             missing.append(source_rel)
-    if _copy_into(os.path.join(_REPO_ROOT, _MODELS_DIR),
-                  os.path.join(installation, _MODELS_DIR)):
-        pass   # el tamaño ya entra en el total de installation/ que se imprime abajo
+    # Sin modelo todavía no hay nada que copiar, y no es un faltante: no entra a
+    # `missing`. El tamaño de lo que sí haya ya entra en el total que se imprime abajo.
+    _copy_into(os.path.join(_REPO_ROOT, _MODELS_DIR),
+               os.path.join(installation, _MODELS_DIR))
     print(f"    installation/   {_size_mb(installation):6.1f} MB")
 
     _write_text(os.path.join(release, _ENV_NAME), _ENV_BODY)
