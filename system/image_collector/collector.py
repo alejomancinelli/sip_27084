@@ -38,6 +38,17 @@ la original — la carpeta es lo que las distingue:
 La carpeta lleva la clave del slot (`camera_1`), no el `name` de la cámara: el
 nombre es texto de UI y puede cambiar sin romper nada, el slot es la identidad.
 
+El JSON es el contrato con quien reentrena, y va versionado —`schema_version`—:
+
+    {"schema_version": "1.1", "camera_slot": ..., "timestamp_iso": ...,
+     "context": {...} | null, "inference": {...} | null}
+
+**`context` son los parámetros con los que se produjo esa medición** —una escala, un
+umbral— y el colector no mira adentro: los guarda como vinieron. Existe porque un dataset
+sin ellos no se puede reanalizar: dentro de seis meses, con la escala cambiada, nadie
+puede saber con qué números se calculó lo que quedó escrito. Quién los arma es el
+cableado, que es el único que sabe qué mide esta instalación.
+
 Tres filtros deciden qué llega a disco, en este orden, en los dos modos:
   - `save_conditions`: predicados sobre el dict de inferencia (ver
     conditions). Lista vacía = pasa todo.
@@ -107,7 +118,8 @@ _DIR_ANNOTATED = "annotated"
 _DATE_FORMAT = "%Y-%m-%d"
 _TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S%f"     # ordena cronológicamente por nombre de archivo
 
-_JSON_SCHEMA_VERSION = "1.0"
+# 1.1 agrega `context`: los parámetros con los que se produjo la medición.
+_JSON_SCHEMA_VERSION = "1.1"
 # 0–9. Bajo a propósito: el PNG es sin pérdida en cualquier nivel, así que comprimir
 # más cuesta CPU del hilo que escribe y no cambia la imagen del dataset.
 _PNG_COMPRESSION = 1
@@ -216,6 +228,7 @@ class _SaveJob:
     frame_bgr: np.ndarray | None
     annotated_bgr: np.ndarray | None
     inference: dict | None
+    context: dict | None
 
 
 class ImageCollector:
@@ -330,7 +343,8 @@ class ImageCollector:
 
     def push_frame(self, camera_slot: str, frame_bgr: np.ndarray | None, *,
                    annotated_bgr: np.ndarray | None = None,
-                   inference: dict | None = None):
+                   inference: dict | None = None,
+                   context: dict | None = None):
         """
         Deja el último frame de esa cámara para que el hilo lo guarde. Modo interval.
 
@@ -351,7 +365,7 @@ class ImageCollector:
                 "descarta. En modo on_demand el guardado se pide con save_now()."
             )
             return
-        job = self._build_job(camera_slot, frame_bgr, annotated_bgr, inference)
+        job = self._build_job(camera_slot, frame_bgr, annotated_bgr, inference, context)
         if job is None:
             return
         with self._latest_lock:
@@ -359,7 +373,8 @@ class ImageCollector:
 
     def save_now(self, camera_slot: str, frame_bgr: np.ndarray | None, *,
                  annotated_bgr: np.ndarray | None = None,
-                 inference: dict | None = None) -> bool:
+                 inference: dict | None = None,
+                 context: dict | None = None) -> bool:
         """
         Guarda esa captura ahora y devuelve si algo llegó a disco. Modo on_demand.
 
@@ -373,13 +388,18 @@ class ImageCollector:
         correspondan siempre a la misma captura. Los frames se copian acá; el dict de
         inferencia se guarda como vino, así que el llamador no lo modifica después.
 
+        `context` son los parámetros con los que se produjo esa medición —una escala, un
+        umbral—: se guardan tal cual en el JSON y el colector no mira adentro. Existen
+        porque un dataset sin ellos no se puede reanalizar: dentro de seis meses, con la
+        escala cambiada, nadie puede saber con qué números se calculó lo que quedó escrito.
+
         Devuelve False si la recolección está apagada, no vino nada que guardar, algún
         filtro descartó el frame o ninguna escritura tuvo éxito. Funciona en los dos
         modos: en interval es el guardado puntual que no espera la vuelta del hilo.
         """
         if not self.is_active:
             return False
-        job = self._build_job(camera_slot, frame_bgr, annotated_bgr, inference)
+        job = self._build_job(camera_slot, frame_bgr, annotated_bgr, inference, context)
         if job is None:
             return False
         return self._write(job)
@@ -733,7 +753,8 @@ class ImageCollector:
     # ── Internos ─────────────────────────────────────────────────────────────
 
     def _build_job(self, camera_slot: str, frame_bgr: np.ndarray | None,
-                   annotated_bgr: np.ndarray | None, inference: dict | None) -> _SaveJob | None:
+                   annotated_bgr: np.ndarray | None, inference: dict | None,
+                   context: dict | None) -> _SaveJob | None:
         """
         Copia la captura en un job propio, o None si no vino nada que guardar.
 
@@ -748,6 +769,7 @@ class ImageCollector:
             frame_bgr=None if frame_bgr is None else frame_bgr.copy(),
             annotated_bgr=None if annotated_bgr is None else annotated_bgr.copy(),
             inference=dict(inference) if inference else None,
+            context=dict(context) if context else None,
         )
 
     def _get_dataset_path(self) -> str:
@@ -760,6 +782,7 @@ class ImageCollector:
             "schema_version": _JSON_SCHEMA_VERSION,
             "camera_slot": job.camera_slot,
             "timestamp_iso": job.captured_at.isoformat(),
+            "context": job.context,
             "inference": job.inference,
         }
         try:

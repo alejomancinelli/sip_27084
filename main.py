@@ -611,10 +611,10 @@ class Application(QObject):
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
-    # Cuatro decisiones del proyecto, juntas y marcadas para que un diff las muestre de
-    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta, y
-    # qué se dibuja además del resultado. Todo lo demás de este archivo es cableado
-    # genérico.
+    # Cinco decisiones del proyecto, juntas y marcadas para que un diff las muestre de
+    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta,
+    # qué se dibuja además del resultado, y con qué parámetros quedó medido lo que se
+    # guarda. Todo lo demás de este archivo es cableado genérico.
 
     def _build_monitor_content(self) -> QWidget:
         """
@@ -631,6 +631,24 @@ class Application(QObject):
         from ui.widgets.camera_grid import CameraGrid
 
         return CameraGrid(self._config)
+
+    def _build_dataset_context(self, camera_slot: str) -> dict | None:
+        """
+        Con qué parámetros se midió: lo que hace falta para reanalizar el dataset después.
+
+        Se guarda tal cual en el JSON de cada captura, y el colector no mira adentro.
+        **El template devuelve None porque su `process:` viene vacía**: no hay ningún
+        parámetro que declarar hasta que el fork diga qué mide.
+
+        Un fork que mide algo lo llena con lo que convierte su dato crudo en el número que
+        quedó escrito —una escala de píxel, un umbral, los límites de una clase—. No son
+        métricas y no van al PLC; existen porque sin ellas el dataset no se puede releer:
+        el área en píxeles se puede reconvertir con cualquier escala, pero saber **cuál**
+        estaba puesta cuando se guardó es lo único que dice si lo que quedó escrito sigue
+        siendo comparable con lo de hoy. Cambiar la escala entre dos muestras y no anotarlo
+        hace incomparables las dos.
+        """
+        return None
 
     def _build_classifier(self):
         """
@@ -829,11 +847,15 @@ class Application(QObject):
             self._http_video.push_annotated(result.camera_slot, annotated_bgr)
             self._rtsp_video.push_annotated(result.camera_slot, annotated_bgr)
 
-        # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector.
+        # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector. El
+        # contexto se arma una vez y vale para los dos modos: es del par (cámara, momento)
+        # y no del camino por el que se guarda.
+        context = self._build_dataset_context(result.camera_slot)
         if self._collector.mode == _COLLECTOR_MODE_INTERVAL:
             self._collector.push_frame(
                 result.camera_slot, result.source_bgr,
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
+                context=context,
             )
         elif self._scheduler.is_cycled(result.pipeline_slot):
             # En on_demand el que pide la captura es el ciclo, y es una por medición.
@@ -842,6 +864,7 @@ class Application(QObject):
             self._collector.save_now(
                 result.camera_slot, result.source_bgr,
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
+                context=context,
             )
 
         content = self._ui.monitor_content
