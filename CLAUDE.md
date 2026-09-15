@@ -355,10 +355,11 @@ Lo que no se deduce leyendo un archivo suelto:
   dejaría al PLC viendo un enlace muerto, indistinguible de un cable cortado, y mandaría
   al integrador a buscar el problema equivocado.
 - **El estado inválido se ve en cuatro lados a la vez, con el mismo criterio.** El chip de
-  la pestaña, el bit y el registro que van al PLC, un chip rojo persistente en el footer
-  y un cartel modal al abrir la ventana —una sola vez por corrida, no en cada recheck
-  horario— salen todos de `should_report_invalid()`: ninguno puede decir que está mal
-  mientras otro dice que está bien.
+  la pestaña, el bit y el registro que van al PLC, la barra de estado pintada de rojo
+  —la barra entera y no un chip: en 28 px un chip se pierde, y esto no es algo que se
+  pueda pasar por alto— y un cartel modal al abrir la ventana —una sola vez por corrida,
+  no en cada recheck horario— salen todos de `should_report_invalid()`: ninguno puede
+  decir que está mal mientras otro dice que está bien.
 - **Los entitlements restringen distinto según si hay una licencia real que los declare.**
   Sin archivo utilizable (`absent`/`invalid`) el corte es total —nada arranca, nada se
   publica, sin importar la política—: no hay nada que decir qué se compró, así que lo más
