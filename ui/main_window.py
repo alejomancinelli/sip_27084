@@ -14,11 +14,12 @@ Tres cosas que no son obvias:
     de GPIO, así que `set_gpio()` es lo que lo habilita: sin eso el botón no está, en
     vez de estar y no hacer nada.
   - **Sin licencia válida, el footer lo dice todo el tiempo y lo dice una sola vez al
-    abrir.** `update_license()` prende un chip rojo persistente en el footer mientras el
-    estado lo amerite —el mismo criterio que el bit que va al PLC— y, en el primer
-    `showEvent`, un cartel modal si el problema ya estaba ahí al arrancar. El cartel es
-    de una sola vez a propósito: molestar en cada recheck horario sería peor que el
-    problema que avisa.
+    abrir.** `update_license()` pinta toda la barra de rojo mientras el estado lo
+    amerite —el mismo criterio que el bit que va al PLC—, y no un chip: en una barra de
+    28px un chip se pierde, y esto no es algo que se pueda pasar por alto. En el primer
+    `showEvent` se suma un cartel modal si el problema ya estaba ahí al arrancar. El
+    cartel es de una sola vez a propósito: molestar en cada recheck horario sería peor
+    que el problema que avisa.
 
 La ventana no toca hardware ni protocolos: reparte lo que recibe y persiste config a
 través del ConfigView.
@@ -42,7 +43,6 @@ from ui.strings import tr
 from ui.views.config_view import ConfigView
 from ui.views.diagnostics_view import DiagnosticsView
 from ui.views.monitor_view import MonitorView
-from ui.widgets.status_chip import CHIP_ERROR, StatusChip
 
 # Índices de las vistas en el QStackedWidget.
 VIEW_MONITOR = 0
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self._is_dark = True
         self._flash_step = 0
         self._license_status: dict = {}
+        self._license_invalid = False
         # El cartel de arranque es de una sola vez: sin este flag, minimizar y restaurar
         # la ventana —que también dispara `showEvent`— lo mostraría de nuevo.
         self._did_show_license_warning = False
@@ -179,14 +180,14 @@ class MainWindow(QMainWindow):
         """
         Estado de la licencia, tal como sale de `LicenseManager.get_status()`.
 
-        Además de la pestaña, prende o apaga el chip persistente del footer. Se guarda el
+        Además de la pestaña, pinta o despinta de rojo la barra de estado. Se guarda el
         último status recibido porque puede llegar antes de que la ventana se muestre —el
         cableado lo publica en el arranque, antes de `show()`—, y el cartel modal necesita
         ese valor recién en el primer `showEvent`.
         """
         self._license_status = status
         self.diagnostics_view.update_license(status)
-        self._update_license_chip(status)
+        self._update_license_alert(status)
 
     def show_license_result(self, is_ok: bool, message: str):
         """Resultado de instalar una licencia, para que el operador lo vea donde apretó."""
@@ -334,12 +335,12 @@ class MainWindow(QMainWindow):
 
     def _build_footer(self) -> QWidget:
         """
-        Barra de estado: el mensaje a la izquierda, el chip de licencia y la versión a
-        la derecha.
+        Barra de estado: el mensaje a la izquierda y la versión a la derecha.
 
         La versión no cambia nunca en la corrida, así que se arma una vez. El mensaje sí,
-        y es el que hace destellar la barra. El chip de licencia es el único de los tres
-        que empieza oculto: `update_license()` lo prende recién cuando corresponde.
+        y es el que hace destellar la barra. Sin licencia válida es la barra entera la
+        que se pinta de rojo —ver `_update_license_alert()`—, no un widget aparte: en
+        28px de alto un chip se pierde y esto no es algo que se pueda pasar por alto.
         """
         self._footer_bar = QWidget()
         self._footer_bar.setObjectName("appFooter")
@@ -353,13 +354,6 @@ class MainWindow(QMainWindow):
         row.addWidget(self._footer)
         row.addStretch()
 
-        # Reutiliza el mismo chip que ya pintan los dos temas por `objectName`: ningún QSS
-        # nuevo, y el rojo es el mismo rojo que cualquier otro estado de error de la UI.
-        self._license_chip = StatusChip()
-        self._license_chip.setVisible(False)
-        row.addWidget(self._license_chip)
-        row.addSpacing(_GROUP_SPACING_PX)
-
         version_label = QLabel(self._build_version_text())
         version_label.setObjectName("footerVersion")
         row.addWidget(version_label)
@@ -368,13 +362,24 @@ class MainWindow(QMainWindow):
         self._flash_timer.timeout.connect(self._on_flash_tick)
         return self._footer_bar
 
-    def _update_license_chip(self, status: dict):
-        """Prende o apaga el chip del footer. El mismo criterio que el bit que va al PLC."""
-        invalid = bool(status.get("should_report_invalid"))
-        self._license_chip.setVisible(invalid)
-        if invalid:
-            self._license_chip.set_state(CHIP_ERROR, tr("footer_license_alert"))
-            self._license_chip.setToolTip(str(status.get("reason") or ""))
+    def _update_license_alert(self, status: dict):
+        """
+        Pinta la barra entera de rojo mientras la licencia no valga, con el motivo en
+        el tooltip. El mismo criterio que el bit que va al PLC.
+        """
+        self._license_invalid = bool(status.get("should_report_invalid"))
+        self._footer_bar.setToolTip(str(status.get("reason") or "") if self._license_invalid
+                                    else "")
+        if not self._flash_timer.isActive():
+            self._apply_footer_background()
+
+    def _apply_footer_background(self):
+        """Fondo persistente de la barra: rojo sin licencia válida, si no el del tema."""
+        if self._license_invalid:
+            color = theme.get_palette(self._is_dark)["footer_alert"]
+            self._footer_bar.setStyleSheet(f"QWidget#appFooter {{ background-color: {color}; }}")
+        else:
+            self._footer_bar.setStyleSheet("")
 
     def _warn_no_license(self, status: dict):
         """Cartel modal de una sola vez. El motivo es el mismo que ya lee la pestaña."""
@@ -398,20 +403,24 @@ class MainWindow(QMainWindow):
 
     def _on_flash_tick(self):
         """
-        Un paso de la interpolación del color de aviso al fondo del tema.
+        Un paso de la interpolación del color de aviso al fondo de la barra.
 
-        El selector es explícito y no un `background-color` suelto: una hoja sin selector
-        se propaga a los hijos, y el mensaje y la versión quedarían con su propio recuadro
-        de color en vez de sobre la barra.
+        El destino no es siempre el fondo del tema: sin licencia válida, la barra tiene
+        que volver al rojo de alerta y no al gris de siempre, o un mensaje nuevo —incluso
+        uno trivial, como guardar la configuración— apagaría la alerta durante unos
+        segundos. El selector es explícito y no un `background-color` suelto: una hoja
+        sin selector se propaga a los hijos, y el mensaje y la versión quedarían con su
+        propio recuadro de color en vez de sobre la barra.
         """
         if self._flash_step >= _FLASH_STEPS:
             self._flash_timer.stop()
-            self._footer_bar.setStyleSheet("")
+            self._apply_footer_background()
             return
         palette = theme.get_palette(self._is_dark)
+        target_key = "footer_alert" if self._license_invalid else "footer_background"
         progress = self._flash_step / (_FLASH_STEPS - 1)
         color = _blend(QColor(palette["footer_flash"]),
-                       QColor(palette["footer_background"]), progress)
+                       QColor(palette[target_key]), progress)
         self._footer_bar.setStyleSheet(
             f"QWidget#appFooter {{ background-color: {color.name()}; }}"
         )

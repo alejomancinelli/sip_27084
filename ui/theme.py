@@ -43,6 +43,7 @@ _PALETTE_DARK = {
     "roi_outline":        "#1e78ff",
     "footer_background":  "#2c2c2c",
     "footer_flash":       "#ffdc00",
+    "footer_alert":       "#c62828",
 }
 
 # Paleta del tema claro. Mismas claves que la oscura: si falta una, el widget que la
@@ -62,6 +63,7 @@ _PALETTE_LIGHT = {
     "roi_outline":        "#1e78ff",
     "footer_background":  "#d8d8d8",
     "footer_flash":       "#ffdc00",
+    "footer_alert":       "#c62828",
 }
 
 # Color de la serie de cada gráfica de hardware, por rol. No cambian con el tema:
