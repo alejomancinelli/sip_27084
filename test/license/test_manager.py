@@ -395,6 +395,19 @@ class TestInstall:
         assert not is_installed
         assert "equipo" in message
 
+    def test_a_license_issued_after_the_machine_clock_flags_the_clock(self, build_manager,
+                                                                     sign_license, tmp_path):
+        # La emisión es la única fecha firmada que el equipo ve al instalar: con el reloj
+        # ya atrasado de antes, el retroceso se nota ahora y no dentro de un año.
+        incoming = tmp_path / "recibida.lic"
+        incoming.write_text(sign_license(issued_at=days_from_now(30)), encoding="ascii")
+
+        license_manager = build_manager()
+        is_installed, _ = license_manager.install(str(incoming))
+
+        assert is_installed
+        assert license_manager.state == manager.STATE_TAMPERED
+
     def test_a_file_that_does_not_exist_is_reported_and_not_raised(self, build_manager):
         is_installed, message = build_manager().install("no/existe.lic")
         assert not is_installed and message

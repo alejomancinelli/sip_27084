@@ -9,6 +9,11 @@ sí se puede es que **atrasarlo se note**. Se guarda el instante más alto que s
 un HMAC derivado de la huella de la máquina para que editar el archivo a mano no alcance,
 y si el reloj aparece más atrás que ese valor la licencia queda sospechosa.
 
+El instante más alto no sale sólo del propio reloj: cualquier fecha firmada que el equipo
+reciba legítimamente sirve para subir la marca, y la emisión de la licencia que se acaba
+de instalar es una. Por eso un equipo con el reloj ya atrasado antes de instalar no
+empieza de cero — `advance_to()` es la puerta por donde entra esa fecha.
+
 Lo que esto **no** da: un usuario con root, tiempo y ganas puede borrar el archivo y
 volver a empezar. Lo que sí: un atraso casual —o un intento ingenuo— deja de funcionar, y
 el equipo lo dice en el log en vez de seguir como si nada. Con internet, la fuente de
@@ -88,6 +93,20 @@ class ClockGuard:
         except (ValueError, KeyError, TypeError):
             logger.warning("El estado de licencia tiene una fecha ilegible.")
             return None
+
+    def advance_to(self, instant: datetime) -> bool:
+        """
+        Sube la marca hasta `instant` si es más alta que la guardada; nunca la baja.
+
+        Es lo que deja que un instante firmado por otro —la emisión de la licencia— entre
+        a la marca sin que el equipo tenga que haberlo visto pasar por su propio reloj.
+        Devuelve False si no hacía falta moverla o si no se pudo escribir, que para el
+        llamador son lo mismo: la marca quedó donde estaba.
+        """
+        last_seen = self.read_last_seen_utc()
+        if last_seen is not None and last_seen >= instant:
+            return False
+        return self.save_last_seen_utc(instant)
 
     def save_last_seen_utc(self, now_utc: datetime) -> bool:
         """Guarda el instante como último visto. Devuelve False si no se pudo escribir."""

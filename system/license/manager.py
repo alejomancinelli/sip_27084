@@ -345,6 +345,11 @@ class LicenseManager:
         except OSError as e:
             return False, f"No se pudo escribir la licencia: {e}"
 
+        # La emisión es una fecha firmada por el proveedor, así que sube la marca de reloj
+        # aunque este equipo nunca la haya visto pasar: un equipo cuya fecha ya estaba
+        # atrasada antes de instalar queda marcado ahora y no dentro de un año.
+        self._clock_guard.advance_to(candidate.issued_at)
+
         self._evaluate()
         self._log_state()
         # Cámaras y pipelines se deciden una sola vez, al construir la aplicación: instalar
@@ -460,8 +465,9 @@ class LicenseManager:
             # ya es borrable por cualquiera con acceso al equipo — el esquema nunca
             # pretendió otra cosa.
             self._set_state(STATE_TAMPERED, parsed.policy,
-                            "El reloj del equipo quedó más atrás que la última vez que "
-                            "arrancó. La licencia no se puede evaluar. Si la fecha del "
+                            "El reloj del equipo quedó más atrás que el último instante "
+                            "conocido: el arranque anterior, o la emisión de la licencia "
+                            "instalada. La licencia no se puede evaluar. Si la fecha del "
                             "equipo es la correcta, borrar "
                             f"{self._clock_guard.state_path} y volver a arrancar.")
             return
