@@ -1,6 +1,8 @@
 """Tests de la huella: qué se descarta, cómo se cuenta el N-de-M, y que leer el
 hardware real no pueda tumbar el arranque."""
 
+import subprocess
+
 import pytest
 
 from system.license import fingerprint
@@ -93,6 +95,43 @@ class TestMachineKey:
 
     def test_empty_components_still_give_a_usable_key(self):
         assert len(fingerprint.build_machine_key({})) == 32
+
+
+class TestRunProbe:
+    """
+    Cómo se lanza la consulta al sistema, que es lo que decide si anda compilada.
+
+    El compilado es el único que importa acá: desde fuentes el estado es
+    `unlicensed_build` y la huella no se usa para nada.
+    """
+
+    def test_the_probe_does_not_inherit_stdin(self, monkeypatch):
+        """
+        Sin esto, subprocess hereda el STD_INPUT_HANDLE del proceso.
+
+        Con `--windows-console-mode=attach` ese handle queda atado a la consola que lanzó
+        el ejecutable, y el lanzador del entregable hace `start` y cierra la suya: queda
+        un handle inválido y `subprocess` muere con WinError 6 al duplicarlo, antes de
+        llegar a correr la consulta. La sonda no lee nada de stdin, así que no hay motivo
+        para heredarlo.
+        """
+        seen = {}
+
+        def _fake_run(argv, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(fingerprint.subprocess, "run", _fake_run)
+        fingerprint._run_probe(["wmic", "csproduct", "get", "uuid"])
+        assert seen["stdin"] == subprocess.DEVNULL
+
+    def test_a_probe_that_cannot_run_is_a_warning_and_not_an_exception(self, monkeypatch):
+        """El contrato del módulo: una fuente ilegible es un dato, no una excepción."""
+        def _fake_run(argv, **kwargs):
+            raise OSError(6, "El identificador no es valido")
+
+        monkeypatch.setattr(fingerprint.subprocess, "run", _fake_run)
+        assert fingerprint._run_probe(["wmic"]) == ""
 
 
 class TestReadComponents:
