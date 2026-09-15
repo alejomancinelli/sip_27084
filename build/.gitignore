@@ -1,0 +1,9 @@
+# Salidas de compilación: se regeneran. Los scripts sí se versionan.
+*
+!.gitignore
+!README.md
+!build.py
+!make_release.py
+
+# Si el fork empieza a medir sus builds, agrega su propio results.csv acá y lo saca de
+# este .gitignore: no viene con el template porque los números son de cada instalación.
