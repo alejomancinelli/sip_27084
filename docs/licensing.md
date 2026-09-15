@@ -6,8 +6,9 @@ un cartel de licencia» o «el equipo no publica nada» lee esto.
 
 **Estado: implementado y sin usar en producción.** El subsistema es `system/license/` y
 está cableado en `main.py`, pero le faltan dos cosas para tener efecto: la clave pública
-real en `system/license/public_key.py` y un build compilado. Desde el código fuente la
-licencia **no se verifica** y el programa lo dice al arrancar.
+real, que la genera el repositorio de firma en el momento de compilar (ver «La clave con
+la que se verifica»), y un build compilado. Desde el código fuente la licencia **no se
+verifica** y el programa lo dice al arrancar.
 
 ## Qué hace la licencia
 
@@ -80,6 +81,13 @@ Deja `license_request.json` en la raíz. `-o <ruta>` lo escribe en otro lado.
 La solicitud lleva **hashes** de la huella de hardware, nunca los valores: se puede mandar
 por mail sin cuidado. También lleva cuántas cámaras y qué features declara el config, que
 es lo que el proveedor cruza contra lo que se vendió.
+
+**Si el equipo expone menos de dos fuentes de huella, la solicitud no se genera** y el
+motivo dice cuáles se leyeron. No es un capricho: una licencia atada a una sola fuente
+vale en cualquier equipo al que se le mueva esa pieza, y el proveedor se niega a emitirla
+igual, así que es mejor enterarse con el equipo delante. Lo que hay que resolver está del
+lado del hardware —una fuente que pide root, un DMI de relleno, una placa de red que el
+sistema ve como virtual—: `python -m system.license fingerprint` dice qué se ve hoy.
 
 ## Instalar la licencia recibida
 
@@ -237,7 +245,8 @@ Antes de entregar el equipo:
 
 1. Correr `python -m system.license fingerprint` y confirmar que aparezcan **al menos dos
    fuentes estables** (`board_uuid`, `board_serial` o `module_serial`). Con menos, un
-   reemplazo de pieza puede dejar afuera al cliente.
+   reemplazo de pieza puede dejar afuera al cliente, y ni la solicitud se genera ni la
+   licencia se emite: es lo primero que hay que destrabar, antes de seguir con el resto.
 2. Generar la solicitud, pedir la licencia y **dejarla instalada**.
 3. Verificar con `python -m system.license status` que diga «Licencia válida».
 4. Confirmar que `project.client` y `project.project_id` del `config.yaml` sean los de la
@@ -246,6 +255,47 @@ Antes de entregar el equipo:
 5. **Con licencia anual**, verificar que el programa del PLC enclave el bit de licencia y
    compare el reloj del equipo contra el suyo (ver «Hasta dónde llega la defensa del
    reloj»). Sin eso, el vencimiento se esquiva atrasando la fecha del equipo.
+
+## La clave con la que se verifica
+
+*Esta sección es del proveedor, no del cliente.*
+
+La licencia se firma con una clave privada Ed25519 que vive **sólo en el repositorio de
+firma**, que no se forkea ni se entrega. En el equipo va nada más que la mitad pública, y
+cada licencia declara en `key_id` con cuál se verifica.
+
+**La clave pública no se escribe a mano en el fork.** La genera el repositorio de firma en
+`system/license/_public_key.py` justo antes de compilar, partida en fragmentos
+enmascarados que se rearman recién al llamarla:
+
+    python -m licensing keymodule --out <fork>/system/license/_public_key.py
+
+Ese archivo está en el `.gitignore` y se borra después del build. El motivo es concreto:
+una clave pública guardada como un base64 de 43 caracteres se encuentra en el binario con
+un volcado de strings y se reemplaza por otra del mismo largo, y con eso cualquiera firma
+sus propias licencias. `system/license/public_key.py` —el que sí está versionado— es sólo
+la puerta que consulta esa tabla, y viene vacío: un checkout de fuentes no verifica nada
+y no tiene por qué.
+
+**Hay una sola clave para todos los proyectos.** Lo que separa una instalación de otra es
+la huella, no el nombre de la clave; una clave por proyecto multiplicaría los secretos a
+custodiar sin aislar nada, porque todos vivirían en el mismo repositorio de firma. El
+`key_id` es un contador (`iea-1`) sin año ni país: el verificador nunca lo valida como
+alcance, así que un `iea-2026-ar` sería un nombre que miente.
+
+### Rotar la clave: son dos etapas, y la segunda es la que cierra el agujero
+
+Agregar la clave nueva no revoca nada. Mientras la comprometida siga estando, el que la
+robó sigue firmando licencias que el binario acepta.
+
+1. Se publica un build con las **dos** claves y se reemite a todas las plantas con el
+   `key_id` nuevo. Nadie se queda afuera, porque las licencias viejas todavía validan.
+   El generador emite las dos si no se le pasa `--key-id`.
+2. Cuando no queda ninguna licencia viva con la clave vieja, se publica un build con la
+   vieja **borrada** (`--key-id <la nueva>`). Recién ahí la clave robada deja de servir.
+
+Entre las dos etapas el esquema está comprometido y hay poco que hacer al respecto: por
+eso la etapa 2 se planifica junto con la 1 y no «cuando haya tiempo».
 
 ## Probar el comportamiento sin entregar nada
 

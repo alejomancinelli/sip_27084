@@ -67,7 +67,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       license/                ata el equipo a la máquina para la que se emitió la licencia
         schema.py             nivel 1 — dueño del formato del .lic: campos, token, firma
         verify.py             nivel 0 — Ed25519 contra la clave pública embebida
-        public_key.py         nivel 1 — clave pública por `key_id`; la privada NO vive acá
+        public_key.py         nivel 1 — clave pública por `key_id`; la tabla la genera el
+                              build en `_public_key.py`, y la privada NO vive acá
         policy.py             nivel 1 — qué hace el equipo cuando la licencia no vale
         fingerprint.py        nivel 0 — huella por componente; nunca levanta excepción
         clock.py              nivel 0 — último-visto firmado; caza el reloj atrasado
@@ -314,6 +315,14 @@ Lo que no se deduce leyendo un archivo suelto:
   la licencia declara cuántas tienen que seguir coincidiendo, y con eso un disco o una
   placa de red reemplazados no dejan afuera al cliente que pagó. Esa es la falla que
   hunde estos esquemas, y por eso el N-de-M no es un lujo.
+- **El N-de-M tiene un piso y por debajo no hay licencia.** Dos fuentes declaradas y dos
+  coincidencias exigidas (`schema.FINGERPRINT_MIN_FLOOR`), y el mismo número del otro lado:
+  el firmante no la emite y el equipo no la parsea. Una huella vacía coincidía con todas
+  las máquinas, así que una sola licencia forjada corría en cualquier equipo —la falla que
+  vuelve decorativo todo el resto del subsistema—, y una sola fuente es una sola pieza que
+  reemplazar para que la licencia viaje. Un equipo que no llega a dos fuentes **no se puede
+  licenciar**: la solicitud ni se genera, con el motivo, porque el problema está en el
+  hardware y hay que verlo con el equipo delante y no por mail tres días después.
 - **Sin licencia utilizable el equipo abre igual, en modo de puesta en marcha.** `absent`
   e `invalid` ya no frenan el arranque: son los dos estados que MÁS restringen. Ningún
   pipeline arranca y ninguna medición sale, sin importar la política por defecto —no hay
@@ -357,14 +366,22 @@ Lo que no se deduce leyendo un archivo suelto:
   lógica, como con todo el resto del mapa. Sólo afecta a las licencias con vencimiento;
   una perpetua no tiene fecha que esquivar.
 - **La clave privada no vive en este repo y nunca va a vivir acá.** Acá va sólo la pública,
-  en `system/license/public_key.py`, compilada adentro del binario: si se pudiera cargar
-  de un archivo al lado del ejecutable, cualquiera pondría la suya y firmaría sus propias
-  licencias. Hay **una sola clave** para todos los proyectos —lo que separa una
-  instalación de otra es la huella, no el nombre de la clave— y el `key_id` es un contador
-  (`iea-1`) sin año ni país, porque el verificador nunca lo valida como alcance. Rotar es
-  de dos etapas y la segunda —sacar la clave vieja de la tabla— es la que cierra el
-  agujero. El repositorio que firma es privado y aparte; su encargo está en
+  compilada adentro del binario: si se pudiera cargar de un archivo al lado del ejecutable,
+  cualquiera pondría la suya y firmaría sus propias licencias. Hay **una sola clave** para
+  todos los proyectos —lo que separa una instalación de otra es la huella, no el nombre de
+  la clave— y el `key_id` es un contador (`iea-1`) sin año ni país, porque el verificador
+  nunca lo valida como alcance. Rotar es de dos etapas y la segunda —sacar la clave vieja
+  de la tabla— es la que cierra el agujero; el procedimiento está en `docs/licensing.md`.
+  El repositorio que firma es privado y aparte; su encargo está en
   `.claude/plans/licensing-signer-repo.md`.
+- **La clave pública tampoco se escribe a mano: la genera el build**, en un
+  `system/license/_public_key.py` gitignoreado, partida en fragmentos enmascarados que se
+  rearman al llamarla —el mismo recurso que `_model_key.py`—. Un base64 de 43 caracteres
+  adentro del binario se encuentra con un volcado de strings y se reemplaza por otro del
+  mismo largo, y con eso cualquiera firma sus propias licencias: la indirección no lo
+  impide, lo encarece. `public_key.py` sigue versionado y es sólo la puerta que consulta
+  esa tabla; viene vacío, porque un checkout de fuentes no verifica ninguna licencia y no
+  tiene por qué —ahí el estado es `unlicensed_build`— y porque los tests inyectan la suya.
 - **Los pesos del modelo se protegen con cifrado autenticado, no con un hash.** AES-256-GCM
   da confidencialidad e integridad en una sola pasada: si el archivo abre, es auténtico y
   está íntegro; si le cambiaron un bit, no abre. Por eso **no hay ningún hash que guardar
@@ -517,9 +534,11 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
   —cupo de cámaras, features por pipeline, vencimiento, huella, modo de puesta en marcha
   sin licencia, bit y reloj al PLC, pestaña de diagnóstico, chip de footer y cartel de
-  arranque— pero le faltan dos cosas para servir de algo: la **clave pública real** en
-  `system/license/public_key.py`, que hoy está **vacía**, y **compilar** (roadmap B3), sin
-  lo cual la validación se saltea borrando un `if`. El diseño completo está en
+  arranque— pero le faltan dos cosas para servir de algo: la **clave pública real**, que la
+  genera el repositorio de firma al compilar y hoy no la trae ningún build, y **compilar**
+  (roadmap B3), sin lo cual la validación se saltea borrando un `if`. Falta además el dato
+  de hardware que nadie puede sacar de acá: confirmar que una Jetson y un equipo de planta
+  lleguen a las dos fuentes de huella que exige el piso. El diseño completo está en
   `.claude/plans/licensing.md`.
 - **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
   El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero

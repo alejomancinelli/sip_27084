@@ -88,7 +88,8 @@ Qt, sin Modbus, sin ConfigManager salvo donde se aclare, y sin más I/O que arch
     system/license/
       schema.py        nivel 1 — dueño del formato: campos, JSON canónico, parse/serialize
       verify.py        nivel 0 — firma Ed25519 contra la clave pública embebida
-      public_key.py    las claves públicas por `key_id`; en operación normal, una sola
+      public_key.py    la puerta a las claves públicas por `key_id`; la tabla del build la
+                       genera el repo de firma en `_public_key.py`, que no se versiona
       fingerprint.py   nivel 0 — huella por componente; nunca levanta excepción
       clock.py         nivel 0 — último-visto firmado + monotónico; detecta retroceso
       manager.py       la fachada: carga, verifica, evalúa entitlements, `get_status()`
@@ -406,15 +407,41 @@ procedimiento de reemisión lastima al cliente y no al que copia.
 
 ---
 
+## Qué tiene que hacer el build (B3)
+
+Tres pasos que no son de compilar sino de qué se compila. Sin ellos el binario sale con la
+puerta abierta aunque el código sea el correcto:
+
+1. **Generar la tabla de claves** antes de invocar a Nuitka, y borrarla después:
+
+       python -m licensing keymodule --out <fork>/system/license/_public_key.py
+
+   Sin ese archivo el build no valida ninguna licencia; con él versionado, la clave vuelve
+   a ser una constante limpia y el ejercicio no sirvió de nada. Lo mismo vale para
+   `system/inference/models/_model_key.py`, que ya funcionaba así.
+
+2. **Compilar sin docstrings:** `--python-flag=no_docstrings`. Los docstrings de este repo
+   son largos y explican el diseño completo —es su virtud en el código fuente y su
+   problema adentro del binario—: un volcado de strings del ejecutable entregado no tiene
+   por qué ser el mapa de cómo saltear la licencia.
+
+3. **Verificar la entrega:** que no haya quedado `_public_key.py` ni `_model_key.py` en el
+   árbol, y que el ejecutable no contenga ninguna frase canaria de los docstrings de
+   `system/license/` ni de `system/inference/models/`.
+
 ## Lo que falta decidir
 
 1. **`warn` o `degrade` como default de fábrica**, y si cambia entre clientes. Charla
    pendiente con el equipo; no bloquea nada del 1 al 3.
 2. **Confirmar `__compiled__`** con la cadena de build que se elija (Nuitka completo o
    Cython selectivo). Es una tarde de prueba y decide cómo se marca el build.
-3. **`min_matches` y qué fuentes** entran en la huella de cada plataforma. Depende del
-   hardware real: hay que correr `fingerprint.py` en una Jetson y en un equipo Windows de
-   planta y ver qué devuelve cada uno.
+3. **Qué fuentes entran en la huella de cada plataforma.** El piso ya está decidido y
+   puesto en los dos repos: dos fuentes declaradas y dos coincidencias exigidas
+   (`schema.FINGERPRINT_MIN_FLOOR`), y ni el firmante emite ni el equipo parsea por debajo
+   de eso. Lo que falta es el dato de hardware: correr `python -m system.license
+   fingerprint` en una Jetson y en un equipo Windows de planta y confirmar que cada uno
+   llega a dos fuentes utilizables. Un equipo que sólo expone una no se puede licenciar, y
+   eso hay que saberlo antes de prometer una entrega, no en la puesta en marcha.
 4. **Si el hash del modelo entra en la v1** o queda para cuando se sepa si el modelo va a
    ser un `.engine` (que ya es device-locked por construcción — roadmap C4/B1).
 5. **Vencimiento del soporte vs. vencimiento del software.** Una perpetua con soporte anual
