@@ -22,8 +22,8 @@ verificación**: la firma se sigue exigiendo igual.
 
 Lo mismo vale para `--public-key`: no es un bypass. Sin la clave privada del repo de
 firma no se puede producir un token que valide, así que inyectar la pública sólo evita
-tener que editar `system/license/public_key.py` para cada prueba. En un equipo entregado,
-la clave va pegada en ese archivo y compilada.
+tener que generar la tabla de claves del build para cada prueba. En un equipo entregado
+esa tabla la escribe el repositorio de firma y la compila Nuitka; acá no hace falta.
 
 La licencia y el estado de reloj se leen y se escriben **en esta carpeta**, no en la raíz
 del repo: la prueba no ensucia la instalación de desarrollo.
@@ -125,8 +125,8 @@ def _print_build(status: dict):
     known = ", ".join(sorted(public_key.PUBLIC_KEYS)) or "ninguna"
     print(f"  Claves públicas     : {known}")
     if not public_key.has_any_key():
-        print("  AVISO: sin clave pública ninguna licencia puede validar. Pegar la del repo")
-        print("         de firma en system/license/public_key.py, o pasar --public-key.")
+        print("  AVISO: sin clave pública ninguna licencia puede validar. Pasar --public-key,")
+        print("         o generar la tabla del build (ver docs/licensing.md).")
     print(f"  Huella              : {len(status['fingerprint_sources'])} fuentes "
           f"({', '.join(status['fingerprint_sources']) or 'ninguna'})")
 

@@ -540,7 +540,8 @@ class LicenseManager:
 
         if not public_key.has_any_key() and IS_COMPILED:
             logger.error("[Licencia] Este build no trae ninguna clave pública: ninguna "
-                         "licencia puede validar. Falta completar system/license/public_key.py.")
+                         "licencia puede validar. La tabla la genera el repositorio de "
+                         "firma al compilar; ver docs/licensing.md.")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
