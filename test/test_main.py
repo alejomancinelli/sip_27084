@@ -66,6 +66,52 @@ class TestUnlicensedCamera:
         assert main._UNLICENSED_CAMERA_STATUS.get("error")
 
 
+class TestUnlicensedCameraOnScreen:
+    """
+    Que la cámara fuera de cupo llegue al widget del monitor.
+
+    El status ya viaja por `_on_camera_status()`, que alimenta los chips de la UI, el FPS
+    del diagnóstico y la palabra que va al PLC. Lo que faltaba es el widget del área
+    central: se alimenta conectando la señal de un `CaptureThread`, y esta cámara no tiene
+    ninguno. Sin este empujón el chip se queda con el placeholder de arranque para
+    siempre, y una cámara que dice «Iniciando» y no arranca nunca manda a revisar un cable
+    que está bien.
+    """
+
+    class _Content:
+        """Widget del monitor que acepta status, que es lo único que se le pide."""
+
+        def __init__(self):
+            self.updates: list = []
+
+        def update_status(self, status: dict, camera_slot: str):
+            self.updates.append((camera_slot, status))
+
+    class _Ui:
+        def __init__(self, content):
+            self.monitor_content = content
+
+    def _application(self, content):
+        app = main.Application.__new__(main.Application)
+        app._ui = self._Ui(content)
+        return app
+
+    def test_the_status_reaches_the_monitor_widget(self):
+        content = self._Content()
+        self._application(content)._push_status_to_content(
+            main._UNLICENSED_CAMERA_STATUS, "camera_3")
+        assert content.updates == [("camera_3", main._UNLICENSED_CAMERA_STATUS)]
+
+    def test_a_widget_without_the_method_is_not_a_crash(self):
+        """El fork elige el widget del centro y no está obligado a aceptar status."""
+        content = object()
+        self._application(content)._push_status_to_content({}, "camera_3")
+
+    def test_headless_has_no_widget_to_push_to(self):
+        """Sin ventana `monitor_content` es None, y el cableado no pregunta si la hay."""
+        self._application(None)._push_status_to_content({}, "camera_3")
+
+
 class TestInterruptSignals:
     def test_ctrl_c_and_sigterm_are_always_handled(self):
         assert {signal.SIGINT, signal.SIGTERM} <= set(main._interrupt_signals())
