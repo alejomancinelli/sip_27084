@@ -125,7 +125,8 @@ def get_class_color_bgr(class_index: int, colors_bgr: tuple = ()) -> tuple[int, 
     return (int(color[0]), int(color[1]), int(color[2]))
 
 
-def annotate(result: InferenceResult, options: OverlayOptions | None = None) -> np.ndarray | None:
+def annotate(result: InferenceResult, options: OverlayOptions | None = None, *,
+             canvas_adjust=None) -> np.ndarray | None:
     """
     Devuelve una copia anotada de `result.source_bgr`, o None si no hay frame.
 
@@ -136,6 +137,13 @@ def annotate(result: InferenceResult, options: OverlayOptions | None = None) -> 
     Con `crop_to_roi` lo que vuelve es sólo el recorte analizado. Las detecciones están en
     coordenadas del frame de referencia, así que se dibujan con el origen del ROI restado;
     no se las modifica, porque el mismo resultado viaja al dataset y al PLC.
+
+    `canvas_adjust` es `(frame) -> frame` y se aplica al lienzo **antes** de dibujar. Es
+    para que el anotado se vea como el stream crudo, que sale ajustado para una persona: un
+    frame medido con poca luz es igual de ilegible con máscaras encima. Va antes y no
+    después porque después le correría el color a las máscaras, a las referencias y al
+    texto, que son justamente lo que el ajuste no tiene que tocar. Lo que se mide no cambia:
+    `source_bgr` queda como estaba.
     """
     frame = result.source_bgr
     if frame is None or frame.size == 0:
@@ -143,6 +151,8 @@ def annotate(result: InferenceResult, options: OverlayOptions | None = None) -> 
     opts = options or OverlayOptions()
 
     annotated = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR) if frame.ndim == 2 else frame.copy()
+    if canvas_adjust is not None:
+        annotated = canvas_adjust(annotated)
 
     offset_px = (0, 0)
     cropped = opts.crop_to_roi and result.roi_px is not None
