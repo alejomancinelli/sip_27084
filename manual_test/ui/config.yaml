@@ -55,12 +55,13 @@ video:
     clahe_clip: 0.0
 
 process:
-  # Parámetros del proceso. En esta prueba no se usan —el analyzer del template no los
-  # necesita—, pero la sección va igual porque es la que el fork reescribe y conviene
-  # verla en el archivo.
-  scale_px_per_mm: {}
-  max_load_y_px: {}
-  min_load_pct: 0
+  # Los mismos parámetros que el equipo, con el rectángulo de cinta adaptado al frame
+  # sintético del mock: así la prueba ejercita el analyzer y los annotators de verdad.
+  belt_roi_px:
+    camera_1: {x_px: 100, y_px: 0, width_px: 1400, height_px: 1000}
+  dark_background_threshold:
+    camera_1: {desmenuzado: 30}
+  rolling_window_s: 3600
 
 inference:
   overlay:
@@ -91,12 +92,12 @@ inference:
       min_result_confidence_pct: 0
       frames_per_cycle: 1
   models:
-    model_1:
+    segmenter:
       type: mock
       path: ''
       min_confidence_pct: 40
       max_side_px: 0
-      class_names: [grueso, medio, fino]
+      class_names: [desmenuzado, pellet]
       params:
         detection_count: 8      # extras del mock: cuántas detecciones sintéticas inventa
         with_masks: true        # con máscaras, para que el anotado se vea completo

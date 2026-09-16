@@ -139,8 +139,8 @@ from system.camera.capture_thread import CaptureThread                   # noqa:
 from system.config_manager import ConfigManager                          # noqa: E402
 from system.formats import camera_health, com_status, system_status       # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
-from system.inference.metrics import compute_metrics                     # noqa: E402
-from system.inference.pipeline import Pipeline                           # noqa: E402
+from system.inference import annotations, metrics                        # noqa: E402
+from system.inference.pipeline import BeltPipeline                       # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
@@ -359,8 +359,18 @@ class _DemoApp(QObject):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config, Pipeline(config, pipeline_slot),
-                analyzer=compute_metrics,
+                config, BeltPipeline(config, pipeline_slot),
+                analyzer=metrics.build_analyzer(
+                    class_names=config.get(
+                        "inference.models.segmenter.class_names", []) or [],
+                    belt_roi_px=config.get("process.belt_roi_px", {}) or {},
+                    dark_background_threshold=config.get(
+                        "process.dark_background_threshold", {}) or {}),
+                annotator=annotations.chain(
+                    annotations.belt_roi_annotator(
+                        config.get("process.belt_roi_px", {}) or {}),
+                    annotations.composition_panel_annotator(
+                        config.get("inference.models.segmenter.class_names", []) or [])),
                 annotate_gate=self._is_annotated_watched,
             )
             engine.result_ready.connect(self._on_result_ready)
@@ -465,7 +475,7 @@ class _DemoApp(QObject):
              "detection_count": result.detection_count,
              "illumination_pct": result.illumination_pct,
              **result.metrics},
-            tags={"camera": result.camera_slot, "pipeline": result.pipeline_slot},
+            tags={"camara_id": result.camera_slot, "pipeline": result.pipeline_slot},
         )
         if result.annotated_bgr is None:
             return

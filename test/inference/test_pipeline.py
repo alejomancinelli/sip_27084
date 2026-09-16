@@ -1,5 +1,5 @@
 """Tests de la maquinaria del pipeline: carga de las etapas por slot, tiempos por etapa,
-encadenado en cascada y el pipeline de una etapa del template.
+encadenado en cascada y el pipeline de una etapa de este proyecto.
 
 Los modelos son dobles: acá se verifica el andamio de las etapas, no un framework.
 """
@@ -9,7 +9,7 @@ import pytest
 
 from system.inference.models.abstract_model import AbstractModel
 from system.inference.abstract_pipeline import AbstractPipeline
-from system.inference.pipeline import Pipeline
+from system.inference.pipeline import BeltPipeline
 from system.inference.result import Detection
 
 _PIPELINE = "pipeline_1"
@@ -87,32 +87,32 @@ class _TwoStagePipeline(AbstractPipeline):
 
 class TestLoading:
     def test_it_loads_one_model_per_declared_slot(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        models = {"model_1": _FakeModel(config, "model_1")}
+        config = _MockConfig(segmenter={"type": "mock"})
+        models = {"segmenter": _FakeModel(config, "segmenter")}
         _install_models(monkeypatch, models)
-        pipeline = Pipeline(config, _PIPELINE)
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is True
-        assert set(pipeline.get_status()["models"]) == {"model_1"}
+        assert set(pipeline.get_status()["models"]) == {"segmenter"}
 
     def test_loading_twice_does_not_reload(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
+        config = _MockConfig(segmenter={"type": "mock"})
         created = []
         import system.inference.abstract_pipeline as ap
         monkeypatch.setattr(ap, "create_model", lambda config, model_slot:
                             created.append(model_slot) or _FakeModel(config, model_slot))
-        pipeline = Pipeline(config, _PIPELINE)
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.load()
-        assert created == ["model_1"]
+        assert created == ["segmenter"]
 
     def test_a_stage_that_could_not_load_leaves_the_pipeline_unloaded(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1", loads=False)})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is False
-        assert pipeline.get_status()["models"]["model_1"]["error"] == "pesos ausentes"
+        assert pipeline.get_status()["models"]["segmenter"]["error"] == "pesos ausentes"
 
     def test_a_pipeline_without_stages_is_never_loaded(self):
         class _EmptyPipeline(AbstractPipeline):
@@ -124,9 +124,9 @@ class TestLoading:
         assert pipeline.is_loaded is False
 
     def test_unload_releases_every_stage(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1")})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter")})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.run(_frame())
         pipeline.unload()
@@ -136,19 +136,19 @@ class TestLoading:
 
 class TestRunning:
     def test_the_template_pipeline_runs_its_single_stage(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         detections = pipeline.run(_frame())
-        assert [d.class_name for d in detections] == ["model_1"]
+        assert [d.class_name for d in detections] == ["segmenter"]
         assert len(model.calls) == 1
 
     def test_a_stage_without_a_model_returns_nothing(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1", loads=False)})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.run(_frame()) == []
 
@@ -185,25 +185,25 @@ class TestRunning:
         assert [d.class_name for d in previous] == ["detector"]
 
     def test_the_first_stage_gets_no_previous_detections(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.run(_frame())
         assert model.calls[0][1] == []
 
     def test_a_failing_stage_propagates_to_the_caller(self, monkeypatch):
         """El motor es el que decide qué hacer con el error, no el pipeline."""
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
         model.predict = lambda frame_bgr, previous=None: (_ for _ in ()).throw(RuntimeError("cuda"))
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         with pytest.raises(RuntimeError):
             pipeline.run(_frame())
-        assert "model_1" in pipeline.stage_times_ms
+        assert "segmenter" in pipeline.stage_times_ms
 
     def test_a_stage_can_leave_a_frame_verdict(self, monkeypatch):
         config = _MockConfig(classifier={"type": "mock"}, segmenter={"type": "mock"})
@@ -250,10 +250,10 @@ class TestRunning:
         assert pipeline.labels == {"belt": "full"}
 
     def test_a_synthetic_stage_marks_the_pipeline(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
         model.is_synthetic = True
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_synthetic is True

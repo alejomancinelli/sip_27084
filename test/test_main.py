@@ -187,9 +187,8 @@ class TestInferenceFields:
     """
     Los fields de un punto de telemetría de inferencia.
 
-    Lo que se cuida es el proyecto con ciclo: el scheduler cierra los N frames y el tick ve
-    un solo resultado ya resumido, así que agregarlo de nuevo no mide nada y tapa lo que sí
-    midió.
+    Los nombres son los que ya consulta el dashboard de este equipo, así que lo que se
+    cuida acá es que no se muevan: ver el bloque de measurements de `main.py`.
     """
 
     def _cycle_result(self) -> InferenceResult:
@@ -209,20 +208,56 @@ class TestInferenceFields:
         """`load_pct_max_max` es el síntoma de agregar lo ya agregado."""
         fields = main._build_inference_fields([self._cycle_result()])
         assert not [name for name in fields if name.endswith(("_max_max", "_min_min",
-                                                              "_std_std", "_max_mean"))]
+                                                              "_std_std", "_mean"))]
 
-    def test_the_sample_count_is_the_frames_of_the_cycle(self):
-        """Cuántos ciclos entraron al punto ya lo dice `result_count`."""
+    def test_the_frame_count_is_how_many_results_entered(self):
+        """El dashboard lo lee como `frames` desde la primera versión del equipo."""
         fields = main._build_inference_fields([self._cycle_result()])
-        assert (fields["sample_count"], fields["result_count"]) == (5, 1)
+        assert (fields["sample_count"], fields["frames"]) == (5, 1)
 
-    def test_without_a_cycle_the_stats_are_derived(self):
-        """Con `frames_per_cycle: 1` no llega nada resumido y el tick es el que agrega."""
-        results = [InferenceResult(camera_slot="camera_1", metrics={"load_pct": value})
+    def test_the_process_metrics_keep_their_own_names(self):
+        """Sin sufijo: un `_mean` dejaría los paneles existentes sin serie que consultar."""
+        results = [InferenceResult(camera_slot="camera_1", metrics={"pct_carga": value})
                    for value in (40.0, 60.0)]
         fields = main._build_inference_fields(results)
-        assert (fields["load_pct_mean"], fields["load_pct_std"],
-                fields["sample_count"]) == (50.0, 10.0, 2)
+        assert fields["pct_carga"] == 50.0 and "pct_carga_mean" not in fields
+
+    def test_class_percentages_stay_integers(self):
+        """InfluxDB fija el tipo del campo con el primer punto: el bucket ya los tiene int."""
+        results = [InferenceResult(camera_slot="camera_1", metrics={"pct_pellet": value})
+                   for value in (40, 62)]
+        assert main._build_inference_fields(results)["pct_pellet"] == 51
+
+    def test_the_composition_stays_decimal(self):
+        results = [InferenceResult(camera_slot="camera_1",
+                                   metrics={"pct_pellet_norm": 33.333})]
+        assert main._build_inference_fields(results)["pct_pellet_norm"] == 33.33
+
+    def test_confidence_and_illumination_use_their_legacy_names(self):
+        results = [InferenceResult(camera_slot="camera_1", confidence_pct=87.0,
+                                   illumination_pct=42, inference_time_ms=12.5)]
+        fields = main._build_inference_fields(results)
+        assert (fields["confianza"], fields["iluminacion"]) == (87, 42)
+
+    def test_the_scalars_are_not_published_twice(self):
+        """El analyzer los re-exporta como métricas sólo para que lleguen al PLC."""
+        results = [InferenceResult(camera_slot="camera_1", inference_time_ms=12.5,
+                                   metrics={"confidence_pct": 87.0,
+                                            "inference_time_ms": 99.0})]
+        fields = main._build_inference_fields(results)
+        assert "confidence_pct" not in fields and fields["inference_time_ms"] == 12.5
+
+    def test_a_discarded_result_is_counted_with_its_reason(self):
+        results = [InferenceResult(camera_slot="camera_1", is_valid=False,
+                                   invalid_reason="dark_frame")]
+        fields = main._build_inference_fields(results)
+        assert (fields["invalid_count"], fields["invalid_reason"]) == (1, "dark_frame")
+
+    def test_confidence_only_averages_the_reliable_ones(self):
+        results = [InferenceResult(camera_slot="camera_1", confidence_pct=90.0),
+                   InferenceResult(camera_slot="camera_1", confidence_pct=10.0,
+                                   is_valid=False)]
+        assert main._build_inference_fields(results)["confianza"] == 90
 
 
 class _WritableMockConfig(_MockConfig):
