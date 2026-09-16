@@ -8,9 +8,10 @@ se mide en la siguiente instalación. Acá están los tres parámetros de este e
   - **El rectángulo de cinta**, por cámara. Es la referencia del 100 % de carga y lo que se
     dibuja sobre el anotado. Se puede escribir a mano o dibujar sobre el video en vivo, que
     es como se hace en planta.
-  - **El umbral de fondo oscuro**, por cámara y por clase. Sólo aparecen las clases que el
-    modelo declara en `class_names`: son datos de configuración y no identificadores, así
-    que la pestaña las lee en vez de nombrarlas.
+  - **El umbral de fondo oscuro**, por clase. Va con el modelo y no con la cámara —es el
+    modelo el que lo aplica sobre sus propias máscaras—, así que es uno solo para todas las
+    cámaras del pipeline. Sólo aparecen las clases que el modelo declara en `class_names`:
+    son datos de configuración y no identificadores, así que la pestaña las lee.
   - **La ventana de las medias**, que es sobre cuánto tiempo se promedian las tendencias
     que lee el PLC.
 
@@ -53,7 +54,10 @@ _BELT_ROI_FIELDS = (
 )
 
 _BELT_ROI_PREFIX = "process.belt_roi_px"
-_DARK_THRESHOLD_PREFIX = "process.dark_background_threshold"
+# El umbral vive con el modelo, no en `process:`: lo aplica él sobre sus máscaras, para
+# que la que se mide y la que se dibuja sean la misma. Ver `models/yolo_seg_model.py`.
+_MODELS_PREFIX = "inference.models"
+_DARK_THRESHOLD_KEY = "params.dark_background_threshold"
 _WINDOW_KEY = "process.rolling_window_s"
 
 
@@ -86,6 +90,7 @@ class ProcessTab(AbstractConfigTab):
                 tabs.addTab(form, form.camera_name)
             layout.addWidget(tabs)
 
+        layout.addWidget(self._build_dark_background_box())
         layout.addWidget(self._build_window_box())
         layout.addStretch()
 
@@ -94,12 +99,20 @@ class ProcessTab(AbstractConfigTab):
     def load(self):
         for form in self._forms.values():
             form.load()
+        for (model_slot, class_name), spin in self._threshold_spins.items():
+            thresholds = self._config.get(
+                f"{_MODELS_PREFIX}.{model_slot}.{_DARK_THRESHOLD_KEY}", {}) or {}
+            spin.setValue(int(thresholds.get(class_name, 0) or 0))
         self._window_spin.setValue(
             int(self._config.get(_WINDOW_KEY, _DEFAULT_WINDOW_S) or _DEFAULT_WINDOW_S))
 
     def save(self):
         for form in self._forms.values():
             form.save()
+        for (model_slot, class_name), spin in self._threshold_spins.items():
+            self._config.set(
+                f"{_MODELS_PREFIX}.{model_slot}.{_DARK_THRESHOLD_KEY}.{class_name}",
+                spin.value())
         self._config.set(_WINDOW_KEY, self._window_spin.value())
 
     # ── API pública ──────────────────────────────────────────────────────────
@@ -112,6 +125,34 @@ class ProcessTab(AbstractConfigTab):
 
     # ── Construcción ─────────────────────────────────────────────────────────
 
+    def _build_dark_background_box(self) -> QWidget:
+        """
+        Un umbral por clase de cada modelo declarado.
+
+        Las clases se leen del modelo y no se escriben acá: son datos de configuración, y
+        una lista propia en la interfaz es una que puede discrepar con la que de verdad
+        usa la inferencia.
+        """
+        box, form = build_group_box(tr("process_box_dark"))
+        self._threshold_spins: dict[tuple, object] = {}
+        model_slots = tuple(self._config.get(_MODELS_PREFIX, {}) or {})
+        for model_slot in model_slots:
+            for class_name in (self._config.get(
+                    f"{_MODELS_PREFIX}.{model_slot}.class_names", []) or []):
+                key = (model_slot, str(class_name))
+                if key in self._threshold_spins:
+                    continue
+                spin = build_spin_box(0, _MAX_LUMA, 0)
+                spin.setSpecialValueText(tr("process_dark_off"))
+                # Con un solo modelo el slot no agrega nada; con dos, dos clases que se
+                # llaman igual son umbrales distintos y hay que poder decir cuál es cuál.
+                label = (f"{model_slot}/{class_name}" if len(model_slots) > 1
+                         else str(class_name))
+                self._threshold_spins[key] = add_form_row(
+                    form, f"{label} — {tr('process_dark_threshold')}", spin)
+        add_hint_row(form, tr("process_dark_note"))
+        return box
+
     def _build_window_box(self) -> QWidget:
         box, form = build_group_box(tr("process_box_window"))
         self._window_spin = add_form_row(
@@ -123,7 +164,7 @@ class ProcessTab(AbstractConfigTab):
 
 
 class _CameraProcessForm(QWidget):
-    """Parámetros de proceso de una cámara: el rectángulo de cinta y los umbrales."""
+    """Parámetros de proceso de una cámara: por ahora, el rectángulo de cinta."""
 
     open_belt_roi_requested = Signal(str)
 
@@ -135,7 +176,6 @@ class _CameraProcessForm(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.addWidget(self._build_belt_roi_box())
-        layout.addWidget(self._build_dark_background_box())
         layout.addStretch()
 
         self.load()
@@ -150,9 +190,6 @@ class _CameraProcessForm(QWidget):
 
     def load(self):
         self.load_belt_roi()
-        thresholds = self._get_thresholds()
-        for class_name, spin in self._threshold_spins.items():
-            spin.setValue(int(thresholds.get(class_name, 0) or 0))
 
     def load_belt_roi(self):
         """
@@ -169,9 +206,6 @@ class _CameraProcessForm(QWidget):
     def save(self):
         for key, spin in self._roi_spins.items():
             self._config.set(f"{_BELT_ROI_PREFIX}.{self._camera_slot}.{key}", spin.value())
-        for class_name, spin in self._threshold_spins.items():
-            self._config.set(
-                f"{_DARK_THRESHOLD_PREFIX}.{self._camera_slot}.{class_name}", spin.value())
 
     # ── Construcción ─────────────────────────────────────────────────────────
 
@@ -190,46 +224,7 @@ class _CameraProcessForm(QWidget):
         add_hint_row(form, tr("process_belt_note"))
         return box
 
-    def _build_dark_background_box(self) -> QWidget:
-        """
-        Un umbral por clase del modelo. Sin clases declaradas, el grupo queda con la nota.
-
-        Las clases se leen del modelo y no se escriben acá: son datos de configuración, y
-        una lista propia en la interfaz sería una segunda declaración que puede discrepar
-        con la que de verdad usa el analyzer.
-        """
-        box, form = build_group_box(tr("process_box_dark"))
-        self._threshold_spins = {}
-        for class_name in self._get_class_names():
-            spin = build_spin_box(0, _MAX_LUMA, 0)
-            spin.setSpecialValueText(tr("process_dark_off"))
-            self._threshold_spins[class_name] = add_form_row(
-                form, f"{class_name} — {tr('process_dark_threshold')}", spin
-            )
-        add_hint_row(form, tr("process_dark_note"))
-        return box
-
     # ── Lectura del config ───────────────────────────────────────────────────
 
     def _get_belt_roi(self) -> dict:
         return (self._config.get(_BELT_ROI_PREFIX, {}) or {}).get(self._camera_slot, {}) or {}
-
-    def _get_thresholds(self) -> dict:
-        return (self._config.get(_DARK_THRESHOLD_PREFIX, {})
-                or {}).get(self._camera_slot, {}) or {}
-
-    def _get_class_names(self) -> list:
-        """
-        Nombres de clase de todos los modelos declarados, sin repetir y en orden.
-
-        Se recorren todos y no un slot fijo porque la pestaña no tiene por qué saber cómo se
-        llama el modelo de este proyecto: un pipeline de dos etapas tendría dos, y las dos
-        pueden necesitar umbral.
-        """
-        names = []
-        for model_slot in (self._config.get("inference.models", {}) or {}):
-            for class_name in (self._config.get(
-                    f"inference.models.{model_slot}.class_names", []) or []):
-                if str(class_name) not in names:
-                    names.append(str(class_name))
-        return names

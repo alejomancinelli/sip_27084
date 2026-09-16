@@ -37,13 +37,9 @@ def _result(detections: list, *, frame: np.ndarray | None = None,
                            source_bgr=_frame() if frame is None else frame)
 
 
-def _analyzer(*, belt_roi_px: dict | None = None,
-              dark_background_threshold: dict | None = None):
-    return metrics.build_analyzer(
-        class_names=["desmenuzado", "pellet"],
-        belt_roi_px=belt_roi_px or {},
-        dark_background_threshold=dark_background_threshold or {},
-    )
+def _analyzer(*, belt_roi_px: dict | None = None):
+    return metrics.build_analyzer(class_names=["desmenuzado", "pellet"],
+                                  belt_roi_px=belt_roi_px or {})
 
 
 # ── Reparto por clase ────────────────────────────────────────────────────────
@@ -133,41 +129,17 @@ class TestComposition:
         assert (computed["pct_pellet_norm"], computed["pct_desmenuzado_norm"]) == (0.0, 0.0)
 
 
-# ── Refinamiento de fondo oscuro ─────────────────────────────────────────────
+# ── Las máscaras llegan ya refinadas ─────────────────────────────────────────
 
-class TestDarkBackground:
-    def _split_frame(self) -> np.ndarray:
-        """Mitad de arriba clara, mitad de abajo oscura."""
-        frame = np.full((_SIDE_PX, _SIDE_PX, 3), 200, dtype=np.uint8)
-        frame[50:, :, :] = 10
-        return frame
-
-    def test_dark_pixels_are_dropped_from_the_configured_class(self):
-        result = _result([_detection("desmenuzado", (0, 0, _SIDE_PX, _SIDE_PX))],
-                         frame=self._split_frame())
-        computed = _analyzer(dark_background_threshold={_SLOT: {"desmenuzado": 60}})(result)
-        assert computed["pct_desmenuzado"] == 50
-
-    def test_a_class_without_a_threshold_is_not_refined(self):
-        result = _result([_detection("pellet", (0, 0, _SIDE_PX, _SIDE_PX))],
-                         frame=self._split_frame())
-        computed = _analyzer(dark_background_threshold={_SLOT: {"desmenuzado": 60}})(result)
-        assert computed["pct_pellet"] == 100
-
-    def test_dropped_pixels_become_belt_and_not_the_class_underneath(self):
-        """Un píxel que una clase le ganó a otra y que después se descarta por oscuro queda
-        como cinta: no vuelve a la clase que lo había perdido."""
-        result = _result([_detection("pellet", (0, 0, _SIDE_PX, _SIDE_PX)),
-                          _detection("desmenuzado", (0, 0, _SIDE_PX, _SIDE_PX))],
-                         frame=self._split_frame())
-        computed = _analyzer(dark_background_threshold={_SLOT: {"desmenuzado": 60}})(result)
-        assert (computed["pct_pellet"], computed["pct_desmenuzado"]) == (0, 50)
-
-    def test_a_zero_threshold_disables_the_refinement(self):
-        result = _result([_detection("desmenuzado", (0, 0, _SIDE_PX, _SIDE_PX))],
-                         frame=self._split_frame())
-        computed = _analyzer(dark_background_threshold={_SLOT: {"desmenuzado": 0}})(result)
-        assert computed["pct_desmenuzado"] == 100
+class TestRefinedMasksAreCounted:
+    def test_it_counts_the_mask_it_is_given(self):
+        """El descarte por fondo oscuro lo hace el modelo: acá sólo se cuenta."""
+        mask = np.zeros((_SIDE_PX, _SIDE_PX), dtype=np.uint8)
+        mask[:50, :] = 1
+        detection = Detection(class_index=0, class_name="desmenuzado",
+                              confidence_pct=90.0, bbox_px=(0, 0, _SIDE_PX, _SIDE_PX),
+                              area_px=int(mask.sum()), mask=mask)
+        assert _analyzer()(_result([detection]))["pct_desmenuzado"] == 50
 
 
 # ── Escalares que van al PLC ─────────────────────────────────────────────────

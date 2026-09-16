@@ -41,7 +41,8 @@ class _MockConfig:
             "inference.models": {"segmenter": {}},
             "inference.models.segmenter.class_names": ["desmenuzado", "pellet"],
             "process.belt_roi_px": {_SLOT: dict(_BELT_ROI)},
-            "process.dark_background_threshold": {_SLOT: {"desmenuzado": 60}},
+            "inference.models.segmenter.params.dark_background_threshold":
+                {"desmenuzado": 60},
             "process.rolling_window_s": 3600,
         }
         self._values.update(overrides)
@@ -67,22 +68,22 @@ class TestFields:
     def test_it_shows_one_threshold_per_declared_class(self):
         """Las clases se leen del modelo: una lista propia acá podría discrepar."""
         tab, _ = _tab()
-        form = tab._forms[_SLOT]
-        assert list(form._threshold_spins) == ["desmenuzado", "pellet"]
+        assert [class_name for _, class_name in tab._threshold_spins] ==             ["desmenuzado", "pellet"]
 
     def test_classes_of_every_model_are_covered(self):
         tab, _ = _tab(**{
             "inference.models": {"segmenter": {}, "classifier": {}},
             "inference.models.classifier.class_names": ["polvo"],
         })
-        assert "polvo" in tab._forms[_SLOT]._threshold_spins
+        assert ("classifier", "polvo") in tab._threshold_spins
 
-    def test_a_class_declared_twice_appears_once(self):
+    def test_the_same_class_in_two_models_gets_a_threshold_each(self):
+        """El umbral es del modelo: dos modelos que detectan pellet lo refinan aparte."""
         tab, _ = _tab(**{
             "inference.models": {"segmenter": {}, "other": {}},
             "inference.models.other.class_names": ["pellet"],
         })
-        assert list(tab._forms[_SLOT]._threshold_spins).count("pellet") == 1
+        assert {("segmenter", "pellet"), ("other", "pellet")} <= set(tab._threshold_spins)
 
     def test_one_sub_tab_per_camera(self):
         tab, _ = _tab(**{
@@ -106,8 +107,9 @@ class TestLoad:
 
     def test_it_loads_the_threshold_of_each_class(self):
         tab, _ = _tab()
-        spins = tab._forms[_SLOT]._threshold_spins
-        assert (spins["desmenuzado"].value(), spins["pellet"].value()) == (60, 0)
+        spins = tab._threshold_spins
+        assert (spins[("segmenter", "desmenuzado")].value(),
+                spins[("segmenter", "pellet")].value()) == (60, 0)
 
     def test_it_loads_the_averaging_window(self):
         tab, _ = _tab()
@@ -132,7 +134,8 @@ class TestSave:
         tab, config = _tab()
         tab.save()
         assert config.written[f"process.belt_roi_px.{_SLOT}.width_px"] == 1445
-        assert config.written[f"process.dark_background_threshold.{_SLOT}.desmenuzado"] == 60
+        assert config.written[
+            "inference.models.segmenter.params.dark_background_threshold.desmenuzado"] == 60
         assert config.written["process.rolling_window_s"] == 3600
 
     def test_an_edited_rectangle_reaches_the_config(self):
@@ -145,7 +148,8 @@ class TestSave:
         """Cero es «sin refinar», que es un valor y no una ausencia."""
         tab, config = _tab()
         tab.save()
-        assert config.written[f"process.dark_background_threshold.{_SLOT}.pellet"] == 0
+        assert config.written[
+            "inference.models.segmenter.params.dark_background_threshold.pellet"] == 0
 
     def test_it_does_not_persist_the_file(self):
         """El contrato: `save()` deja los valores en el ConfigManager y nada más."""
@@ -160,12 +164,12 @@ class TestBeltRoiRefresh:
     def test_it_rereads_only_the_geometry(self):
         """Vuelve del diálogo, donde lo único que cambió fue el rectángulo."""
         tab, config = _tab()
-        tab._forms[_SLOT]._threshold_spins["desmenuzado"].setValue(99)
+        tab._threshold_spins[("segmenter", "desmenuzado")].setValue(99)
         config._values["process.belt_roi_px"] = {_SLOT: {**_BELT_ROI, "x_px": 700}}
         tab.refresh_belt_roi_fields(_SLOT)
         form = tab._forms[_SLOT]
         assert form._roi_spins["x_px"].value() == 700
-        assert form._threshold_spins["desmenuzado"].value() == 99
+        assert tab._threshold_spins[("segmenter", "desmenuzado")].value() == 99
 
     def test_an_unknown_camera_is_ignored(self):
         tab, _ = _tab()

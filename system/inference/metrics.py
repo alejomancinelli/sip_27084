@@ -30,7 +30,6 @@ es cuál está en `docs/influxdb.md` y en `docs/modbus_map.md`.
 
 from collections.abc import Callable
 
-import cv2
 import numpy as np
 
 from .result import InferenceResult
@@ -42,8 +41,7 @@ LOAD_KEY = "pct_carga"                  # carga respecto del ROI de cinta
 _PCT = 100.0
 
 
-def build_analyzer(*, class_names: list, belt_roi_px: dict,
-                   dark_background_threshold: dict) -> Callable:
+def build_analyzer(*, class_names: list, belt_roi_px: dict) -> Callable:
     """
     Devuelve el analyzer con los parámetros de la planta ya leídos.
 
@@ -56,14 +54,17 @@ def build_analyzer(*, class_names: list, belt_roi_px: dict,
     claves: un registro que deja de publicarse se queda con su último valor, y el PLC no
     tiene forma de distinguir eso de una medición que no cambió.
 
-    `belt_roi_px` y `dark_background_threshold` van por slot de cámara. Una cámara sin ROI
-    de cinta declarado mide la carga contra el frame entero; una sin umbrales no refina.
+    `belt_roi_px` va por slot de cámara: una cámara sin ROI de cinta declarado mide la
+    carga contra el frame entero.
+
+    **El refinamiento de fondo oscuro no está acá**, aunque el proyecto lo use: lo aplica el
+    modelo sobre sus propias máscaras, para que la que se mide y la que se dibuja sean la
+    misma. Ver `models/yolo_seg_model.py`.
     """
     ordered_names = [str(name) for name in (class_names or [])]
 
     def compute_metrics(result: InferenceResult) -> dict:
-        return _compute(result, ordered_names, belt_roi_px or {},
-                        dark_background_threshold or {})
+        return _compute(result, ordered_names, belt_roi_px or {})
 
     return compute_metrics
 
@@ -72,16 +73,15 @@ def compute_metrics(result: InferenceResult) -> dict:
     """
     Analyzer sin parámetros de planta: sólo lo que se puede contar sin calibración.
 
-    Es el que corre si nadie arma el de `build_analyzer()`. Mide contra el frame completo
-    —sin ROI de cinta, así que `pct_carga` es la superficie cubierta— y no refina nada.
+    Es el que corre si nadie arma el de `build_analyzer()`. Mide contra el frame completo:
+    sin ROI de cinta, `pct_carga` es la superficie cubierta.
     """
-    return _compute(result, [], {}, {})
+    return _compute(result, [], {})
 
 
 # ── La cuenta ────────────────────────────────────────────────────────────────
 
-def _compute(result: InferenceResult, ordered_names: list, belt_roi_px: dict,
-             dark_background_threshold: dict) -> dict:
+def _compute(result: InferenceResult, ordered_names: list, belt_roi_px: dict) -> dict:
     frame_bgr = result.source_bgr
     if frame_bgr is None or frame_bgr.size == 0:
         return {}
@@ -90,9 +90,7 @@ def _compute(result: InferenceResult, ordered_names: list, belt_roi_px: dict,
     frame_area_px = height_px * width_px
     belt_area_px = _belt_area_px(belt_roi_px.get(result.camera_slot), frame_area_px)
 
-    px_by_class = _count_union_px_by_class(
-        result.detections, frame_bgr,
-        dark_background_threshold.get(result.camera_slot) or {})
+    px_by_class = _count_union_px_by_class(result.detections, frame_bgr.shape[:2])
     # Las clases declaradas salen siempre, aunque este frame no haya visto ninguna.
     for class_name in ordered_names:
         px_by_class.setdefault(class_name, 0)
@@ -135,8 +133,8 @@ def _belt_area_px(roi_px: dict | None, frame_area_px: int) -> int:
     return area_px if area_px > 0 else max(1, frame_area_px)
 
 
-def _count_union_px_by_class(detections: list, frame_bgr: np.ndarray,
-                             threshold_by_class: dict) -> dict[str, int]:
+def _count_union_px_by_class(detections: list,
+                             frame_shape: tuple[int, int]) -> dict[str, int]:
     """
     Píxeles de cada clase, contados por unión sobre un lienzo de etiquetas.
 
@@ -144,14 +142,13 @@ def _count_union_px_by_class(detections: list, frame_bgr: np.ndarray,
     donde dos se superponen queda la última: el mismo criterio con el que se pintan las
     máscaras del overlay, para que lo que se ve y lo que se mide no discrepen.
 
-    El refinamiento de fondo oscuro se aplica **después** de armar el lienzo y no por
-    detección: un píxel que una clase le ganó a otra y que después se descarta por oscuro
-    queda como cinta, no vuelve a la clase que lo había perdido.
+    Las máscaras llegan ya refinadas: lo que el modelo descartó por oscuro no viene en
+    ellas, así que acá sólo se cuenta.
     """
     if not detections:
         return {}
 
-    height_px, width_px = frame_bgr.shape[:2]
+    height_px, width_px = frame_shape
     # 0 = sin clase; una clase es su posición en `names` + 1. uint8 alcanza y de sobra:
     # 255 clases distintas en un frame no es un caso de este dominio.
     labels = np.zeros((height_px, width_px), dtype=np.uint8)
@@ -165,14 +162,6 @@ def _count_union_px_by_class(detections: list, frame_bgr: np.ndarray,
         window = labels[y1:y2, x1:x2]
         mask = detection.mask[:window.shape[0], :window.shape[1]]
         window[mask > 0] = names.index(detection.class_name) + 1
-
-    if threshold_by_class:
-        luma = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY) if frame_bgr.ndim == 3 else frame_bgr
-        for class_name, threshold in threshold_by_class.items():
-            if class_name not in names or int(threshold) <= 0:
-                continue
-            label = names.index(class_name) + 1
-            labels[(labels == label) & (luma < int(threshold))] = 0
 
     return {name: int(np.count_nonzero(labels == index + 1))
             for index, name in enumerate(names)}

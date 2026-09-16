@@ -260,3 +260,58 @@ class TestBboxClipping:
         prediction = _FakePrediction([_square(90, 90, 160, 160)], [1], [0.9])
         detection = _loaded(monkeypatch, prediction).predict(_frame())[0]
         assert detection.bbox_px == (90, 90, _FRAME_SIDE_PX, _FRAME_SIDE_PX)
+
+
+# ── Refinamiento de fondo oscuro ─────────────────────────────────────────────
+
+class TestDarkBackground:
+    """
+    El contorno del segmentador es aproximadamente convexo y se traga el fondo que hay
+    entre partículas sueltas. Quitarlo acá —y no en el analyzer— es lo que hace que la
+    máscara que se mide y la que se dibuja sean la misma.
+    """
+
+    def _split_frame(self) -> np.ndarray:
+        """Mitad de arriba clara, mitad de abajo oscura."""
+        frame = np.full((_FRAME_SIDE_PX, _FRAME_SIDE_PX, 3), 200, dtype=np.uint8)
+        frame[50:, :, :] = 10
+        return frame
+
+    def _config(self, **params) -> _MockConfig:
+        return _MockConfig(**{f"inference.models.{_SLOT}.params": params})
+
+    def _predict(self, config: _MockConfig, monkeypatch, class_index: int = 0):
+        model = YoloSegModel(config, _SLOT)
+        _install(monkeypatch, _FakeYolo(_FakePrediction(
+            [_square(0, 0, _FRAME_SIDE_PX, _FRAME_SIDE_PX)], [class_index], [0.9])))
+        model.load()
+        return model.predict(self._split_frame())
+
+    def test_dark_pixels_leave_the_mask(self, monkeypatch):
+        config = self._config(dark_background_threshold={"desmenuzado": 60})
+        detection = self._predict(config, monkeypatch)[0]
+        assert detection.area_px == 50 * _FRAME_SIDE_PX
+
+    def test_a_class_without_a_threshold_is_untouched(self, monkeypatch):
+        config = self._config(dark_background_threshold={"desmenuzado": 60})
+        detection = self._predict(config, monkeypatch, class_index=1)[0]
+        assert detection.area_px == _FRAME_SIDE_PX * _FRAME_SIDE_PX
+
+    def test_a_zero_threshold_disables_it(self, monkeypatch):
+        config = self._config(dark_background_threshold={"desmenuzado": 0})
+        detection = self._predict(config, monkeypatch)[0]
+        assert detection.area_px == _FRAME_SIDE_PX * _FRAME_SIDE_PX
+
+    def test_without_the_param_nothing_is_refined(self, monkeypatch):
+        detection = self._predict(self._config(), monkeypatch)[0]
+        assert detection.area_px == _FRAME_SIDE_PX * _FRAME_SIDE_PX
+
+    def test_a_mask_left_empty_is_dropped(self, monkeypatch):
+        """Contar una instancia que ya no cubre nada sería contar una que no está."""
+        config = self._config(dark_background_threshold={"desmenuzado": 255})
+        assert self._predict(config, monkeypatch) == []
+
+    def test_the_area_matches_the_refined_mask(self, monkeypatch):
+        config = self._config(dark_background_threshold={"desmenuzado": 60})
+        detection = self._predict(config, monkeypatch)[0]
+        assert detection.area_px == int(detection.mask.sum())

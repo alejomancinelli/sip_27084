@@ -11,6 +11,17 @@ pide el contrato: con cientos de partículas en un frame, una máscara del tama�
 imagen por detección no entra en memoria. La máscara sale de rasterizar el polígono que
 devuelve ultralytics, que ya viene en coordenadas del frame original.
 
+Una de las máscaras se corrige acá y no más adelante: el contorno que devuelve el
+segmentador es aproximadamente convexo y se traga el fondo que hay **entre** partículas
+sueltas. Quitarlo es postproceso de este modelo —corrige una debilidad conocida de su
+salida, no algo de la planta—, y hacerlo acá es lo que garantiza que la máscara que se
+mide y la que se dibuja sean la misma. Calculado en el analyzer, el overlay pintaría
+píxeles que no cuentan y el umbral sería invisible justo mientras se lo calibra.
+
+Vale mientras haya **una sola cámara**: el modelo es uno por pipeline y no sabe de qué
+cámara viene el frame, así que un umbral distinto por cámara no entra acá. Con una segunda
+cámara con otra iluminación, esto se muda al `classifier` del motor, que sí recibe el slot.
+
 Sobre los pesos protegidos: ultralytics carga **desde una ruta** y no desde bytes, así que
 un contenedor cifrado no se puede abrir por este camino y `load()` corta con el motivo. El
 archivo igual pasa por `_read_weights()`, que es lo que valida que exista, deja la metadata
@@ -30,6 +41,9 @@ from ..result import Detection
 
 # Ultralytics quiere la confianza en 0–1 y el contrato la declara en 0–100.
 _PCT_TO_FRACTION = 100.0
+
+# Extra de `params`: luma por debajo de la cual un píxel de esa clase no cuenta.
+_DARK_THRESHOLD_PARAM = "dark_background_threshold"
 
 
 class YoloSegModel(AbstractModel):
@@ -116,7 +130,8 @@ class YoloSegModel(AbstractModel):
 
         if not predictions:
             return []
-        return self._build_detections(predictions[0], scale, frame_bgr.shape[:2])
+        detections = self._build_detections(predictions[0], scale, frame_bgr.shape[:2])
+        return self._drop_dark_background(detections, frame_bgr)
 
     def unload(self):
         self._model = None
@@ -162,6 +177,38 @@ class YoloSegModel(AbstractModel):
                 mask=mask,
             ))
         return detections
+
+
+    def _drop_dark_background(self, detections: list, frame_bgr: np.ndarray) -> list:
+        """
+        Saca de cada máscara los píxeles más oscuros que el umbral de su clase.
+
+        Es el fondo que el contorno mete entre partículas dispersas. Una clase sin umbral
+        —o con 0— no se toca, y una detección que se queda sin un solo píxel se descarta:
+        dejarla contaría una instancia que ya no cubre nada.
+
+        Con el umbral mal puesto esto se come la clase entera, que es exactamente lo que
+        tiene que verse en el anotado para poder corregirlo.
+        """
+        threshold_by_class = self._get_params().get(_DARK_THRESHOLD_PARAM, {}) or {}
+        if not threshold_by_class:
+            return detections
+
+        luma = (cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+                if frame_bgr.ndim == 3 else frame_bgr)
+        kept = []
+        for detection in detections:
+            threshold = int(threshold_by_class.get(detection.class_name, 0) or 0)
+            if threshold <= 0 or detection.mask is None:
+                kept.append(detection)
+                continue
+            x1, y1, x2, y2 = detection.bbox_px
+            detection.mask = (detection.mask & (luma[y1:y2, x1:x2] >= threshold)).astype(
+                np.uint8)
+            detection.area_px = int(detection.mask.sum())
+            if detection.area_px > 0:
+                kept.append(detection)
+        return kept
 
 
 # ── Helpers del módulo ───────────────────────────────────────────────────────
