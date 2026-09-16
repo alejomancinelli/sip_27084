@@ -30,6 +30,7 @@ inferencia pesado —TensorFlow, PyTorch— y no lo usa en el entregable lo suma
 """
 
 import argparse
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -70,6 +71,11 @@ _ICON = "ui/icons/iea_100x100.ico"
 #     )
 _EXCLUDED: tuple = ()
 
+
+def _is_installed(package: str) -> bool:
+    """Si el paquete está disponible para importar en el intérprete que compila."""
+    return importlib.util.find_spec(package) is not None
+
 # Opciones de Nuitka que pide el proyecto y no valen para todos los forks. Vacía por
 # defecto. Acá va lo que arrastra un framework de inferencia y no se puede resolver
 # excluyendo un paquete — el caso típico es un import que hay que dejar entrar pero
@@ -80,7 +86,16 @@ _EXCLUDED: tuple = ()
 #         # Alcanza con que el import ande; la función decorada no se llama nunca.
 #         "--module-parameter=numba-disable-jit=yes",
 #     )
-_EXTRA_FLAGS: tuple = ()
+_EXTRA_FLAGS: tuple = (
+    # `gpiod` se importa adentro de un try/except y su submódulo `line` desde adentro de
+    # un método, que es justo lo que el análisis estático de Nuitka puede no seguir. Sin
+    # esto el binario arranca igual —el módulo degrada a modo simulado— y el equipo se
+    # queda sin entradas ni salidas sin que nada falle, que es la peor forma de perderlas.
+    #
+    # Sólo existe en Linux, así que se agrega cuando está instalado: un build en Windows
+    # cortaría con «package not found» por un paquete que en Windows no va a estar nunca.
+    *(("--include-package=gpiod",) if _is_installed("gpiod") else ()),
+)
 
 # Datos que viajan con el programa: los lee `paths.app_file()`, no `DATA_DIR`.
 _DATA_DIRS = ("ui/styles", "ui/icons")

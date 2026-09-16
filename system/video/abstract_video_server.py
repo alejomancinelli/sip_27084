@@ -57,7 +57,11 @@ class AbstractVideoServer(ABC):
     Una instancia por transporte, no por cámara: cada servidor sirve todos los
     slots de `cameras`. La subclase pone el transporte y el encoder; de acá salen
     el vocabulario de modos y de status, la lectura de los slots y el gating.
+
+    `CONFIG_KEY` es la sub-sección de `video:` que le corresponde a ese transporte.
     """
+
+    CONFIG_KEY = ""
 
     def __init__(self, config_manager: ConfigManager):
         self._config = config_manager
@@ -128,3 +132,18 @@ class AbstractVideoServer(ABC):
         """
         cameras = self._config.get("cameras", {}) or {}
         return tuple(cameras)
+
+    def _read_stream_names(self) -> dict:
+        """
+        Nombre público de cada slot en la ruta del stream, si el config lo renombra.
+
+        Por defecto la ruta lleva la clave del slot, que es la identidad de la cámara en
+        todo el sistema. `video.<transporte>.stream_names` la reemplaza **sólo en la ruta**:
+        es para una instalación donde la URL ya está puesta en un NVR, un tablero o el
+        navegador de alguien, y cambiarla rompe algo de afuera que este equipo no controla.
+
+        Sólo afecta a la ruta. El slot sigue siendo el de siempre en los registros, en la
+        telemetría y en el resto del sistema.
+        """
+        names = self._config.get(f"video.{self.CONFIG_KEY}.stream_names", {}) or {}
+        return {str(slot): str(name) for slot, name in names.items() if str(name).strip()}
