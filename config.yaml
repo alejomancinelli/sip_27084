@@ -261,7 +261,7 @@ cameras:
     name: Cinta
     enabled: true
     brand: Sentech
-    model: STC-MCA503POE-HS
+    model: STC-MCS312POE        # el que reporta la cámara al conectarse
     driver: st_gige             # ver REGISTERED_DRIVERS en camera_factory.py
     address: 192.168.1.101      # sólo informativo: StApi toma el primer dispositivo que encuentra
     rotation: null              # null | 90cw | 90ccw | 180
