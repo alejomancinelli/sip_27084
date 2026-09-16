@@ -1,9 +1,8 @@
 """
 Diálogo de GPIO: estado de las entradas digitales y comando de las salidas.
 
-**Falta el módulo que lo alimenta.** El template todavía no tiene un
-`system/gpio_control.py`, así que este diálogo es la mitad de UI de ese subsistema y
-espera un controlador con esta interfaz mínima:
+Es la mitad de interfaz de `system/gpio_control.py`, y espera un controlador con esta
+interfaz mínima:
 
     hardware_available -> bool          # False = sin librería de sistema, modo simulado
     input_count        -> int           # cuántas DI tiene el equipo
