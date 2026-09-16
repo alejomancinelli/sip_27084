@@ -1,0 +1,121 @@
+# Config de la prueba manual de medición de la cinta. Es una copia del config del equipo
+# con lo que no hace falta acá apagado: sin interfaz, sin Modbus, sin telemetría y sin
+# servidores de video. Lo que importa —la cámara, el modelo, `process:` y el overlay— es
+# igual al de producción, porque lo que se está verificando es justamente eso.
+#
+# `belt_measure.py` lee ESTE archivo y no el de la raíz.
+
+project:
+  client: Cargill APG
+  project_id: 27084
+system:
+  app_name: SIP Smart Belt Monitor
+  device_id: jetson-cinta-1
+  log_level: INFO
+  hard_exit: false
+  paths:
+    logs: ./data/logs
+    dataset: ./data/dataset
+system_monitor:
+  disk_path: .
+  net_interfaces:
+  - enP1p1s0
+  - enP8p1s0
+process:
+  belt_roi_px:
+    camera_1:
+      x_px: 425
+      y_px: 0
+      width_px: 1445
+      height_px: 1515
+  dark_background_threshold:
+    camera_1:
+      desmenuzado: 60
+  rolling_window_s: 3600
+inference:
+  overlay:
+    enabled: true
+    draw_boxes: false
+    draw_masks: true
+    draw_labels: false
+    draw_roi: true
+    draw_summary: false
+    draw_timestamp: true
+    font_scale: 0.6
+    thickness: 2
+    class_colors_bgr:
+    - - 0
+      - 0
+      - 255
+    - - 0
+      - 255
+      - 0
+  pipelines:
+    pipeline_1:
+      enabled: true
+      feature: core
+      cameras:
+      - camera_1
+      interval_s: 0.0
+      min_detections: 0
+      min_result_confidence_pct: 0
+      frames_per_cycle: 1
+      cycle_interval_s: 0.0
+      capture_timeout_s: 30
+      idle_cameras_between_cycles: false
+  models:
+    segmenter:
+      type: yolo_seg
+      path: ./models/pellet_20260623_fp16.engine
+      min_confidence_pct: 20
+      max_side_px: 0
+      class_names:
+      - desmenuzado
+      - pellet
+      params: {}
+lens_health:
+  enabled: true
+  interval_s: 10
+  window_s: 28800
+  threshold_pct: 50
+  analysis_width_px: 960
+  calibration_samples: 30
+cameras:
+  camera_1:
+    name: Cinta
+    enabled: true
+    brand: Sentech
+    model: STC-MCA503POE-HS
+    driver: st_gige
+    address: 192.168.1.101
+    rotation: null
+    acquisition:
+      fps_limit: 15
+      exposure_time_us: 800
+      gain: 1.0
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 0
+    lens_health:
+      reference:
+        variance: 50.7
+        luma: 11.73
+        dispersion_pct: 4.0
+        sample_count: 30
+        calibrated_at: '2026-07-31T16:22:55'
+        conditions:
+          exposure_time_us: 800
+          gain: 1.0
+          rotation: null
+          roi:
+            x_px: 425
+            y_px: 0
+            width_px: 1445
+            height_px: 1515
+    calibration:
+      camera_matrix: []
+      dist_coeffs: []
