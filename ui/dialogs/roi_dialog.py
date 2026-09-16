@@ -9,9 +9,15 @@ Las coordenadas que se guardan son del frame de cámara, en píxeles: las mismas
 el motor de inferencia. El canvas convierte entre el frame y la pantalla y no deja
 salir coordenadas de widget.
 
-Guarda `cameras.<slot>.roi` y persiste el archivo al aceptar. No toca ninguna otra
-clave, y el `enabled` del ROI queda como está: prender el recorte es una decisión
-aparte de dibujarlo.
+Guarda las cuatro claves de geometría bajo el prefijo que se le dé —por defecto
+`cameras.<slot>.roi`— y persiste el archivo al aceptar. No toca ninguna otra clave, y el
+`enabled` del ROI queda como está: prender el recorte es una decisión aparte de dibujarlo.
+
+**El prefijo es un parámetro** porque un proyecto puede tener más de un rectángulo por
+cámara: el que se analiza y, por ejemplo, el de la cinta contra el que se mide la carga.
+Los dos se dibujan igual y sobre el mismo frame en vivo, así que lo único que cambia es
+dónde se guardan y cómo se titula la ventana. Sin esto, el segundo rectángulo se escribiría
+a mano en el `config.yaml`, que es justo lo que este diálogo existe para evitar.
 """
 
 import cv2
@@ -53,17 +59,22 @@ class RoiDialog(QDialog):
     Se abre con `exec()`. Aceptar escribe el ROI en el config y lo persiste; cancelar
     no deja nada. Los frames entran por `update_frame()`, que es el slot que hay que
     conectar a la señal de frames de esa cámara.
+
+    `config_prefix` dice bajo qué clave se guardan las cuatro coordenadas; vacío significa
+    el ROI de análisis de esa cámara. `title_key` es la clave de idiomas del título, para
+    que la ventana diga qué rectángulo se está dibujando.
     """
 
-    def __init__(self, config_manager: ConfigManager, camera_slot: str, parent=None):
+    def __init__(self, config_manager: ConfigManager, camera_slot: str, parent=None, *,
+                 config_prefix: str = "", title_key: str = "roi_title"):
         super().__init__(parent)
         self._config = config_manager
         self._camera_slot = camera_slot
-        self._prefix = f"cameras.{camera_slot}.roi"
+        self._prefix = config_prefix or f"cameras.{camera_slot}.roi"
         self._last_frame: np.ndarray | None = None
 
         camera_name = str(self._config.get(f"cameras.{camera_slot}.name", "") or camera_slot)
-        self.setWindowTitle(f"{tr('roi_title')} — {camera_name}")
+        self.setWindowTitle(f"{tr(title_key)} — {camera_name}")
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         self.resize(_DIALOG_WIDTH_PX, _DIALOG_HEIGHT_PX)
 
