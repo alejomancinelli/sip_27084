@@ -122,7 +122,10 @@ inference:
     crop_to_roi: false          # true = anota sólo el recorte analizado, no el frame entero
     draw_summary: false         # el panel de este proyecto lo dibuja annotations.py
     draw_timestamp: true
-    font_scale: 0.6
+    # Tamaño del texto del panel y del timestamp. Está calibrado para el frame completo
+    # de esta cámara: el default del template es para un recorte chico y acá se lee con
+    # lupa. Con 0 se calcula del ancho del frame, pero topea en 1.0 y se queda corto.
+    font_scale: 1.6
     thickness: 2
     # Por índice de clase, en el orden de `class_names` del modelo: desmenuzado rojo,
     # pellet verde. Son los mismos colores con los que el operador viene leyendo la cinta.

@@ -97,7 +97,7 @@ def belt_roi_annotator(roi_px_by_camera: dict[str, dict]) -> Annotator:
     return draw
 
 
-def composition_panel_annotator(class_names: list) -> Annotator:
+def composition_panel_annotator(class_names: list, font_scale: float = 0.0) -> Annotator:
     """
     Panel con la composición normalizada y la carga de la cinta.
 
@@ -109,8 +109,13 @@ def composition_panel_annotator(class_names: list) -> Annotator:
     `class_names` es la lista del modelo, en orden: fija qué clases se enumeran, en qué
     orden y con qué etiqueta. Un resultado sin métricas —una medición no confiable— no
     dibuja nada.
+
+    `font_scale` es el mismo de `inference.overlay` y llega leído, como todo lo demás. Sin
+    pasarlo, el panel usaba el default del módulo de dibujado —pensado para un recorte— y
+    quedaba ilegible sobre el frame completo de una cámara de varios megapíxeles.
     """
     names = [str(name) for name in (class_names or [])]
+    options = overlay.OverlayOptions(font_scale=font_scale)
     labels = [name.capitalize() for name in names]
     label_width = max((len(label) for label in labels), default=0) + 2
 
@@ -131,7 +136,8 @@ def composition_panel_annotator(class_names: list) -> Annotator:
             colors_bgr.append(_PANEL_NEUTRAL_BGR)
         if len(lines) == 1:
             return
-        overlay.draw_text_panel(frame_bgr, lines, line_colors_bgr=tuple(colors_bgr))
+        overlay.draw_text_panel(frame_bgr, lines, options=options,
+                                line_colors_bgr=tuple(colors_bgr))
 
     draw.__name__ = f"composition_panel({names})"
     return draw

@@ -78,11 +78,17 @@ def main(argv: list | None = None) -> int:
         print("\nNingún modelo cargó: lo que salga no es una medición. Se sigue igual para "
               "poder ver la imagen.")
 
-    analyze = metrics.build_analyzer(
-        class_names=config.get(f"inference.models.{args.model}.class_names", []) or [],
-        belt_roi_px=config.get("process.belt_roi_px", {}) or {},
-        dark_background_threshold=config.get("process.dark_background_threshold", {}) or {},
-    )
+    class_names = config.get(f"inference.models.{args.model}.class_names", []) or []
+    belt_roi_px = config.get("process.belt_roi_px", {}) or {}
+    thresholds = config.get("process.dark_background_threshold", {}) or {}
+    analyze = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px,
+                                     dark_background_threshold=thresholds)
+    # El mismo analyzer sin el refinamiento de fondo oscuro. Correr los dos y comparar es
+    # lo que separa «el umbral se está comiendo la clase» de «el modelo no la detecta»,
+    # que desde el resultado final se ven igual: la clase en cero.
+    analyze_raw = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px,
+                                         dark_background_threshold={})
+    diagnose = _Diagnosis(analyze_raw, thresholds) if thresholds else None
     annotate = annotations.chain(
         annotations.belt_roi_annotator(config.get("process.belt_roi_px", {}) or {}),
         annotations.composition_panel_annotator(
@@ -98,10 +104,10 @@ def main(argv: list | None = None) -> int:
     try:
         if args.frames:
             _run_over_files(args, camera_slot, pipeline, analyze, annotate,
-                            overlay_options, measurements)
+                            overlay_options, measurements, diagnose)
         else:
             _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
-                             overlay_options, measurements)
+                             overlay_options, measurements, diagnose)
     except KeyboardInterrupt:
         print("\nInterrumpido.")
     finally:
@@ -118,7 +124,7 @@ def main(argv: list | None = None) -> int:
 # ── Los dos modos ────────────────────────────────────────────────────────────
 
 def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_options,
-                    measurements: list):
+                    measurements: list, diagnose=None):
     """Corre sobre imágenes guardadas: es el modo que permite comparar contra el equipo viejo."""
     paths = sorted(p for p in Path(args.frames).iterdir()
                    if p.suffix.lower() in _IMAGE_SUFFIXES)
@@ -133,7 +139,7 @@ def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_opti
             continue
         result = _measure(frame_bgr, camera_slot, pipeline, analyze)
         measurements.append({"source": path.name, **result.metrics})
-        _print_measurement(path.name, result)
+        _print_measurement(path.name, result, diagnose)
         if not args.no_window:
             _show(result, annotate, overlay_options)
             if _wait_key() == "quit":
@@ -141,7 +147,7 @@ def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_opti
 
 
 def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
-                     overlay_options, measurements: list):
+                     overlay_options, measurements: list, diagnose=None):
     """Corre en vivo contra la cámara, que es el modo de calibrar la exposición."""
     driver = create_camera(config.get(f"cameras.{camera_slot}", {}) or {})
     if not driver.connect():
@@ -157,7 +163,7 @@ def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
                 continue
             result = _measure(frame_bgr, camera_slot, pipeline, analyze)
             measurements.append(dict(result.metrics))
-            _print_measurement(time.strftime("%H:%M:%S"), result)
+            _print_measurement(time.strftime("%H:%M:%S"), result, diagnose)
             if args.no_window:
                 continue
             _show(result, annotate, overlay_options)
@@ -195,15 +201,54 @@ def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: BeltPipeline,
     return result
 
 
-def _print_measurement(label: str, result: InferenceResult):
+def _print_measurement(label: str, result: InferenceResult, diagnose=None):
     """Una línea por medición, con el luma que sirve para calibrar la exposición."""
-    luma = float(cv2.cvtColor(result.source_bgr, cv2.COLOR_BGR2GRAY).mean())
+    gray = cv2.cvtColor(result.source_bgr, cv2.COLOR_BGR2GRAY)
     percentages = "  ".join(
         f"{name}={value}" for name, value in sorted(result.metrics.items())
         if name.startswith("pct_"))
-    print(f"  {label}  luma={luma:5.1f}  det={len(result.detections):4d}  "
+    print(f"  {label}  luma={float(gray.mean()):5.1f}  det={len(result.detections):4d}  "
           f"conf={result.confidence_pct:5.1f}  {result.inference_time_ms:6.1f} ms  "
           f"{percentages}")
+    if diagnose is not None:
+        diagnose(result, gray)
+
+
+class _Diagnosis:
+    """
+    Compara la medición con y sin el refinamiento de fondo oscuro, clase por clase.
+
+    Una clase en cero se ve igual venga de donde venga: el modelo no la detectó, o la
+    detectó y el umbral se la comió entera. Son dos problemas distintos —uno se arregla en
+    el `.engine` o en la exposición, el otro en `process:`— y desde el número final no se
+    distinguen. Esto los separa.
+    """
+
+    def __init__(self, analyze_raw, thresholds: dict):
+        self._analyze_raw = analyze_raw
+        self._thresholds = thresholds
+
+    def __call__(self, result: InferenceResult, gray):
+        raw = self._analyze_raw(result)
+        # Sólo las claves por clase: la carga y la fracción de cinta no son de ninguna.
+        skip = {metrics.FRAME_FRACTION_KEY, metrics.LOAD_KEY}
+        rows = [(name[len("pct_"):], int(raw[name]), int(result.metrics.get(name, 0)))
+                for name in sorted(raw)
+                if name.startswith("pct_") and not name.endswith("_norm")
+                and name not in skip]
+        by_class = self._thresholds.get(result.camera_slot, {}) or {}
+        for class_name, without, with_refinement in rows:
+            threshold = by_class.get(class_name)
+            note = "sin umbral" if not threshold else f"umbral {threshold}"
+            eaten = " <-- el umbral se la come entera" if (
+                without > 0 and with_refinement == 0) else ""
+            print(f"      {class_name:14s} {without:3d} % sin refinar -> "
+                  f"{with_refinement:3d} % ({note}){eaten}")
+        # Los percentiles dicen dónde poner el umbral: por debajo del que deja pasar la
+        # fracción de imagen que de verdad es material.
+        percentiles = [int(value) for value in
+                       np.percentile(gray, [5, 25, 50, 75, 95])]
+        print(f"      luma p5/p25/p50/p75/p95 = {percentiles}")
 
 
 def _report_pipeline(pipeline: BeltPipeline, config: ConfigManager):

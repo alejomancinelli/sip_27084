@@ -778,7 +778,8 @@ class Application(QObject):
                 self._config.get("process.belt_roi_px", {}) or {}),
             annotations.composition_panel_annotator(
                 self._config.get(f"inference.models.{_SEGMENTER_SLOT}.class_names", [])
-                or []),
+                or [],
+                font_scale=float(self._config.get("inference.overlay.font_scale", 0) or 0)),
         )
 
     def start(self):
