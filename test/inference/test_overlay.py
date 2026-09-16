@@ -308,3 +308,58 @@ class TestTextThickness:
     def test_the_default_scale_keeps_the_stroke_it_always_had(self):
         """Un fork con `font_scale` fijo tiene que seguir viéndose igual."""
         assert overlay.text_thickness(overlay.OverlayOptions().font_scale) == 1
+
+
+class TestOverlappingFill:
+    """
+    El relleno se pinta por unión de la clase, no por instancia.
+
+    Teñir cada máscara por separado mezcla el color tantas veces como instancias se
+    superpongan: una zona con muchas detecciones encimadas sale más saturada que otra
+    igual de cubierta pero con pocas, así que el color deja de decir qué clase es. Y lo
+    que se ve deja de coincidir con lo que se mide, que cuenta cada píxel una sola vez.
+    """
+
+    _BOX = (40, 40, 90, 90)
+
+    def _filled(self, class_index: int = 0):
+        return _detection(class_index=class_index,
+                          mask=np.ones((50, 50), np.uint8), bbox_px=self._BOX)
+
+    def _painted(self, detections: list) -> np.ndarray:
+        frame = _frame()
+        overlay.draw_detections(frame, detections, options=overlay.OverlayOptions(
+            draw_boxes=False, draw_labels=False,
+            class_colors_bgr=((0, 0, 255), (0, 255, 0))))
+        return frame
+
+    def test_ten_stacked_instances_look_like_one(self):
+        assert np.array_equal(self._painted([self._filled()]),
+                              self._painted([self._filled()] * 10))
+
+    def test_where_two_classes_overlap_the_last_one_wins(self):
+        """El mismo criterio con el que se cuentan los píxeles en `metrics`."""
+        both = self._painted([self._filled(0), self._filled(1)])
+        alone = self._painted([self._filled(1)])
+        assert np.array_equal(both, alone)
+
+    def test_the_tint_still_reaches_the_frame(self):
+        frame = self._painted([self._filled()])
+        assert _changed_pixels(_frame(), frame) > 0
+
+    def test_two_classes_side_by_side_keep_their_own_colour(self):
+        left = _detection(class_index=0, mask=np.ones((20, 20), np.uint8),
+                          bbox_px=(10, 10, 30, 30))
+        right = _detection(class_index=1, mask=np.ones((20, 20), np.uint8),
+                           bbox_px=(60, 10, 80, 30))
+        frame = self._painted([left, right])
+        assert frame[20, 20, 2] > frame[20, 20, 1]    # rojo a la izquierda
+        assert frame[20, 70, 1] > frame[20, 70, 2]    # verde a la derecha
+
+    def test_an_outline_is_still_drawn_per_instance(self):
+        """El contorno es lo que deja ver cada instancia por separado."""
+        frame = _frame()
+        overlay.draw_detections(frame, [self._filled()], options=overlay.OverlayOptions(
+            draw_boxes=False, draw_labels=False,
+            mask_style=overlay.MASK_STYLE_OUTLINE))
+        assert _changed_pixels(_frame(), frame) > 0
