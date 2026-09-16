@@ -387,36 +387,72 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Espessura da linha (px):"},
 
     # ── Proceso (configuración) ──────────────────────────────────────────────
-    "process_empty_note":     {"es": "Esta instalación todavía no declaró parámetros de "
-                                     "proceso editables desde la pantalla.\n\n"
-                                     "Los parámetros de lo que se mide —escalas de píxel, "
-                                     "límites de carga, umbrales— son distintos en cada "
-                                     "proyecto, así que el template no los trae: viven en la "
-                                     "sección «process:» del config.yaml y hoy se editan ahí.\n\n"
-                                     "Para ponerlos en esta pantalla se completa "
-                                     "ui/views/config/process_tab.py, que tiene los dos "
-                                     "patrones —un valor suelto y un mapa por cámara— en su "
-                                     "docstring. Ver docs/ui.md.",
-                               "en": "This installation has not declared any process "
-                                     "parameters editable from the screen yet.\n\n"
-                                     "The parameters of what gets measured —pixel scales, "
-                                     "load limits, thresholds— differ in every project, so the "
-                                     "template does not ship them: they live in the «process:» "
-                                     "section of config.yaml and are edited there for now.\n\n"
-                                     "To bring them to this screen, fill in "
-                                     "ui/views/config/process_tab.py, whose docstring has both "
-                                     "patterns —a plain value and a per-camera map—. "
-                                     "See docs/ui.md.",
-                               "pt": "Esta instalação ainda não declarou parâmetros de "
-                                     "processo editáveis pela tela.\n\n"
-                                     "Os parâmetros do que se mede —escalas de pixel, limites "
-                                     "de carga, limiares— são diferentes em cada projeto, "
-                                     "então o template não os traz: vivem na seção «process:» "
-                                     "do config.yaml e hoje se editam ali.\n\n"
-                                     "Para colocá-los nesta tela, complete "
-                                     "ui/views/config/process_tab.py, cujo docstring tem os "
-                                     "dois padrões —um valor solto e um mapa por câmera—. "
-                                     "Ver docs/ui.md."},
+    "process_box_belt":       {"es": "Rectángulo de cinta",
+                               "en": "Belt rectangle",
+                               "pt": "Retângulo da esteira"},
+    "process_belt_note":      {"es": "Es la referencia del 100 % de carga y lo que se dibuja "
+                                     "sobre el anotado. No es el ROI de la cámara: el modelo "
+                                     "sigue mirando el frame entero, así que la composición "
+                                     "por clase se mide contra el frame y la carga contra "
+                                     "este rectángulo.",
+                               "en": "This is the 100 % load reference and what gets drawn on "
+                                     "the annotated frame. It is not the camera ROI: the "
+                                     "model still sees the whole frame, so the per-class "
+                                     "composition is measured against the frame and the load "
+                                     "against this rectangle.",
+                               "pt": "É a referência de 100 % de carga e o que se desenha "
+                                     "sobre o anotado. Não é o ROI da câmera: o modelo "
+                                     "continua vendo o quadro inteiro, então a composição "
+                                     "por classe se mede contra o quadro e a carga contra "
+                                     "este retângulo."},
+    "process_belt_tool":      {"es": "Dibujar sobre el video...",
+                               "en": "Draw on the video...",
+                               "pt": "Desenhar sobre o vídeo..."},
+    "process_belt_title":     {"es": "Definir rectángulo de cinta",
+                               "en": "Define belt rectangle",
+                               "pt": "Definir retângulo da esteira"},
+    "process_box_dark":       {"es": "Fondo oscuro",
+                               "en": "Dark background",
+                               "pt": "Fundo escuro"},
+    "process_dark_threshold": {"es": "Umbral (0-255):",
+                               "en": "Threshold (0-255):",
+                               "pt": "Limiar (0-255):"},
+    "process_dark_off":       {"es": "sin refinar",
+                               "en": "no refinement",
+                               "pt": "sem refinar"},
+    "process_dark_note":      {"es": "Los píxeles de la clase más oscuros que el umbral se "
+                                     "descartan: es el fondo que el contorno del modelo mete "
+                                     "entre partículas sueltas. En 0 no se refina nada.\n\n"
+                                     "Se calibra mirando la cinta y con la exposición "
+                                     "definitiva: el mismo número sobre una imagen más clara "
+                                     "o más oscura no significa lo mismo.",
+                               "en": "Pixels of the class darker than the threshold are "
+                                     "dropped: it is the background the model outline "
+                                     "includes between scattered particles. At 0 nothing is "
+                                     "refined.\n\nCalibrate it looking at the belt and with "
+                                     "the final exposure: the same number over a brighter or "
+                                     "darker image does not mean the same thing.",
+                               "pt": "Os pixels da classe mais escuros que o limiar são "
+                                     "descartados: é o fundo que o contorno do modelo inclui "
+                                     "entre partículas soltas. Em 0 não se refina nada.\n\n"
+                                     "Calibra-se olhando a esteira e com a exposição "
+                                     "definitiva: o mesmo número sobre uma imagem mais clara "
+                                     "ou mais escura não significa o mesmo."},
+    "process_box_window":     {"es": "Tendencias",
+                               "en": "Trends",
+                               "pt": "Tendências"},
+    "process_window_s":       {"es": "Ventana de las medias (s):",
+                               "en": "Averaging window (s):",
+                               "pt": "Janela das médias (s):"},
+    "process_window_note":    {"es": "Sobre cuánto tiempo se promedian las tendencias que "
+                                     "lee el PLC. Toma efecto al reiniciar.",
+                               "en": "How long a span the trends the PLC reads are averaged "
+                                     "over. Takes effect on restart.",
+                               "pt": "Sobre quanto tempo se calculam as médias que o CLP lê. "
+                                     "Entra em vigor ao reiniciar."},
+    "process_no_cameras":     {"es": "No hay cámaras declaradas en el config.yaml.",
+                               "en": "No cameras declared in config.yaml.",
+                               "pt": "Nenhuma câmera declarada no config.yaml."},
 
     # ── Dataset (configuración) ──────────────────────────────────────────────
     "col_box_general":        {"es": "Recolección",    "en": "Collection",    "pt": "Coleta"},

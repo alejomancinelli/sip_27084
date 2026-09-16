@@ -1,96 +1,235 @@
 """
-Pestaña de proceso: la sección `process:` del config — **vacía en el template**.
+Pestaña de proceso: la sección `process:` del config.
 
-Es la única pestaña que llega sin campos, y es a propósito: `process:` es la única
-sección cuya *forma* cambia entre proyectos. Escalas de píxel, límites de carga, anchos
-de cinta, umbrales de aceptación —lo que el cliente mide— no tienen nada en común entre
-una instalación y la siguiente, así que el template no puede declararlos.
+Es la única pestaña cuya *forma* cambia entre proyectos, porque `process:` es la única
+sección cuya forma cambia: lo que se mide en esta cinta no tiene nada en común con lo que
+se mide en la siguiente instalación. Acá están los tres parámetros de este equipo:
 
-La pestaña existe igual porque **el punto de extensión tiene que verse**: un fork que
-necesita que el operador ajuste un umbral encuentra el archivo, agrega sus campos y ya
-está en la pantalla, sin tocar el ConfigView ni descubrir de casualidad que se podía.
+  - **El rectángulo de cinta**, por cámara. Es la referencia del 100 % de carga y lo que se
+    dibuja sobre el anotado. Se puede escribir a mano o dibujar sobre el video en vivo, que
+    es como se hace en planta.
+  - **El umbral de fondo oscuro**, por cámara y por clase. Sólo aparecen las clases que el
+    modelo declara en `class_names`: son datos de configuración y no identificadores, así
+    que la pestaña las lee en vez de nombrarlas.
+  - **La ventana de las medias**, que es sobre cuánto tiempo se promedian las tendencias
+    que lee el PLC.
 
-Cómo se llena. Dos patrones cubren casi todo:
+Dos cosas que **no** están acá, y por qué:
 
-    def _build_box(self) -> QWidget:
-        box, form = build_group_box(tr("mi_grupo"))
+  - **El `enabled` del rectángulo.** No existe: el rectángulo de cinta siempre se usa, y sin
+    declarar la carga se mide contra el frame entero. Una casilla más sería un estado más
+    que puede quedar mal.
+  - **La validación de lo obligatorio.** Un valor cuya ausencia corrompe una medición tiene
+    que frenar el arranque, y eso lo chequea `main.py`, que es quien lee la sección y la
+    inyecta. Acá los tres tienen un default que es un no-op documentado.
 
-        # 1. Escalar: un valor para todo el proceso.
-        self._min_load = add_form_row(form, tr("mi_min_load"), build_spin_box(0, 100, 60))
-
-        # 2. Mapa por cámara: una fila por slot de `cameras:`, como hace CamerasTab.
-        self._scales = {}
-        for camera_slot in (self._config.get("cameras", {}) or {}):
-            name = self._config.get(f"cameras.{camera_slot}.name", "") or camera_slot
-            self._scales[camera_slot] = add_form_row(
-                form, f"{tr('mi_escala')} — {name}",
-                build_double_spin_box(0.01, 100.0, 1.0, decimals=2),
-            )
-        return box
-
-    def load(self):
-        prefix = "process.belt_1"
-        self._min_load.setValue(int(self._config.get(f"{prefix}.min_load_pct", 60)))
-        scales = self._config.get(f"{prefix}.scale_px_per_mm", {}) or {}
-        for camera_slot, field in self._scales.items():
-            field.setValue(float(scales.get(camera_slot, 1.0)))
-
-    def save(self):
-        prefix = "process.belt_1"
-        self._config.set(f"{prefix}.min_load_pct", self._min_load.value())
-        for camera_slot, field in self._scales.items():
-            self._config.set(f"{prefix}.scale_px_per_mm.{camera_slot}", field.value())
-
-Dos cosas que **no** van acá:
-
-  - **La validación de lo obligatorio.** Un valor cuya ausencia corrompe una medición
-    —una escala de píxel— tiene que frenar el arranque, y eso lo chequea `main.py`, que
-    es quien lee la sección y la inyecta. Un valor cuya ausencia es un no-op documentado
-    —un mínimo en 0— sí puede tener default.
-  - **Qué cámaras usa cada proceso.** Va en el config, como `process.<nombre>.cameras`,
-    con la misma forma que `inference.pipelines.<slot>.cameras`. No se deduce de las
-    claves de los mapas por cámara: un parámetro uniforme no tiene mapa, y un error de
-    tipeo en una clave movería una cámara de proceso en silencio.
-
-Un proyecto con varios procesos idénticos abre una sub-sección por proceso y esta
-pestaña arma un grupo por cada uno, con el mismo bucle de arriba sobre
-`self._config.get("process", {})`.
+El rectángulo de cinta se dibuja con el mismo diálogo que el ROI de cámara, apuntado a otra
+clave: son el mismo gesto sobre el mismo frame en vivo y lo único que cambia es dónde se
+guarda. Ver `ui/dialogs/roi_dialog.py`.
 """
 
-from PySide6.QtWidgets import QLabel, QVBoxLayout
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
+from ui.widgets.form import add_form_row, add_hint_row, build_group_box, build_spin_box
+
+_MAX_FRAME_SIDE_PX = 8192
+_MAX_LUMA = 255              # el umbral se compara contra un nivel de gris de 8 bits
+_MAX_WINDOW_S = 86400        # un día: más que eso deja de ser una tendencia operativa
+_DEFAULT_WINDOW_S = 3600
+
+# Clave del rectángulo de cinta, en el orden en que se muestra, con su etiqueta. Las
+# etiquetas son las mismas del ROI de cámara: es la misma geometría y el operador ya las
+# conoce.
+_BELT_ROI_FIELDS = (
+    ("x_px", "cam_roi_x"),
+    ("y_px", "cam_roi_y"),
+    ("width_px", "cam_roi_width"),
+    ("height_px", "cam_roi_height"),
+)
+
+_BELT_ROI_PREFIX = "process.belt_roi_px"
+_DARK_THRESHOLD_PREFIX = "process.dark_background_threshold"
+_WINDOW_KEY = "process.rolling_window_s"
 
 
 class ProcessTab(AbstractConfigTab):
-    """Sección `process:` del config. Sin campos hasta que el fork los agregue."""
+    """Sección `process:` del config, con una sub-pestaña por cámara. Ver `abstract_tab.py`."""
 
     TITLE_KEY = "tab_process"
 
+    open_belt_roi_requested = Signal(str)   # slot de la cámara cuyo rectángulo hay que dibujar
+
     def __init__(self, config_manager: ConfigManager, parent=None):
         super().__init__(config_manager, parent)
-
-        note = QLabel(tr("process_empty_note"))
-        note.setObjectName("hintLabel")
-        note.setWordWrap(True)
+        self._forms: dict[str, _CameraProcessForm] = {}
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-        layout.addWidget(note)
+
+        camera_slots = tuple(self._config.get("cameras", {}) or {})
+        if not camera_slots:
+            note = QLabel(tr("process_no_cameras"))
+            note.setObjectName("hintLabel")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+        else:
+            tabs = QTabWidget()
+            for camera_slot in camera_slots:
+                form = _CameraProcessForm(self._config, camera_slot)
+                form.open_belt_roi_requested.connect(self.open_belt_roi_requested)
+                self._forms[camera_slot] = form
+                tabs.addTab(form, form.camera_name)
+            layout.addWidget(tabs)
+
+        layout.addWidget(self._build_window_box())
         layout.addStretch()
 
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 
     def load(self):
-        """Sin campos que cargar. El fork la escribe junto con los suyos."""
+        for form in self._forms.values():
+            form.load()
+        self._window_spin.setValue(
+            int(self._config.get(_WINDOW_KEY, _DEFAULT_WINDOW_S) or _DEFAULT_WINDOW_S))
 
     def save(self):
-        """
-        Sin campos que guardar.
+        for form in self._forms.values():
+            form.save()
+        self._config.set(_WINDOW_KEY, self._window_spin.value())
 
-        Vacío y no `NotImplementedError`: el ConfigView recorre todas las pestañas al
-        guardar, y una que levante excepción abortaría el guardado de las demás.
+    # ── API pública ──────────────────────────────────────────────────────────
+
+    def refresh_belt_roi_fields(self, camera_slot: str):
+        """Recarga el rectángulo de una cámara tras cerrarse el diálogo interactivo."""
+        form = self._forms.get(camera_slot)
+        if form is not None:
+            form.load_belt_roi()
+
+    # ── Construcción ─────────────────────────────────────────────────────────
+
+    def _build_window_box(self) -> QWidget:
+        box, form = build_group_box(tr("process_box_window"))
+        self._window_spin = add_form_row(
+            form, tr("process_window_s"),
+            build_spin_box(60, _MAX_WINDOW_S, _DEFAULT_WINDOW_S),
+        )
+        add_hint_row(form, tr("process_window_note"))
+        return box
+
+
+class _CameraProcessForm(QWidget):
+    """Parámetros de proceso de una cámara: el rectángulo de cinta y los umbrales."""
+
+    open_belt_roi_requested = Signal(str)
+
+    def __init__(self, config_manager: ConfigManager, camera_slot: str, parent=None):
+        super().__init__(parent)
+        self._config = config_manager
+        self._camera_slot = camera_slot
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.addWidget(self._build_belt_roi_box())
+        layout.addWidget(self._build_dark_background_box())
+        layout.addStretch()
+
+        self.load()
+
+    @property
+    def camera_name(self) -> str:
+        """Texto de la sub-pestaña: el `name` del config, o el slot si está vacío."""
+        return str(self._config.get(f"cameras.{self._camera_slot}.name", "")
+                   or self._camera_slot)
+
+    # ── Contrato ─────────────────────────────────────────────────────────────
+
+    def load(self):
+        self.load_belt_roi()
+        thresholds = self._get_thresholds()
+        for class_name, spin in self._threshold_spins.items():
+            spin.setValue(int(thresholds.get(class_name, 0) or 0))
+
+    def load_belt_roi(self):
         """
+        Sólo la geometría, que es lo que escribe el diálogo interactivo.
+
+        Va aparte de `load()` porque son dos llamadores con intenciones distintas: uno
+        recarga la pestaña entera desde el archivo y el otro vuelve del diálogo, donde lo
+        único que cambió fue el rectángulo.
+        """
+        roi_px = self._get_belt_roi()
+        for key, spin in self._roi_spins.items():
+            spin.setValue(int(roi_px.get(key, 0) or 0))
+
+    def save(self):
+        for key, spin in self._roi_spins.items():
+            self._config.set(f"{_BELT_ROI_PREFIX}.{self._camera_slot}.{key}", spin.value())
+        for class_name, spin in self._threshold_spins.items():
+            self._config.set(
+                f"{_DARK_THRESHOLD_PREFIX}.{self._camera_slot}.{class_name}", spin.value())
+
+    # ── Construcción ─────────────────────────────────────────────────────────
+
+    def _build_belt_roi_box(self) -> QWidget:
+        box, form = build_group_box(tr("process_box_belt"))
+        self._roi_spins = {}
+        for key, label_key in _BELT_ROI_FIELDS:
+            self._roi_spins[key] = add_form_row(
+                form, tr(label_key), build_spin_box(0, _MAX_FRAME_SIDE_PX, 0)
+            )
+        draw_button = QPushButton(tr("process_belt_tool"))
+        draw_button.clicked.connect(
+            lambda: self.open_belt_roi_requested.emit(self._camera_slot)
+        )
+        form.addRow("", draw_button)
+        add_hint_row(form, tr("process_belt_note"))
+        return box
+
+    def _build_dark_background_box(self) -> QWidget:
+        """
+        Un umbral por clase del modelo. Sin clases declaradas, el grupo queda con la nota.
+
+        Las clases se leen del modelo y no se escriben acá: son datos de configuración, y
+        una lista propia en la interfaz sería una segunda declaración que puede discrepar
+        con la que de verdad usa el analyzer.
+        """
+        box, form = build_group_box(tr("process_box_dark"))
+        self._threshold_spins = {}
+        for class_name in self._get_class_names():
+            spin = build_spin_box(0, _MAX_LUMA, 0)
+            spin.setSpecialValueText(tr("process_dark_off"))
+            self._threshold_spins[class_name] = add_form_row(
+                form, f"{class_name} — {tr('process_dark_threshold')}", spin
+            )
+        add_hint_row(form, tr("process_dark_note"))
+        return box
+
+    # ── Lectura del config ───────────────────────────────────────────────────
+
+    def _get_belt_roi(self) -> dict:
+        return (self._config.get(_BELT_ROI_PREFIX, {}) or {}).get(self._camera_slot, {}) or {}
+
+    def _get_thresholds(self) -> dict:
+        return (self._config.get(_DARK_THRESHOLD_PREFIX, {})
+                or {}).get(self._camera_slot, {}) or {}
+
+    def _get_class_names(self) -> list:
+        """
+        Nombres de clase de todos los modelos declarados, sin repetir y en orden.
+
+        Se recorren todos y no un slot fijo porque la pestaña no tiene por qué saber cómo se
+        llama el modelo de este proyecto: un pipeline de dos etapas tendría dos, y las dos
+        pueden necesitar umbral.
+        """
+        names = []
+        for model_slot in (self._config.get("inference.models", {}) or {}):
+            for class_name in (self._config.get(
+                    f"inference.models.{model_slot}.class_names", []) or []):
+                if str(class_name) not in names:
+                    names.append(str(class_name))
+        return names

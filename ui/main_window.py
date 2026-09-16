@@ -142,8 +142,8 @@ class MainWindow(QMainWindow):
         """
         Inyecta el controlador de GPIO y, si lo hay, el hilo que informa las entradas.
 
-        Sin esto el botón de GPIO no aparece: es la mitad de UI de un subsistema que el
-        template todavía no tiene. Ver `ui/dialogs/gpio_dialog.py`.
+        Sin esto el botón de GPIO no aparece: un equipo sin entradas ni salidas digitales
+        no muestra un panel que no comanda nada. Ver `ui/dialogs/gpio_dialog.py`.
         """
         self._gpio_controller = gpio_controller
         self._gpio_thread = gpio_thread
@@ -447,6 +447,8 @@ class MainWindow(QMainWindow):
         self._config_view = ConfigView(self._config)
         self._config_view.config_saved.connect(self._on_config_saved)
         self._config_view.open_roi_requested.connect(self._on_open_roi_requested)
+        self._config_view.open_belt_roi_requested.connect(
+            self._on_open_belt_roi_requested)
         self._config_view.calibrate_lens_requested.connect(
             self._on_calibrate_lens_requested)
 
@@ -480,16 +482,26 @@ class MainWindow(QMainWindow):
         self.config_saved.emit()
 
     def _on_open_roi_requested(self, camera_slot: str):
+        """Abre el diálogo para el ROI de análisis de esa cámara."""
+        self._open_roi_dialog(camera_slot, on_closed=self._refresh_roi_fields)
+
+    def _refresh_roi_fields(self, camera_slot: str):
+        if self._config_view is not None:
+            self._config_view.refresh_roi_fields(camera_slot)
+
+    def _open_roi_dialog(self, camera_slot: str, *, config_prefix: str = "",
+                         title_key: str = "roi_title", on_closed=None):
         """
         Abre el diálogo de ROI alimentado con el frame en vivo de esa cámara.
 
-        El frame sale del panel que la vista de monitor tenga para ese slot: si el fork
-        no puso ninguno, el diálogo se abre igual y se dibuja sobre negro, que es mejor
-        que no abrirse.
+        El frame sale del panel que la vista de monitor tenga para ese slot: si el widget
+        del centro no expone uno, el diálogo se abre igual y se dibuja sobre negro, que es
+        mejor que no abrirse.
         """
         from ui.dialogs.roi_dialog import RoiDialog
 
-        dialog = RoiDialog(self._config, camera_slot, self)
+        dialog = RoiDialog(self._config, camera_slot, self,
+                           config_prefix=config_prefix, title_key=title_key)
         panel = self._get_camera_panel(camera_slot)
         if panel is not None:
             panel.frame_updated.connect(dialog.update_frame)
@@ -497,8 +509,27 @@ class MainWindow(QMainWindow):
         dialog.exec()
         if panel is not None:
             panel.frame_updated.disconnect(dialog.update_frame)
+        if on_closed is not None:
+            on_closed(camera_slot)
+
+    def _on_open_belt_roi_requested(self, camera_slot: str):
+        """
+        Abre el mismo diálogo de ROI, apuntado al rectángulo de cinta de `process:`.
+
+        Es el mismo gesto sobre el mismo frame en vivo que el ROI de análisis: lo único que
+        cambia es bajo qué clave se guarda y qué dice el título, así que se reusa el diálogo
+        en vez de escribir un segundo lienzo que habría que mantener igual al primero.
+        """
+        self._open_roi_dialog(
+            camera_slot,
+            config_prefix=f"process.belt_roi_px.{camera_slot}",
+            title_key="process_belt_title",
+            on_closed=self._refresh_belt_roi_fields,
+        )
+
+    def _refresh_belt_roi_fields(self, camera_slot: str):
         if self._config_view is not None:
-            self._config_view.refresh_roi_fields(camera_slot)
+            self._config_view.refresh_belt_roi_fields(camera_slot)
 
     def _on_calibrate_lens_requested(self, camera_slot: str):
         """
