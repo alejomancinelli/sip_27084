@@ -1,13 +1,14 @@
-# Plantilla de configuración. La jerarquía espeja los módulos del repo, no las
-# pantallas de la GUI. Cada módulo lee su propia sección.
+# Configuración de SIP Smart Belt Monitor — Cargill APG, proyecto 27084.
+# La jerarquía espeja los módulos del repo, no las pantallas de la GUI. Cada módulo lee
+# su propia sección.
 
 project:
-  client: CLIENT_NAME
-  project_id: PROJECT_ID
+  client: Cargill APG
+  project_id: 27084
 
 system:
-  app_name: APP_NAME
-  device_id: DEVICE_ID
+  app_name: SIP Smart Belt Monitor
+  device_id: jetson-cinta-1
   log_level: INFO               # DEBUG | INFO | WARNING | ERROR
   hard_exit: false
   # Termina el proceso al salir sin desarmar el intérprete. Hace falta sólo cuando el
@@ -27,17 +28,13 @@ ui:
   enabled: true                 # false = sin ventana (headless), igual que `main.py --headless`
   language: es                  # es | en | pt
   dark_mode: true
-  # En headless se cablea todo igual —Qt hace falta para las señales entre hilos— pero se
-  # arma un QCoreApplication y la interfaz la reemplaza un no-op. Es el modo de un equipo
-  # en gabinete, de un servicio del sistema y de un contenedor sin X11. El flag de línea
-  # de comandos manda sobre esta clave.
 
 system_monitor:
   # Métricas de hardware del equipo. Las fuentes cambian entre plataformas
   # (sysfs e INA3221 en Jetson, psutil y nvidia-smi en Windows); las claves que
   # publica el módulo, no.
   disk_path: .                  # partición que se reporta como espacio libre; relativa a la raíz del repo
-  net_interfaces: []            # interfaces a medir, p. ej. [eth0, eth1]; [] = todas menos loopback
+  net_interfaces: [enP1p1s0, enP8p1s0]   # enP1p1s0 = cámaras, enP8p1s0 = PLC
 
 video:
   # Publicación del video hacia afuera. Los dos servidores sirven los mismos
@@ -63,216 +60,162 @@ video:
     frame_width_px: 0           # ancho al que se escala antes de codificar; 0 = nativo
     net_interfaces: []          # interfaces por las que se publica; [] = todas
     log_connections: true       # una línea de log cuando un stream se abre y se cierra
-    # Los codecs `_hw` usan el encoder de la Jetson (nvv4l2*) y no existen en un
-    # x86. Los `_sw` codifican por CPU: son los que andan en cualquier equipo, y los
-    # que hacen que convenga bajar `fps` o `frame_width_px` con varias cámaras.
+    # Los codecs `_hw` usan el encoder de la Jetson (nvv4l2*): son los que convienen acá.
+    # Los `_sw` codifican por CPU y andan en cualquier equipo.
   display:
     # Ajuste de imagen para que la vea una persona (tools/image/enhance.py). Va sólo en el
     # camino de visualización —los dos streams y la UI—: el modelo y el dataset siguen
-    # recibiendo el frame crudo, porque el dataset es con lo que se reentrena. Si lo que se
-    # busca es que el modelo vea la imagen ajustada, eso es el `preprocessor` del motor.
+    # recibiendo el frame crudo, porque el dataset es con lo que se reentrena.
+    #
+    # Acá estaba el brillo del proyecto anterior, que además entraba a la inferencia. Eso
+    # ahora se resuelve en la cámara —exposición y ganancia—, que es donde corresponde: ver
+    # la nota de `acquisition` de camera_1.
     gamma: 1.0                  # <1 levanta las sombras, >1 las hunde; 1.0 = sin cambio
     clahe_clip: 0.0             # contraste local 0–8; 0 = apagado, cuesta bastante más que gamma
 
 process:
-  # Parámetros de lo que se mide en ESTA instalación: escalas, umbrales, límites. Es la
-  # sección que se reescribe entera en cada fork y la única cuya forma cambia entre
-  # proyectos.
+  # Parámetros de lo que se mide en la cinta. Ningún módulo de la maquinaria lee esta
+  # sección: la lee `main.py` y se la pasa al analyzer (system/inference/metrics.py) y a
+  # los annotators (system/inference/annotations.py), que así se testean con tres números
+  # y sin archivo.
   #
-  # Ningún módulo de la maquinaria la lee: la lee `main.py` y se la pasa al analyzer
-  # (system/inference/metrics.py) y a los annotators (system/inference/annotations.py), que
-  # así se siguen testeando con tres números y sin archivo. Un valor obligatorio que falte
-  # tiene que frenar el arranque: publicar milímetros calculados con una escala inventada
-  # es peor que no arrancar.
-  #
-  # Los valores por cámara van como mapas con la clave del slot.
-  scale_px_per_mm: {}           # {camera_1: 3.2} — calibración; sin esto no hay medidas físicas
-  max_load_y_px: {}             # {camera_1: 430} — altura del límite de carga de la cinta
-  min_load_pct: 0               # por debajo de esto la carga se reporta como insuficiente
-  #
-  # VARIOS PROCESOS. Una instalación con más de un proceso —cuatro cintas iguales, cada
-  # una con su calibración— abre una sub-sección por proceso y declara qué cámaras mide
-  # cada uno, con la misma forma que `inference.pipelines.<slot>.cameras`:
-  #
-  #   process:
-  #     belt_1:
-  #       cameras: [camera_1, camera_2]
-  #       scale_px_per_mm: {camera_1: 3.2, camera_2: 3.1}
-  #       min_load_pct: 60
-  #     belt_2:
-  #       cameras: [camera_3, camera_4]
-  #       ...
-  #
-  # La pertenencia va explícita y NO se deduce de las claves de los mapas: un parámetro
-  # uniforme —`min_load_pct`— no tiene mapa por cámara, y un error de tipeo en una clave
-  # movería una cámara de proceso en silencio.
-  #
-  # Proceso y pipeline son cosas distintas. El pipeline es una agrupación de cómputo —qué
-  # modelo corre en qué hilo—; el proceso es una agrupación de planta —qué se mide—. Cuatro
-  # cintas con el mismo modelo son UN pipeline con las cuatro cámaras (los pesos se cargan
-  # una vez) y CUATRO procesos. El motor recibe un solo analyzer, así que con varios
-  # procesos ese analyzer reparte por `result.camera_slot`.
+  # `belt_roi_px` alimenta a dos consumidores —se dibuja y se mide contra él— y por eso se
+  # lee una sola vez: el operador y el PLC no pueden estar mirando cosas distintas.
+  belt_roi_px:
+    # Referencia del 100 % de carga, y el rectángulo que se dibuja sobre el anotado.
+    # NO es `cameras.camera_1.roi`: si fuera el ROI de cámara, el motor recortaría antes
+    # de inferir y `pct_pellet` pasaría a dividirse por la misma área que `pct_carga`,
+    # cambiando en silencio todos los porcentajes publicados.
+    camera_1: {x_px: 425, y_px: 0, width_px: 1445, height_px: 1515}
+  dark_background_threshold:
+    # Por cámara y por clase: luma por debajo de la cual un píxel de la máscara de esa
+    # clase se descarta. Es el fondo oscuro que el polígono aproximadamente convexo de
+    # YOLO mete entre partículas dispersas de la pila, y por eso aplica al desmenuzado y
+    # no al pellet, que viene apilado y sin huecos. Una clase que no figura no se refina.
+    #
+    # El nombre de la clase es dato de configuración y tiene que coincidir con el de
+    # `inference.models.segmenter.class_names`.
+    #
+    # El valor heredado (60) se calibró sobre la imagen con el brillo de software aplicado.
+    # Sobre el frame crudo NO significa lo mismo: hay que recalibrarlo con la exposición
+    # definitiva, mirando la cinta.
+    camera_1: {desmenuzado: 60}
+  rolling_window_s: 3600        # ventana de las medias móviles que van a los registros 6-10
 
 inference:
   # Un hilo por pipeline: todas las cámaras de un mismo pipeline lo comparten, así que
-  # los pesos se cargan una sola vez y el acceso a la GPU queda serializado. Dos
-  # pipelines distintos son dos hilos y sí corren en paralelo.
+  # los pesos se cargan una sola vez y el acceso a la GPU queda serializado.
   #
   # EL ORDEN DE LAS ETAPAS NO ESTÁ ACÁ: el pipeline se programa en
-  # system/inference/pipeline.py, porque encadenar dos modelos es lógica del proceso —qué
-  # recorta el segundo, qué hace con lo que encontró el primero—. Acá va de dónde sale
-  # cada modelo y qué cámaras entran a cada pipeline.
-  #
-  # El ROI y el mínimo de iluminación son de la cámara y viven en su sección: se recorta
-  # y se mide antes de gastar una pasada del modelo.
+  # system/inference/pipeline.py. Acá va de dónde sale cada modelo y qué cámaras entran a
+  # cada pipeline.
   overlay:
     # Dibujado del resultado sobre el frame. Sale una sola vez y el mismo array viaja a
     # la UI, al stream `annotated` y al dataset.
     enabled: true
-    # Estas cuatro no están en la pantalla de configuración: apagarlas deja un stream
-    # anotado que no muestra nada, así que van siempre. La clave sigue acá porque el
-    # motor la lee, para el proyecto que de verdad necesite apagar alguna.
-    draw_boxes: true
-    draw_masks: true            # sólo hace algo si el modelo devuelve máscaras
-    draw_labels: true           # nombre de clase y confianza sobre cada caja
-    draw_roi: true              # recuadro de la zona que se analizó
-    # Estas dos sí se editan desde la pantalla: tapan parte de la imagen.
-    draw_summary: true          # panel con tiempo de inferencia, confianza, detecciones y métricas
+    draw_boxes: false           # con cientos de instancias las cajas tapan la imagen
+    draw_masks: true
+    mask_style: fill            # fill | outline | both
+    mask_alpha: 0.45            # cuánto tiñe el relleno; con muchas instancias conviene bajarlo
+    draw_labels: false          # ídem: el reparto ya lo dice el panel de composición
+    draw_roi: true
+    crop_to_roi: false          # true = anota sólo el recorte analizado, no el frame entero
+    draw_summary: false         # el panel de este proyecto lo dibuja annotations.py
     draw_timestamp: true
     font_scale: 0.6
     thickness: 2
-    class_colors_bgr: []        # [[B,G,R], ...] por índice de clase; [] = paleta del módulo
+    # Por índice de clase, en el orden de `class_names` del modelo: desmenuzado rojo,
+    # pellet verde. Son los mismos colores con los que el operador viene leyendo la cinta.
+    class_colors_bgr: [[0, 0, 255], [0, 255, 0]]
   pipelines:
-    # Una entrada por pipeline, numeradas pipeline_1 … pipeline_N. La clave es el slot:
-    # es la identidad con la que el pipeline aparece en el resto del sistema.
     pipeline_1:
       enabled: true
-      # Qué addon comercial es este pipeline: UN nombre. Lo lee el subsistema de licencia
-      # (`system/license/`) y un pipeline cuyo feature no está habilitado no se instancia.
-      # Ausente = `core`, que es el pipeline normal y el que tiene toda instalación.
-      #
-      # El nombre es la unidad comercial y no el framework: dos productos distintos pueden
-      # correr el mismo `type` de modelo, y un addon puede cambiar de framework entre
-      # versiones sin que cambie lo que el cliente compró.
-      #
-      # DOS PROPÓSITOS SON DOS PIPELINES. Medir un proceso y vigilar una zona no se juntan
-      # acá aunque miren la misma cámara: son dos hilos, se venden por separado, y en uno
-      # solo el cliente que no compró la vigilancia perdería también la medición que sí
-      # pagó, porque el pipeline entero no arranca.
       feature: core
-      cameras: [camera_1]       # cámaras que entran a este hilo; [] = todas las que le pusheen
+      cameras: [camera_1]
       interval_s: 0.0           # período mínimo entre frames de una misma cámara; 0 = todos
       # Umbrales del resultado completo, no de cada detección: por debajo, el resultado se
       # emite igual pero marcado como no confiable, y sus números no se publican como
       # medición. El descarte por detección es del modelo (`min_confidence_pct`).
-      min_detections: 0         # menos detecciones que esto = resultado no confiable
-      min_result_confidence_pct: 0   # confianza media por debajo de esto = resultado no confiable
+      min_detections: 0         # una cinta vacía es una medición válida: 0 % de todo
+      min_result_confidence_pct: 0
       # ── El ciclo de medición ──────────────────────────────────────────────
-      # El motor no lee ninguna de estas cuatro: emite un resultado por frame y no
-      # promedia. Las lee `system/camera/capture_scheduler.py`, que junta los N resultados
-      # y los agrega con `analysis.summarize_metrics` (media, desvío y rango) y
-      # `analysis.pick_representative` (qué frame se guarda y se muestra).
-      #
-      # Con `frames_per_cycle: 1` el scheduler es un pass-through y las otras tres no
-      # hacen nada: una aplicación en tiempo real no tiene ciclo que orquestar.
-      frames_per_cycle: 1       # imágenes que forman UNA medición; 1 = una por frame
-      cycle_interval_s: 0.0     # espera entre rondas; 0 = la siguiente arranca al terminar
-      capture_timeout_s: 30     # un frame pedido que no vuelve en esto se da por perdido
+      # Una medición por frame, como el proyecto anterior: el scheduler queda de
+      # pass-through y las otras tres claves no hacen nada.
+      frames_per_cycle: 1
+      cycle_interval_s: 0.0
+      capture_timeout_s: 30
       idle_cameras_between_cycles: false
-      # Apagar la captura entre mediciones libera el ancho de banda del bus y el CPU del
-      # hilo de captura, y en una ronda de varias cámaras deja el enlace para la que está
-      # midiendo. El costo es que el stream crudo y la vista del operador se quedan sin
-      # imagen mientras tanto, así que viene apagado. Al prenderlo, `capture_timeout_s`
-      # tiene que cubrir lo que la cámara tarda en rearmar la adquisición: si el primer
-      # frame llega después del timeout, la ronda se queda esperando algo que no salió.
   models:
-    # Una entrada por modelo, numeradas model_1 … model_N. El slot es el nombre con el que
-    # el pipeline pide el modelo en `model_slots`.
-    model_1:
-      type: mock                # ver REGISTERED_MODELS en model_factory.py
-      path: ''                  # pesos del modelo; relativo a la raíz del repo
+    segmenter:
+      type: yolo_seg            # ver REGISTERED_MODELS en model_factory.py
+      path: ./models/pellet_20260623_fp16.engine
       # El dispositivo no se configura: la implementación usa la GPU si hay CUDA
-      # disponible y cae a CPU si no. Elegirlo a mano sólo servía para dejar la
-      # inferencia en CPU sin darse cuenta.
-      min_confidence_pct: 50    # descarta la detección; lo aplica el modelo, no el llamador
+      # disponible y cae a CPU con un warning si no.
+      min_confidence_pct: 20    # bajo a propósito: se cuentan muchas instancias chicas
       max_side_px: 0            # lado mayor al que se reduce antes de inferir; 0 = nativo
-      class_names: []           # nombre por índice de clase; [] = 'class_<i>'
-      params: {}                # extras propios del framework
-      # En un proyecto que cuenta cientos de objetos `min_confidence_pct` va bajo a
-      # propósito: el que juzga si el conjunto sirve es el umbral del pipeline, sobre la
-      # confianza promediada.
+      # El índice es el que devuelve el framework. El orden de acá decide qué color y qué
+      # nombre de métrica le toca a cada clase: invertirlo invierte todos los porcentajes.
+      class_names: [desmenuzado, pellet]
+      params: {}
 
 image_collector:
   # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:
   # el frame de cámara en original/, el anotado en annotated/ y la metadata de
   # inferencia en un .json al lado del anotado.
   enabled: false                # se prende y se apaga en caliente
-  # on_demand: cada guardado lo pide el llamador con save_now(), que es lo que sirve
-  # cuando la inferencia corre cada varios minutos y la luz se enciende solo para la
-  # captura. interval: el recolector guarda por su cuenta un frame por cámara cada
-  # tanto, para los proyectos que infieren de continuo. Cambiar el modo exige
-  # reiniciar el recolector.
-  mode: on_demand               # on_demand | interval
-  interval_min_s: 60            # solo en modo interval: ventana al azar entre guardados
-  interval_max_s: 600           # iguales al mínimo = guardado periódico
+  mode: interval                # on_demand | interval
+  interval_min_s: 60            # ventana al azar entre guardados
+  interval_max_s: 600
   max_images: 10000             # tope por cámara; al llegar se borra el guardado más viejo
   min_free_space_gb: 5          # por debajo de esto se hace lugar y, si no alcanza, no se guarda
   save_original: true
   save_annotated: false
-  save_inference_json: true
+  save_inference_json: false
   dedup:
     # Descarta el frame casi idéntico a uno de los últimos guardados de esa cámara,
     # comparando el hash perceptual de la escena.
-    enabled: true
-    history_len: 5              # guardados contra los que se compara
+    enabled: false
+    history_len: 5
     hamming_threshold: 5        # 0–64 bits de diferencia; menos = más estricto
 
 telemetry:
-  # Salida de datos hacia afuera del equipo. Cada backend es independiente: se
-  # pueden usar los dos, uno o ninguno.
+  # Salida de datos hacia afuera del equipo. Cada backend es independiente.
   #
-  # Los dos publican el mismo dato: la estructura de las series —measurements, tags y
-  # nombres de campo— es el contrato con los dashboards y está en docs/influxdb.md.
-  # Cómo se ve eso mismo en tópicos y JSON está en docs/mqtt.md.
-  # El muestreo no se configura: es un punto por segundo por serie, fijo en main.py. Más
-  # fino no agrega información y más grueso pierde el detalle de un pico.
-  #
-  # Y no confundirlo con `_PUBLISH_INTERVAL_S` de system/telemetry/persistence.py, que son
-  # 10 s y es otra cosa: cada cuánto SALE la escritura al backend. Entre los dos, cada
-  # batch lleva diez muestras de cada serie y el dashboard las ve hasta 10 s después de
-  # medidas; cada punto igual viaja con el instante en que se midió.
+  # ATENCIÓN: la estructura de las series de este proyecto NO es la del template. El
+  # dashboard ya existía cuando se migró, así que se conservaron sus nombres —measurements
+  # y campos en castellano— y la divergencia está documentada en docs/influxdb.md. La
+  # estructura canónica, que es la que usan los proyectos nuevos, está en
+  # docs/influxdb_template.md.
   influxdb:
-    # Serie temporal para dashboards e históricos (InfluxDB 2.x).
     # El token NO va acá: se lee de la variable de entorno INFLUXDB_TOKEN.
-    enabled: false
+    enabled: true
     url: http://localhost:8086
-    org: ORG_NAME
-    bucket: BUCKET_NAME
+    org: Cargill-APG
+    bucket: '27084'
+    legacy_net_labels:
+      # Interfaz del sistema operativo -> etiqueta con la que el dashboard la conoce.
+      # Existe sólo por compatibilidad: sin esto los campos de red pasarían a llamarse
+      # `net_enP1p1s0_rx_mbps` y los paneles de red quedarían vacíos.
+      enP1p1s0: eth0
+      enP8p1s0: eth1
   mqtt:
-    # Un mensaje por measurement, publicado en <topic_base>/<measurement>. Los tópicos,
-    # la forma del JSON y el ritmo de las ráfagas están en docs/mqtt.md.
     # La password NO va acá: se lee de la variable de entorno MQTT_PASSWORD.
     enabled: false
-    host: ''                    # IP o nombre del broker
-    port: 0                     # 0 = 1883, o 8883 si tls está en true
+    host: ''
+    port: 0
     tls: false
-    user: ''                    # vacío = sin autenticación
-    topic_base: PROJECT_ID      # prefijo de todos los tópicos del equipo
+    user: ''
+    topic_base: '27084'
 
 modbus:
   # Servidor esclavo de sólo lectura: el PLC lee los holding registers con FC03 y
   # la app los escribe desde adentro. Los dos transportes comparten el mismo
-  # datastore, así que el PLC ve los mismos valores por el cable que sea, y son
-  # independientes: se pueden usar los dos, uno o ninguno.
+  # datastore y son independientes.
   #
-  # El mapa de registros NO va acá: vive en system/modbus/register_map.yaml, que es
-  # el archivo que cambia en cada instalación. La copia para el integrador se genera
-  # con `python -m system.modbus.export_map`.
+  # El mapa de registros NO va acá: vive en system/modbus/register_map.yaml. La copia
+  # para el integrador se genera con `python -m system.modbus.export_map`.
   slave_id: 1                   # 1–247; el único unit id al que contesta el equipo
-  register_count: 100           # registros expuestos: 1–N, o 40001–4000N para el PLC.
-                                # No se edita desde la UI: lo decide el tamaño del mapa.
-                                # Tiene que cubrir la dirección más alta de
-                                # register_map.yaml, o esos registros no se publican.
+  register_count: 100           # registros expuestos: 1–N, o 40001–4000N para el PLC
   tcp:
     enabled: true
     host: 0.0.0.0               # interfaz por la que escucha; 0.0.0.0 = todas
@@ -280,10 +223,21 @@ modbus:
   rtu:
     # RS-485. Necesita el puerto serie libre: si no levanta, el TCP sigue solo.
     enabled: false
-    port: COM1                  # COM1 en Windows, /dev/ttyS0 en Linux
+    port: /dev/ttyTHS1
     baudrate: 115200
     parity: N                   # N | E | O
     stop_bits: 1
+
+gpio:
+  # Entradas y salidas digitales de la Jetson (system/gpio_control.py), por libgpiod.
+  # Los números son líneas del chip, no pines del conector. Sin libgpiod el módulo
+  # degrada a no-op y lo dice en su status; nadie pregunta si está disponible.
+  enabled: true
+  chip: /dev/gpiochip0
+  polling_interval_ms: 200      # cada cuánto se releen las entradas
+  outputs: {DO1: 51, DO2: 52, DO3: 53, DO4: 50}
+  inputs: {DI1: 105, DI2: 144, DI3: 106, DI4: 43}
+  initial_outputs: {DO1: 1, DO2: 1, DO3: 1, DO4: 1}
 
 lens_health:
   # Detección de lente sucio (system/camera/lens_health.py). Mide la nitidez del ROI de
@@ -291,17 +245,11 @@ lens_health:
   # prende el bit de lente sucio de la palabra de estado de esa cámara, que es el mismo
   # que lee el PLC. No agrega registros: el bit ya existe en el mapa.
   #
-  # LA REFERENCIA DE VIDRIO LIMPIO NO VA ACÁ. Es de cada cámara y vive en
-  # `cameras.<slot>.lens_health.reference`, porque depende del lente, de la exposición y
-  # de lo que esa cámara tenga enfrente: un número compartido entre dos montajes no
-  # compara nada. Acá van sólo los parámetros del método, que sí son iguales para todas.
+  # LA REFERENCIA DE VIDRIO LIMPIO NO VA ACÁ: es de cada cámara y vive en
+  # `cameras.<slot>.lens_health.reference`.
   enabled: true
   interval_s: 10              # cada cuánto se mide cada cámara; medir cuesta milisegundos
   window_s: 28800             # 8 h
-  # La nitidez es el MÁXIMO de la ventana, no un promedio: lo que pase por delante sólo
-  # puede bajar la varianza, nunca subirla por encima de lo que la óptica permite. Por eso
-  # la ventana es larga — con una corta, un rato de cinta vacía se confunde con un vidrio
-  # sucio— y por eso la alarma recién se afirma cuando pasó entera.
   threshold_pct: 50           # nitidez mínima, en % de la referencia calibrada de esa cámara
   analysis_width_px: 960      # ancho al que se reduce el recorte antes de medir
   calibration_samples: 30     # muestras que junta la calibración antes de fijar la referencia
@@ -309,48 +257,46 @@ lens_health:
   # ya calibradas y obliga a calibrar de nuevo cada cámara.
 
 cameras:
-  # Una entrada por cámara física, numeradas camera_1 … camera_N. La clave es el
-  # slot: es la identidad con la que la cámara aparece en el resto del sistema.
   camera_1:
-    name: CAMERA_NAME           # texto que muestra la UI; se puede cambiar sin romper nada
-    enabled: true               # false = conectada pero sin capturar (ver get_status)
-    brand: BRAND_NAME           # clave de CAMERA_CATALOG en camera_catalog.py
-    model: MODEL_NAME           # uno de los "models" de ese fabricante
-    driver: DRIVER_USED         # ver REGISTERED_DRIVERS en camera_factory.py
-    address: IP_ADDRESS         # IP o ID de GenTL según el driver
+    name: Cinta
+    enabled: true
+    brand: Sentech
+    model: STC-MCA503POE-HS
+    driver: st_gige             # ver REGISTERED_DRIVERS en camera_factory.py
+    address: 192.168.1.101      # sólo informativo: StApi toma el primer dispositivo que encuentra
     rotation: null              # null | 90cw | 90ccw | 180
     acquisition:
+      # La exposición es lo que fija el nivel del frame CRUDO, que es el que ve el modelo.
+      # El proyecto anterior dejaba 800 µs y compensaba con un brillo de software que
+      # además entraba a la inferencia; acá el ajuste va en la cámara y hay que subirlo
+      # hasta que el frame crudo tenga el nivel con el que el modelo viene trabajando.
       fps_limit: 15
-      exposure_time_us: 25000
+      exposure_time_us: 800
       gain: 1.0
     roi:
+      # Deshabilitado a propósito: el modelo mira el frame completo, igual que hoy. El
+      # rectángulo de la cinta no va acá sino en `process.belt_roi_px` — ver la nota ahí.
       enabled: false
       x_px: 0
       y_px: 0
       width_px: 0
       height_px: 0
-    illumination_min: 50        # brillo medio mínimo del ROI 0–100
+    illumination_min: 0         # 0 = sin compuerta, como venía; subirlo descarta frames oscuros
     lens_health:
-      # Referencia de vidrio limpio de ESTA cámara, contra la que se compara la nitidez
-      # medida. La escribe la calibración desde la pantalla; a mano se toca sólo para
-      # copiar la de un equipo gemelo. `variance: 0` = sin calibrar, y esa cámara queda
-      # declarada como «no disponible» en vez de reportar un vidrio limpio que nadie midió.
-      #
-      # Se calibra con el lente recién limpiado y la cámara ya apuntada: lo que se está
-      # guardando es el techo de nitidez de ese montaje. `conditions` deja constancia de
-      # con qué exposición, ganancia, rotación y ROI se midió — si después cambian, la
-      # pantalla avisa que el número puede haberse movido sin que el vidrio se ensucie.
       reference:
-        variance: 0.0         # varianza del Laplaciano con el lente limpio
-        luma: 0.0             # nivel de gris medio de esa calibración, 0–255
-        dispersion_pct: 0.0   # cuánto se parecían entre sí las muestras; alto = recalibrar
-        sample_count: 0
-        calibrated_at: ''     # fecha local de la calibración, ISO-8601
-        conditions: {}
+        variance: 50.7        # varianza del Laplaciano con el lente limpio
+        luma: 11.73           # nivel de gris medio de esa calibración, 0–255
+        dispersion_pct: 4.0   # cuánto se parecían entre sí las muestras; alto = recalibrar
+        sample_count: 30
+        calibrated_at: '2026-07-31T16:22:55'
+        conditions:
+          exposure_time_us: 800
+          gain: 1.0
+          rotation: null
+          roi: {x_px: 425, y_px: 0, width_px: 1445, height_px: 1515}
     calibration:
-      # Intrínsecos del lente, para corregir la distorsión (tools/image/undistort.py). Son
-      # del lente y del montaje, no del proceso. Con esto declarado, main.py le pasa al
-      # motor el preprocessor y la imagen corregida pasa a ser el frame de referencia: la
-      # que ve el modelo, la que se anota y la que define el espacio del ROI.
+      # Intrínsecos del lente, para corregir la distorsión (tools/image/undistort.py). Con
+      # esto declarado, main.py le pasa al motor el preprocessor y la imagen corregida pasa
+      # a ser el frame de referencia. Sin calibrar: sin corrección.
       camera_matrix: []         # 3x3; [] = sin corrección
       dist_coeffs: []           # 4, 5, 8, 12 o 14 coeficientes

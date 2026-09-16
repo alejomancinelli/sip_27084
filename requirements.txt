@@ -58,6 +58,18 @@ pyserial>=3.5
 influxdb-client>=1.36
 paho-mqtt>=1.6,<3
 
+# Inferencia: YOLO de segmentación sobre el motor de TensorRT (system/inference/models).
+# `ultralytics` sí está en PyPI, pero **torch y torchvision para la Jetson no**: los wheels
+# de aarch64 con CUDA los publica NVIDIA en su propio índice y los instala setup-jetson.
+# En un equipo de desarrollo sin GPU no hace falta ninguno de los tres: el modelo `mock`
+# cubre el camino entero y la suite de tests corre sin ellos.
+ultralytics>=8.1
+
+# Entradas y salidas digitales de la Jetson (system/gpio_control.py). Sólo Linux: en
+# Windows no se instala y el módulo degrada a modo simulado, que es lo que corre en
+# desarrollo. Se declara acá porque es una dependencia real del equipo.
+#   gpiod>=2.1 ; sys_platform == "linux"
+
 # Firma de las licencias (system/license). Ed25519: la clave pública son 32 bytes que
 # entran en una línea del código y no hay parámetros que elegir mal. Hay wheels cp310
 # para win_amd64 y para el aarch64 de la Jetson, así que no pelea con el pin de Python.
