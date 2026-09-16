@@ -1,91 +1,38 @@
 # Estructura de la telemetría en InfluxDB
 
-Qué series publica el equipo, con qué tags y con qué nombres de campo. Es el contrato con
+Qué series publica este equipo, con qué tags y con qué nombres de campo. Es el contrato con
 los dashboards: una vez que un panel consulta un campo, renombrarlo lo rompe.
 
-**Estado: implementado.** Las cuatro series salen por muestra, con el tag `device`, la red
-aplanada y cada punto sellado con el instante en que se midió. El muestreo es de un segundo
-y no se configura.
+El público es quien arma los dashboards y quien verifica una instalación desde afuera: con
+InfluxDB se contesta «¿esto viene midiendo bien desde que lo dejamos?» sin entrar al equipo,
+que es para lo que existe la telemetría acá.
+
+> **Esta estructura NO es la del template.** El dashboard de la cinta ya existía cuando el
+> proyecto se migró, así que se conservaron los measurements y los nombres de campo de la
+> versión anterior —varios en castellano— en vez de renombrar las series. Una serie
+> renombrada no se migra: la historia queda con el nombre viejo y el panel deja de
+> encontrarla. La estructura canónica, que es la que usan los **proyectos nuevos**, está en
+> [`influxdb_template.md`](influxdb_template.md), con la tabla de diferencias.
+>
+> Todo lo que diverge vive en un solo bloque de `main.py` —el de los `_MEASUREMENT_*`— y en
+> `_build_inference_fields()`, `_build_optics_fields()` y `_build_system_fields()`.
 
 **Esto vale también para MQTT.** Los dos backends reciben el mismo registro, así que las
 series, los tags y los nombres de campo de acá son los que publica el broker. Cómo se ve
 eso en el cable —el tópico y el JSON— está en [`mqtt.md`](mqtt.md).
 
-El público es quien arma los dashboards y quien verifica una instalación desde afuera:
-con InfluxDB se contesta «¿esto viene midiendo bien desde que lo dejamos?» sin entrar al
-equipo, que es para lo que existe la telemetría acá.
-
-## Las cuatro series
+## Las cinco series
 
 | Serie | Qué sale por muestra |
 |---|---|
-| `system` — hardware | 1 punto, con la red aplanada |
-| `camera` — estado por cámara | 1 por cámara |
-| `services` — los seis canales | 1 punto, seis campos |
-| `inference` — el resultado | 1 por par (cámara, pipeline) con resultados nuevos |
+| `sistema` — hardware | 1 punto, con la red aplanada |
+| `camara` — estado por cámara | 1 por cámara |
+| `optica` — salud del vidrio | 1 por cámara |
+| `servicios` — los seis canales | 1 punto, seis campos |
+| `inferencia` — el resultado | 1 por par (cámara, pipeline) con resultados nuevos, **más** 1 con las medias de la hora |
 
 Las tres primeras responden «¿el equipo está sano?», que es lo que no se puede ver desde
 afuera de otra forma.
-
-## Cuántos puntos por segundo
-
-**La cola no es el límite.** El hilo de telemetría la drena de continuo mientras junta el
-batch, así que en régimen aguanta mucho más de lo que estas series producen: medido con un
-backend doble, **50 puntos/s sin descartar uno solo**.
-
-Lo que sí se achica al publicar más seguido son dos cosas:
-
-1. **El margen ante un InfluxDB trabado.** La cola guarda 100 puntos y sólo se acumula
-   mientras la escritura está bloqueada. A `N` puntos/s tolera `100/N` segundos de
-   escritura lenta antes de empezar a descartar:
-
-   | Puntos/s | Margen |
-   |---|---|
-   | 6 | ~17 s |
-   | 10 | 10 s — una ventana de publicación |
-   | 14 | ~7 s |
-   | 50 | 2 s |
-
-   Por debajo de una ventana de publicación de margen, **una sola escritura lenta ya pierde
-   datos**. Ese es el umbral que avisa el arranque, y por eso el aviso habla de margen y no
-   de tope.
-
-2. **El volumen guardado.** 6 puntos/s son ~500 mil puntos por día; 14 son 1,2 millones. Con
-   veinte campos cada uno, eso decide la retención y si hace falta downsampling del lado de
-   InfluxDB. Es la razón práctica para no publicar más seguido de lo que se va a mirar.
-
-Con 4 cámaras en un pipeline y el muestreo en 1 s: 1 de `system` + 4 de `camera` + 1 de
-`services` + 4 de `inference` = **10 puntos/s**, justo en el umbral del aviso. Con 2 cámaras
-son 6. El arranque hace esta cuenta —contando pares (cámara, pipeline)— y avisa si el margen
-baja de una ventana de publicación.
-
-Igual la telemetría se publica **por muestra y no por evento**, y no por la cola: una serie
-de salud por evento no agregaría información, y el detalle por resultado ya va al dataset y
-al PLC.
-
-### Dos intervalos que no son lo mismo, y ninguno está en el config
-
-Los dos se llaman «intervalo», hacen cosas distintas y los dos son constantes de código:
-
-| | Qué controla | Dónde |
-|---|---|---|
-| `_SAMPLE_INTERVAL_MS` | **cada cuánto se mide** — la resolución de los datos | `main.py`, 1000 ms |
-| `_PUBLISH_INTERVAL_S` | **cada cuánto se escribe** — el batch al backend | `persistence.py`, 10 s |
-
-Entre los dos, cada batch lleva diez muestras de cada serie y el dashboard las ve hasta
-10 s después de medidas. **Cada punto viaja con el instante en que se midió**, así que la
-ventana de escritura no deforma la serie: sólo agrega latencia.
-
-Ninguno es configuración, y por razones distintas:
-
-- **El muestreo** no lo es porque no hay instalación que quiera otro: un punto por segundo
-  es la resolución con la que se miran estas series. Más fino no agrega información —el
-  hardware no cambia más rápido— y más grueso pierde el detalle de un pico.
-- **La ventana de escritura** no lo es por decisión del módulo, que lo dice en su
-  docstring: no cambia el dato, sólo cada cuánto salen las escrituras.
-
-Si un dashboard en vivo con 10 s de retraso molesta, lo que se baja es `_PUBLISH_INTERVAL_S`
-—y se pagan escrituras más chicas y más frecuentes—, no el muestreo.
 
 ## Tags
 
@@ -93,24 +40,31 @@ Tres, y ninguno es un literal en el código:
 
 | Tag | De dónde sale | Para qué |
 |---|---|---|
-| `device` | `system.device_id` del config | distinguir equipos que comparten bucket |
-| `camera` | la clave del slot (`camera_1`) | una serie por cámara, mismos campos |
+| `proyecto` | `project.project_id` del config (`27084`) | distinguir equipos que comparten bucket |
+| `camara_id` | la clave del slot (`camera_1`) | una serie por cámara, mismos campos |
 | `pipeline` | la clave del slot (`pipeline_1`) | separar dos pipelines sobre la misma cámara |
 
-**La cámara va en un tag y no en el nombre del campo.** Es la diferencia entre
+**La cámara va en un tag y no en el nombre del campo.** Con el tag, agregar una cámara
+agrega series y los dashboards no se tocan: se agrupa por `camara_id`. Con el prefijo en el
+campo, cada cámara nueva es una consulta nueva.
 
-    camera,camera=camera_1 fps=9.8          ← una serie por cámara, un solo panel
-    system cam01_fps=9.8,cam02_fps=5.9      ← dos campos, y el panel se reescribe al sumar una
+## Los dos intervalos, y ninguno está en el config
 
-Con el tag, agregar una cámara agrega series y los dashboards no se tocan: se agrupa por
-`camera`. Con el prefijo en el campo, cada cámara nueva es una consulta nueva.
+| | Qué controla | Dónde |
+|---|---|---|
+| `_SAMPLE_INTERVAL_MS` | **cada cuánto se mide** — la resolución de los datos | `main.py`, 1000 ms |
+| `_PUBLISH_INTERVAL_S` | **cada cuánto se escribe** — el batch al backend | `persistence.py`, 10 s |
+
+Entre los dos, cada batch lleva diez muestras de cada serie y el dashboard las ve hasta 10 s
+después de medidas. **Cada punto viaja con el instante en que se midió**, así que la ventana
+de escritura no deforma la serie: sólo agrega latencia.
 
 ## Las series
 
-### `system` — hardware del equipo
+### `sistema` — hardware del equipo
 
-Una por muestra, tag `device`. Los campos son los de `SystemMonitor.get_metrics()`, con el
-mismo nombre: no hay traducción en el camino.
+Una por muestra, tag `proyecto`. Los campos son los de `SystemMonitor.get_metrics()`, con el
+mismo nombre.
 
 | Campo | Unidad |
 |---|---|
@@ -119,93 +73,131 @@ mismo nombre: no hay traducción en el camino.
 | `ram_used_mb`, `ram_total_mb` | MB |
 | `disk_free_gb` | GB |
 | `power_w` | W |
-| `net_<iface>_rx_mbps`, `net_<iface>_tx_mbps` | Mbps |
+| `rx_eth0`, `tx_eth0`, `rx_eth1`, `tx_eth1` | Mbps |
 
-**Ojo con los dos anidados.** `get_metrics()` devuelve `net_mbps` como
-`{iface: {rx_mbps, tx_mbps}}` y `temps_c` como `{zona: °C}`, y **los fields de Influx son
-escalares**: un dict no entra. Hay que aplanarlos —`net_eth0_rx_mbps`— y no filtrar por
-tipo, que es la forma silenciosa de perder el tráfico de red entero.
+**Los campos de red llevan la etiqueta y no el nombre de la interfaz.** El dashboard conoce
+las interfaces por su papel —`eth0` es la de cámaras, `eth1` la del PLC— y no por el nombre
+que les puso el sistema operativo, que además cambia al reinstalar. La traducción está en
+`telemetry.influxdb.legacy_net_labels` del config:
+
+```yaml
+legacy_net_labels:
+  enP1p1s0: eth0
+  enP8p1s0: eth1
+```
+
+Una interfaz sin etiqueta declarada sale con su nombre crudo, que es mejor que no salir.
 
 `temps_c` no se publica: es el detalle por zona térmica que ya resumen `cpu_temp_c` y
-`gpu_temp_c`, y sus nombres cambian entre equipos, así que no sirve para un dashboard
-portable. Queda para el log de diagnóstico.
+`gpu_temp_c`, y sus nombres cambian entre equipos. Queda para el log de diagnóstico.
 
-### `camera` — una serie por cámara
+### `camara` — una serie por cámara
 
-Una por cámara por muestra, tags `device` y `camera`. Campos de
-`AbstractCameraDriver.get_status()` más la iluminación, que la mide la inferencia:
+Una por cámara por muestra, tags `proyecto` y `camara_id`.
 
 | Campo | Qué es |
 |---|---|
 | `connected` | 0/1 — hay sesión con el hardware |
 | `capture_enabled` | 0/1 — se le están pidiendo frames |
-| `fps_estimated` | fps medidos sobre los frames entregados |
-| `temperature_c` | °C, 0 si el driver no la da |
-| `illumination_pct` | brillo medio del ROI, 0–100 |
 | `misconfigured` | 0/1 — el driver no se pudo construir |
+| `fps` | fps medidos sobre los frames entregados |
+| `temperatura` | °C, 0 si el driver no la da |
 
-`connected` y `capture_enabled` van separados a propósito: una cámara deshabilitada no es
-lo mismo que una caída, y el gráfico tiene que poder distinguirlas.
+`connected` y `capture_enabled` van separados a propósito: una cámara deshabilitada no es lo
+mismo que una caída, y el gráfico tiene que poder distinguirlas.
 
-### `inference` — el resultado, agregado
+### `optica` — salud del vidrio
 
-Un punto por par `(cámara, pipeline)` que haya producido resultados desde la muestra
-anterior. Tags `device`, `camera` y `pipeline`.
-
-**Se agrega, no se muestrea.** Con una inferencia de 200 ms y una muestra por segundo
-entran cinco resultados: promediarlos usa los cinco, y el desvío dice si el proceso estuvo
-estable dentro de ese segundo. Quedarse con el último tiraría cuatro de cada cinco.
+Una por cámara por muestra, tags `proyecto` y `camara_id`. Mide la nitidez del ROI —la
+varianza del Laplaciano, que el polvo sobre el vidrio hace caer— contra la referencia
+calibrada de esa cámara.
 
 | Campo | Qué es |
 |---|---|
-| `sample_count` | resultados **confiables** que entraron al promedio |
-| `result_count` | resultados totales de la muestra |
+| `estado` | 0 = limpio, 1 = alarma de lente sucio, 2 = no disponible |
+| `nitidez_max_pct` | nitidez máxima de la ventana, en % de la referencia |
+| `muestras` | mediciones que hay en la ventana |
+| `referencia` | varianza calibrada con el vidrio limpio |
+| `varianza_max` | máximo de la ventana — sólo si hubo alguna medición |
+| `varianza`, `nitidez_pct`, `luma` | de la última medición — sólo si hubo alguna |
+
+**Los cuatro últimos son condicionales a propósito**: una cámara caída deja de publicarlos
+en vez de repetir el último valor bueno. El hueco en la serie dice que no se midió; un
+número repetido, no.
+
+El valor de esta serie es la **tendencia**: deja ver el vidrio ensuciarse semanas antes de
+que el bit del PLC se prenda. El bit es el aviso; esto es lo que permite programar la
+limpieza.
+
+### `inferencia` — el resultado
+
+Es la única serie que sale con **dos puntos por muestra**, y es a propósito.
+
+**Punto 1 — la medición**, uno por par `(cámara, pipeline)` que haya producido resultados
+desde la muestra anterior. Tags `proyecto`, `camara_id` y `pipeline`.
+
+| Campo | Qué es |
+|---|---|
+| `pct_pellet`, `pct_desmenuzado` | % del **frame** cubierto por cada clase, entero |
+| `pct_fondo` | % del frame que es cinta a la vista, entero |
+| `pct_carga` | % del **ROI de cinta** cubierto; pasa de 100 si hay desborde |
+| `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición: entre las dos suman 100 |
+| `confianza` | confianza media, sólo sobre los resultados confiables |
+| `iluminacion` | brillo medio del frame, 0–100 |
+| `inference_time_ms` | duración media del ciclo de inferencia |
+| `frames` | cuántos resultados entraron a la muestra |
 | `invalid_count` | cuántos no eran una medición |
-| `invalid_reason` | el motivo del último descarte —vocabulario `REASON_*`—, vacío si no hubo |
-| `confidence_pct_mean`, `detection_count_mean` | sólo sobre los confiables |
-| `inference_time_ms_mean`, `inference_time_ms_max` | sobre todos |
-| `illumination_pct_mean` | sobre todos |
-| `stage_<slot>_ms_mean` | por etapa del pipeline |
-| `<métrica>_mean`, `_std`, `_min`, `_max` | las del analyzer, vía `analysis.summarize_metrics()` |
+| `invalid_reason` | el motivo del último descarte, vacío si no hubo |
 
-Qué se promedia sobre qué no es un detalle: la confianza y el conteo de detecciones **sólo
-sobre los confiables**, porque promediar la confianza de un descarte da un número que no
-significa nada; el tiempo y la iluminación **sobre todos**, porque valen igual y la
-iluminación baja es justamente uno de los motivos de descarte.
+**Los dos denominadores son distintos a propósito.** `pct_pellet` y `pct_desmenuzado` se
+dividen por el frame completo; `pct_carga`, por el rectángulo de cinta de
+`process.belt_roi_px`. Por eso `pct_pellet + pct_desmenuzado` no da `pct_carga`, y por eso
+la carga puede pasar de 100 % sin que ningún porcentaje por clase lo haga.
 
-**Los descartes se publican**: no como puntos propios, sino en `invalid_count` y
-`invalid_reason`, que es lo que permite preguntar cuántas mediciones se cayeron y por qué.
-Un panel que grafique la medición usa los `_mean` y mira `sample_count` para saber sobre
-cuántas muestras está.
+**Los tipos importan.** Los `pct_<clase>` y `pct_fondo` se guardan como **enteros** y la
+composición y la carga como decimales, desde la primera versión del equipo. InfluxDB fija el
+tipo de cada campo con el primer punto que recibe: mandarlos como float ahora hace que el
+backend rechace la escritura.
 
-**Cada punto se sella con el instante del último resultado**, no con el de la muestra: el
-valor vale por cuándo se midió. Es lo que hace el `time_s=` de `push_data()`.
+**Punto 2 — la ventana de una hora**, uno por muestra, con tag `proyecto` solamente.
 
-Las claves de `metrics` son las del analyzer, sin renombrar: el nombre de la métrica es el
-mismo en el panel del anotado, en el JSON del dataset, en los fields de acá y —cuando
-tiene fila— en el registro Modbus. Una sola fuente de nombres.
+| Campo | Qué es |
+|---|---|
+| `pct_pellet_norm_1h`, `pct_desmenuzado_norm_1h` | media de la hora, **sólo con material en la cinta** |
+| `pct_carga_1h` | media de la hora, sobre **todas** las mediciones |
+| `cobertura_pct` | cuánto de la hora se llegó a medir — valida `pct_carga_1h` |
+| `material_presente_pct` | cuánto de lo medido tenía material — valida los otros dos |
+| `inference_age_s` | segundos desde la última medición; `65535` mientras no hubo ninguna |
 
-### `services` — los seis canales de salida
+**Este punto sale en todos los ticks, aunque no se haya medido nada**, y es lo que lo
+distingue del primero. Si saliera sólo con la medición, el día que la inferencia se cae
+dejarían de llegar los dos y el dashboard mostraría el último valor bueno para siempre. Acá
+lo que cuenta la historia es el desplome de `cobertura_pct` y la subida de
+`inference_age_s`.
 
-Una por muestra, tag `device`, un campo por canal con el estado como 0/1:
+**Por qué la composición sólo promedia con material.** En una cinta vacía la composición no
+es 50/50 ni 0/0: no existe. Meterla en el promedio lo corre hacia donde no hay proceso. La
+carga sí promedia todo: ahí el 0 es una medición legítima, y es justamente el dato de que la
+cinta estuvo parada.
+
+Las claves de la medición son las del analyzer, sin renombrar: el nombre de la métrica es el
+mismo en el panel del anotado, en el JSON del dataset, en los fields de acá y —cuando tiene
+fila— en el registro Modbus. Una sola fuente de nombres.
+
+### `servicios` — los seis canales de salida
+
+Una por muestra, tag `proyecto`, un campo por canal con el estado como 0/1:
 
 | Campo |
 |---|
 | `modbus_tcp`, `modbus_rtu`, `video_http`, `video_rtsp`, `influxdb`, `mqtt` |
 
-Son los mismos seis de `system/formats/com_status.py` y el 1 significa lo mismo que el
-bit: **levantó y está andando**. Así el panel y la palabra que lee el PLC no pueden
-discrepar.
+Son los mismos seis de `system/formats/com_status.py` y el 1 significa lo mismo que el bit:
+**levantó y está andando**. Así el panel y la palabra que lee el PLC no pueden discrepar.
 
-Con `influxdb` hay una limitación obvia y vale decirla: si InfluxDB se cae, el punto que
-dice que se cayó no llega. Sirve para ver cortes cortos —el hueco en la serie es el dato— y
-para ver los otros cinco canales, que es lo que interesa.
-
-### `optica` — lo agrega el fork
-
-El template no trae salud de óptica. Un proyecto que la mida —lente sucio, nitidez— publica
-su propia serie: es el caso de `sip-smart-belt-monitor`, que tiene `docs/optica_lente.md` y
-una serie `optica` con la varianza, la nitidez y el veredicto de lente sucio.
+Con `influxdb` hay una limitación obvia y vale decirla: si InfluxDB se cae, el punto que dice
+que se cayó no llega. Sirve para ver cortes cortos —el hueco en la serie es el dato— y para
+ver los otros cinco canales, que es lo que interesa.
 
 ## Lo que NO va a InfluxDB
 
@@ -213,59 +205,33 @@ una serie `optica` con la varianza, la nitidez y el veredicto de lente sucio.
 |---|---|---|
 | Los frames | dataset en disco, streams de video | InfluxDB es de series numéricas |
 | Cada detección | JSON del dataset, al lado del anotado | son cientos por frame |
-| Cada detalle de cada resultado | dataset y registros | la muestra ya trae media, desvío y rango; el detalle por frame es del dataset |
 | Las zonas térmicas por nombre | log | sus nombres cambian entre equipos |
 
 ## Verificaciones típicas
 
 ```sql
 -- ¿El equipo estuvo midiendo? Huecos = estuvo caído o sin publicar.
--- `result_count` es cuántos resultados entraron a cada muestra: si baja, se infiere menos.
-from(bucket: "…") |> range(start: -24h)
-  |> filter(fn: (r) => r._measurement == "inference" and r._field == "result_count")
+from(bucket: "27084") |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "inferencia" and r._field == "frames")
 
--- ¿Cuántas mediciones se descartaron, y por qué?
-from(bucket: "…") |> range(start: -24h)
-  |> filter(fn: (r) => r._measurement == "inference" and r._field == "invalid_reason")
-  |> group(columns: ["_value"]) |> count()
+-- ¿Se puede confiar en las medias de la hora?
+from(bucket: "27084") |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "inferencia" and r._field == "cobertura_pct")
+
+-- ¿Hace cuánto que no mide?
+from(bucket: "27084") |> range(start: -6h)
+  |> filter(fn: (r) => r._measurement == "inferencia" and r._field == "inference_age_s")
+
+-- ¿Se está ensuciando el vidrio?
+from(bucket: "27084") |> range(start: -30d)
+  |> filter(fn: (r) => r._measurement == "optica" and r._field == "nitidez_max_pct")
 
 -- ¿Se está quedando sin disco?
-from(bucket: "…") |> range(start: -7d)
-  |> filter(fn: (r) => r._measurement == "system" and r._field == "disk_free_gb")
+from(bucket: "27084") |> range(start: -7d)
+  |> filter(fn: (r) => r._measurement == "sistema" and r._field == "disk_free_gb")
 
--- ¿Alguna cámara perdió fps?
-from(bucket: "…") |> range(start: -6h)
-  |> filter(fn: (r) => r._measurement == "camera" and r._field == "fps_estimated")
-  |> group(columns: ["camera"])
+-- ¿La cámara perdió fps?
+from(bucket: "27084") |> range(start: -6h)
+  |> filter(fn: (r) => r._measurement == "camara" and r._field == "fps")
+  |> group(columns: ["camara_id"])
 ```
-
-## Publicar cada resultado
-
-Si una instalación necesitara un punto por resultado —depurar una puesta en marcha, o un
-proceso donde cada frame es una medición que no se puede promediar—, el cambio es chico y
-está en un solo lugar. En `_on_result_ready()` de `main.py`, en vez de dejar el resultado
-en el buzón:
-
-    self._telemetry.push_data(
-        _MEASUREMENT_INFERENCE,
-        _build_inference_fields([result]),      # el mismo armador, con un solo resultado
-        tags={**self._telemetry_tags,
-              "camera": result.camera_slot, "pipeline": result.pipeline_slot},
-        time_s=result.timestamp_s,
-    )
-
-Con un solo resultado, `sample_count` da 1, los `_std` dan 0 —que es la respuesta correcta:
-no hay dispersión que reportar— y los `_mean` son el valor. **La forma de la serie no
-cambia**, así que los dashboards siguen andando: es la misma consulta con más puntos.
-
-Lo que conviene mirar antes:
-
-| | Agregado (hoy) | Por resultado |
-|---|---|---|
-| Puntos/s, 2 cámaras a 5 resultados/s | 2 | 10 |
-| Margen ante un InfluxDB trabado | ~17 s | ~7 s |
-| Volumen por día | ~500 mil | ~1,7 millones |
-| Dispersión dentro del segundo | la da `_std` | se ve en los puntos |
-
-Y hay que sacar el buzón del camino: si se publica por resultado **y** además queda el
-tick, la misma medición sale dos veces.

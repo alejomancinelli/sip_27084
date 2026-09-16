@@ -30,19 +30,23 @@ Uno por serie, bajo el prefijo del equipo:
     <topic_base>/<measurement>
 
 `topic_base` sale de `telemetry.mqtt.topic_base` del config —por convención el
-`project_id`— y `measurement` es el nombre de la serie. Con `topic_base: planta_norte`:
+`project_id`— y `measurement` es el nombre de la serie. Con `topic_base: 27084`:
 
 | Tópico | Qué sale por muestra |
 |---|---|
-| `planta_norte/system` | 1 mensaje: hardware del equipo |
-| `planta_norte/camera` | 1 por cámara |
-| `planta_norte/services` | 1 mensaje: los seis canales de salida |
-| `planta_norte/inference` | 1 por par (cámara, pipeline) con resultados nuevos |
+| `27084/sistema` | 1 mensaje: hardware del equipo |
+| `27084/camara` | 1 por cámara |
+| `27084/optica` | 1 por cámara: salud del vidrio |
+| `27084/servicios` | 1 mensaje: los seis canales de salida |
+| `27084/inferencia` | 1 por par (cámara, pipeline) con resultados nuevos, **más** 1 con las medias de la hora |
+
+Los nombres de las series son los de este equipo, que **no son los del template**: ver la
+advertencia de [`influxdb.md`](influxdb.md).
 
 **La cámara y el pipeline no van en el tópico, van adentro del mensaje.** El tópico nombra
 la serie, no la instancia: agregar una cámara no agrega tópicos, agrega mensajes en el que
-ya existe. Un suscriptor que quiera una sola cámara filtra por el campo `camera`; uno que
-las quiera todas se suscribe una vez y no se toca al sumar la tercera.
+ya existe. Un suscriptor que quiera una sola cámara filtra por el campo `camara_id`; uno
+que las quiera todas se suscribe una vez y no se toca al sumar la tercera.
 
 ## El mensaje
 
@@ -61,46 +65,58 @@ suscriptor que selle con la hora de llegada deforma la serie.
 ### Ojo: los fields pisan a los tags
 
 La fusión es en ese orden, así que **una métrica que se llame igual que un tag lo
-sobreescribe sin avisar**. Los tags son `device`, `camera` y `pipeline`: una métrica del
-analyzer llamada `camera` reemplazaría al slot en el mensaje y el suscriptor perdería de
-qué cámara vino. Es la misma razón por la que en el mapa Modbus el nombre de la métrica es
+sobreescribe sin avisar**. Los tags son `proyecto`, `camara_id` y `pipeline`: una métrica
+del analyzer llamada `camara_id` reemplazaría al slot en el mensaje y el suscriptor perdería
+de qué cámara vino. Es la misma razón por la que en el mapa Modbus el nombre de la métrica es
 el contrato: los nombres se eligen una vez y valen para todos los destinos.
 
 ## Ejemplos
 
 Los valores son de ejemplo; los nombres y los tipos son los reales.
 
-`planta_norte/system`
+`27084/sistema`
 
 ```json
 {
-  "device": "vision_01",
+  "proyecto": "27084",
   "cpu_usage_pct": 34.2, "gpu_usage_pct": 61.0,
   "cpu_temp_c": 52.0, "gpu_temp_c": 58.0,
   "ram_used_mb": 3820.0, "ram_total_mb": 16384.0,
   "disk_free_gb": 214.7, "power_w": 18.4,
-  "net_eth0_rx_mbps": 12.6, "net_eth0_tx_mbps": 0.9,
+  "rx_eth0": 12.6, "tx_eth0": 0.9, "rx_eth1": 0.2, "tx_eth1": 0.4,
   "time": 1757340012.412
 }
 ```
 
-`planta_norte/camera` — uno por cámara
+`27084/camara` — uno por cámara
 
 ```json
 {
-  "device": "vision_01", "camera": "camera_1",
+  "proyecto": "27084", "camara_id": "camera_1",
   "connected": 1, "capture_enabled": 1, "misconfigured": 0,
-  "fps_estimated": 9.8, "temperature_c": 41.2, "illumination_pct": 63,
+  "fps": 14.9, "temperatura": 41.2,
   "time": 1757340012.418
 }
 ```
 
-`planta_norte/services` — el 1 significa lo mismo que el bit que lee el PLC: levantó y está
+`27084/optica` — uno por cámara. Los cuatro últimos campos sólo salen si hubo alguna
+medición: una cámara caída deja de publicarlos en vez de repetir el último valor bueno.
+
+```json
+{
+  "proyecto": "27084", "camara_id": "camera_1",
+  "estado": 0, "nitidez_max_pct": 96, "muestras": 2880, "referencia": 50.7,
+  "varianza_max": 48.7, "varianza": 47.9, "nitidez_pct": 94, "luma": 11.8,
+  "time": 1757340012.419
+}
+```
+
+`27084/servicios` — el 1 significa lo mismo que el bit que lee el PLC: levantó y está
 andando.
 
 ```json
 {
-  "device": "vision_01",
+  "proyecto": "27084",
   "modbus_tcp": 1, "modbus_rtu": 0,
   "video_http": 1, "video_rtsp": 0,
   "influxdb": 1, "mqtt": 1,
@@ -108,30 +124,32 @@ andando.
 }
 ```
 
-`planta_norte/inference` — uno por par (cámara, pipeline). Los campos con nombre de la
-planta terminados en `_mean`, `_std`, `_min` y `_max` son los del analyzer del fork —acá
-`load_height_mm` y `belt_coverage_pct` son de ejemplo—; el resto es de la maquinaria.
+`27084/inferencia` — la medición, uno por par (cámara, pipeline).
 
 ```json
 {
-  "device": "vision_01", "camera": "camera_1", "pipeline": "pipeline_1",
-  "result_count": 5, "invalid_count": 1, "invalid_reason": "low_illumination",
-  "sample_count": 4,
-  "confidence_pct_mean": 87.4, "detection_count_mean": 12.0,
-  "inference_time_ms_mean": 196.3, "inference_time_ms_max": 241.0,
-  "illumination_pct_mean": 58.2,
-  "stage_detector_ms_mean": 174.1,
-  "load_height_mm_mean": 812.4, "load_height_mm_std": 6.1,
-  "load_height_mm_min": 803.0, "load_height_mm_max": 820.0,
-  "belt_coverage_pct_mean": 71.3, "belt_coverage_pct_std": 2.4,
-  "belt_coverage_pct_min": 68.0, "belt_coverage_pct_max": 74.0,
-  "time": 1757340012.180
+  "proyecto": "27084", "camara_id": "camera_1", "pipeline": "pipeline_1",
+  "frames": 14, "invalid_count": 1, "invalid_reason": "dark_frame",
+  "pct_pellet": 41, "pct_desmenuzado": 9, "pct_fondo": 50,
+  "pct_carga": 63.28, "pct_pellet_norm": 82.0, "pct_desmenuzado_norm": 18.0,
+  "confianza": 87, "iluminacion": 58, "inference_time_ms": 196.3,
+  "time": 1757340012.431
 }
 ```
 
-**El `time` de `inference` es más viejo que el de las otras tres** y es a propósito: es el
-del último resultado que entró a la muestra, no el del tick. El punto vale por cuándo se
-midió.
+`27084/inferencia` — las medias de la hora, **en todos los ticks**, aunque no se haya
+medido nada. Sin tag de cámara: las ventanas son una sola para el equipo.
+
+```json
+{
+  "proyecto": "27084",
+  "pct_pellet_norm_1h": 80.4, "pct_desmenuzado_norm_1h": 19.6,
+  "pct_carga_1h": 58.9,
+  "cobertura_pct": 97, "material_presente_pct": 84,
+  "inference_age_s": 1,
+  "time": 1757340012.433
+}
+```
 
 ## El ritmo: ráfagas, no un mensaje por segundo
 

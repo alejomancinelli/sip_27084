@@ -1,15 +1,29 @@
-# Plantilla de proyectos de visión artificial industrial
+# SIP Smart Belt Monitor — Cargill APG 27084
 
-Captura de una o varias cámaras GigE, inferencia, y publicación del resultado a PLC por
-Modbus, a dashboards por telemetría, a video por HTTP/RTSP y a un dataset en disco.
+Mide la composición del material que pasa por una cinta: qué proporción es **pellet
+entero**, qué proporción viene **desmenuzado**, y cuán **cargada** está la cinta. Una cámara
+GigE sobre la cinta, un YOLO de segmentación en una NVIDIA Jetson, y el resultado al PLC por
+Modbus, a Grafana por InfluxDB, a video por HTTP/RTSP y a un dataset en disco.
 
-**Cada instalación es un fork de este repo.** Lo que cambia entre forks son los valores
-del `config.yaml`, el mapa de registros Modbus, el modelo y la cuenta del proceso. La
-plomería —captura, hilos, servidores, dataset, overlay— se cross-portea sin editarla.
+Qué se publica y con qué nombres:
 
-Este archivo es la guía para arrancar un fork. El mapa del repo, los contratos entre
-módulos y las decisiones vigentes están en [CLAUDE.md](CLAUDE.md); las convenciones de
-nombres, comentarios y límites, en `.claude/skills/`.
+| Destino | Dónde está el contrato |
+|---|---|
+| PLC (Modbus TCP/RTU) | [`docs/modbus_map.md`](docs/modbus_map.md), generado desde el YAML |
+| Dashboard (InfluxDB) | [`docs/influxdb.md`](docs/influxdb.md) |
+| Broker (MQTT) | [`docs/mqtt.md`](docs/mqtt.md) |
+
+Es un fork del template de la familia: la plomería —captura, hilos, servidores, dataset,
+overlay, licencia, interfaz— se cross-portea sin editarla. Qué es de este proyecto y qué
+viene del template está en [CLAUDE.md](CLAUDE.md), junto con los contratos entre módulos y
+las decisiones vigentes; las convenciones de nombres, comentarios y límites, en
+`.claude/skills/`.
+
+> **Antes de poner esto en producción hay dos cosas que se deciden mirando la cinta**: subir
+> la exposición de la cámara hasta que el frame crudo tenga el nivel con el que el modelo
+> viene trabajando —la versión anterior lo amplificaba por software y eso ya no llega a la
+> inferencia— y recalibrar `process.dark_background_threshold` contra esa imagen. Ver
+> «Qué todavía no existe» en [CLAUDE.md](CLAUDE.md).
 
 ## Cómo se corre
 
@@ -32,170 +46,93 @@ entre los hilos.
 Python 3.10 de 64 bits. La suite completa corre sin hardware, sin GUI y sin red. Lo que
 sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su `config.yaml` al lado.
 
-## Cómo se crea el repo del proyecto
+## De dónde viene este repo
 
-Una aclaración de vocabulario antes: en este repo y en `CLAUDE.md`, **«fork» significa
-proyecto derivado** —la instalación de una planta—, y no el fork de GitHub. Son cosas
-distintas, y justamente el fork de GitHub es el que **no** conviene usar.
-
-**No con un fork de GitHub**, por dos razones: GitHub no deja forkear un repo a la misma
-cuenta que ya lo tiene, y —la que importa— **el fork de un repo público es público y no se
-puede volver privado**, así que el `config.yaml`, el mapa de registros y los parámetros de
-la planta del cliente quedarían expuestos.
-
-Dos formas que sí sirven. Lo único que las separa es la historia, y de eso depende que
-traer una mejora del template sea un `git merge` o un cherry-pick a mano:
-
-| | «Use this template» + injerto | Copia espejo |
-|---|---|---|
-| Cómo | el botón de GitHub, y el injerto de acá abajo | los comandos de más abajo |
-| Historia del repo del proyecto | arranca en un commit inicial propio | la del template, completa |
-| Ancestro común con el template | lo crea el injerto | viene de fábrica |
-| `git merge template/main` | funciona, después del injerto | funciona |
-| `git log` de un archivo de maquinaria | desde el injerto | desde que se escribió |
-
-**Con el botón, entonces**, que es el camino corto. Para que aparezca, el template tiene que
-estar marcado como tal: en su repo, Settings → General → ✅ *Template repository*. Después
-«Use this template» → *Create a new repository*, privado.
-
-Lo que el botón **no** copia es la historia: el repo nuevo arranca con un solo commit, sin
-ancestro común con el template, y ahí `git merge template/main` falla con *refusing to merge
-unrelated histories*. Se arregla una sola vez, con un injerto:
+Es un fork del template de la familia, con el template enganchado como remoto para poder
+traer maquinaria nueva y devolver mejoras:
 
 ```bash
-git clone https://github.com/<cuenta>/<mi-proyecto>.git
-cd <mi-proyecto>
-git remote add template https://github.com/alejomancinelli/cv_projects_template.git
-git fetch template
-git merge template/main --allow-unrelated-histories -m "engancho la historia del template"
-git push
+git remote -v
+# origin     <el repo de este proyecto>
+# template   <el repo del template>
 ```
 
-**El injerto va antes de escribir una línea del proyecto.** En ese momento los archivos son
-idénticos a los del template, así que el merge no tiene nada que resolver y entra solo. El
-commit que deja tiene dos padres, y con eso `git merge-base main template/main` ya devuelve
-un ancestro de verdad: de ahí en adelante, traer maquinaria nueva es el merge normal de
-«Traer maquinaria nueva al proyecto». Hecho más tarde, el mismo comando conflictúa en todo
-lo que el fork ya reescribió.
+Cómo se trae maquinaria nueva del template y cómo se le devuelve una mejora está más abajo,
+en «Cómo devolver una mejora al template».
 
-**Copia espejo** es la otra forma, y sirve cuando interesa tener la historia del template
-adentro del repo del proyecto: `git log` y `git blame` sobre un archivo de maquinaria
-cuentan por qué quedó así, en vez de arrancar en el injerto.
+## Cómo se pone en marcha un equipo
 
-```bash
-# 1. En GitHub: crear el repo del proyecto VACÍO (sin README, sin .gitignore, sin licencia)
-
-# 2. Copia espejo del template al repo nuevo
-git clone --bare https://github.com/alejomancinelli/cv_projects_template.git
-cd cv_projects_template.git
-git push --mirror https://github.com/<cuenta>/<mi-proyecto>.git
-cd .. && rm -rf cv_projects_template.git
-
-# 3. Clonar el proyecto y enganchar el template como remoto
-git clone https://github.com/<cuenta>/<mi-proyecto>.git
-cd <mi-proyecto>
-git remote add template https://github.com/alejomancinelli/cv_projects_template.git
-git fetch template
-```
-
-Por cualquiera de los dos caminos queda `origin` = el proyecto y `template` = de dónde vino,
-con ancestro común. Los dos sentidos —traer maquinaria nueva y devolver una mejora— están en
-«Cómo devolver una mejora al template».
-
-**Y si el injerto no se hizo a tiempo** no hay nada perdido: cada mejora del template se trae
-con `git cherry-pick <commit>`, o se aplica el `git diff` como parche. Funciona, pero es a
-mano y no acumula — cada actualización vuelve a ser la misma tarea.
-
-### Lo que no viene en el clon
-
-El `.gitignore` versiona tres carpetas pero no su contenido, así que un clon limpio no
-trae:
-
-- **`packages/`** — sólo el `.gitkeep`. El wheel de stapipy **no está en el repo**: hay que
-  copiarlo ahí antes de correr `setup/cameras/{windows,linux}/sentech.*`. Ojo con la
-  arquitectura: el `cp310-win_amd64` no sirve en la Jetson, que necesita el de aarch64.
-- **`.venv/`** — se crea y se instala con `requirements.txt`.
-- **`data/`** — logs y dataset se generan en runtime.
-- **`license.lic`** — la licencia es de una máquina y no sirve en otra, así que no se
-  versiona ninguna. Desde el código fuente no hace falta: la validación sólo corre en un
-  build compilado. Ver `docs/licensing.md`.
-- **`system/inference/models/_model_key.py`** — la clave con la que el build entregado
-  abre sus pesos cifrados. La genera el build y nunca se commitea, igual que la clave
-  privada de la firma. Sin ella los pesos en claro cargan igual, que es el caso de
-  desarrollo. Ver `docs/model_protection.md`.
-
-## Cómo se arranca un fork
-
-1. **Crear el repo** como arriba, `pip install -r requirements.txt` en un venv nuevo y
-   copiar el wheel de stapipy a `packages/`. Los SDK de cámara se instalan con los scripts
-   de `setup/cameras/{windows,linux}/`. Cambiar la identidad del proyecto:
-   `project.project_id` y `system.app_name` en el config, y `system/version.py`. Copiar
-   `.env.example` como `.env` y completar los secretos del equipo —token de InfluxDB,
-   password del broker, credenciales de las cámaras RTSP—: el `.env` no se versiona.
-2. **`config.yaml`**: `project`, `system`, y una entrada en `cameras` por cámara física
-   —marca, modelo, driver, IP, adquisición, ROI, mínimo de iluminación—. Verificar con
-   `manual_test/cameras/camera_live_view.py`.
-3. **El modelo**: implementar `AbstractModel` en un archivo nuevo de `system/inference/models/` y
-   registrarlo con una línea en `model_factory.py`. Una clase por tarea —clasificación,
-   detección, segmentación—, porque lo que cambia entre ellas es cómo se decodifica la
-   salida. Los pesos afinados no son una clase nueva: son `path` en el config. Los pesos
-   se leen con `_read_weights()` del contrato, que devuelve **bytes**, y se cargan desde
-   memoria —`torch.load(BytesIO(...))`, `InferenceSession(bytes)`,
-   `deserialize_cuda_engine(bytes)`—: así el mismo modelo anda con los pesos cifrados de
-   la entrega y con los pesos en claro del desarrollo, sin una línea de diferencia. Ver
-   [docs/model_protection.md](docs/model_protection.md).
-4. **`inference.models`** en el config: un slot por modelo, con su `type`, `path`,
-   umbral y nombres de clase. El dispositivo no se configura: la implementación usa la
-   GPU si hay CUDA y cae a CPU si no.
-5. **`pipeline.py`**: declarar `model_slots` y escribir `_run()` con el orden de las
-   etapas y sus cortocircuitos. Una sola etapa es el caso normal y ya viene escrito.
-6. **`process:`** en el config: los parámetros de lo que se mide en esta planta —escala de
-   píxel, umbrales, límites—, y `inference.pipelines` con qué cámaras entran a cada
-   pipeline y cuántas imágenes son una medición (`frames_per_cycle`).
-7. **`metrics.py`**: la cuenta del proceso, de las detecciones a los números que el
-   cliente mide. Es lo que termina en el panel del anotado, en el JSON del dataset, en la
-   telemetría y en los registros.
-8. **`register_map.yaml`**: las filas `producer: inference` en el rango 3-50, y después
-   `python -m system.modbus.export_map` para regenerar la tabla del integrador.
-9. **`main.py`**: ya cablea todo. Se completan sus tres métodos marcados —
-   `_build_monitor_content()`, `_build_analyzer()` y `_build_annotator()`—, que son los
-   que leen `process:` y le pasan al motor lo del proyecto. El preprocessor del lente sale
-   solo de la calibración del config.
-10. **La vista de operador**, si la grilla de cámaras no alcanza: el widget propio se
-    devuelve desde `_build_monitor_content()` de `main.py`. Los textos nuevos van a
-    `ui/strings.py`, con su clave en inglés y una columna por idioma; el resto de la UI
-    —ocho pestañas de configuración, cuatro de diagnóstico, temas y widgets— viene
-    andando. Ver [docs/ui.md](docs/ui.md).
-11. **`CLAUDE.md`**: actualizar el mapa y las decisiones con lo que el fork agregó.
+1. **Instalar**: `pip install -r requirements.txt` en un venv nuevo y copiar el wheel de
+   stapipy a `packages/`. El SDK de la cámara se instala con los scripts de
+   `setup/cameras/{windows,linux}/`. En la Jetson, además, torch y torchvision salen del
+   índice de NVIDIA y no de PyPI. Copiar `.env.example` como `.env` y completar los
+   secretos del equipo —`INFLUXDB_TOKEN`, sobre todo—: el `.env` no se versiona.
+2. **El modelo**: copiar el `.engine` a `models/` y apuntar
+   `inference.models.segmenter.path`. **El `.engine` se compila en la Jetson**: está atado a
+   la arquitectura de GPU y a la versión de TensorRT, así que no se puede generar en la PC de
+   desarrollo y hay que rehacerlo si cambia JetPack.
+3. **La cámara**: verificar con `manual_test/cameras/camera_live_view.py` que la Sentech
+   entrega frames, y ajustar `cameras.camera_1.acquisition`.
+4. **La exposición** (ver el aviso de arriba): subirla hasta que el frame **crudo** tenga el
+   nivel con el que el modelo viene trabajando, y recalibrar
+   `process.dark_background_threshold` contra esa imagen.
+5. **El rectángulo de cinta y el umbral de fondo oscuro**: pestaña **Proceso** del panel de
+   configuración. El rectángulo se dibuja sobre el video en vivo con «Dibujar sobre el
+   video...», que es como se hace en planta; el umbral es por clase y en 0 no refina nada.
+   Los dos van a `process:` del config.
+6. **La óptica**: calibrar con el vidrio recién limpio desde la pestaña de configuración,
+   ya con la exposición definitiva. Sin calibrar, el estado es «no disponible» y nunca
+   alarma: un vidrio limpio que nadie midió no se afirma.
+7. **El PLC**: `modbus.tcp` y/o `modbus.rtu`, y pasarle al integrador
+   [`docs/modbus_map.md`](docs/modbus_map.md). **Ojo con el registro 51**: pasó del enum 0-5
+   de la versión anterior al bitfield del template, así que la lógica del PLC sobre ese
+   registro hay que actualizarla.
+8. **El dashboard**: `telemetry.influxdb` con la org y el bucket, y el token por `.env`. Los
+   nombres de las series son los de la versión anterior y el dashboard existente funciona
+   sin editar un panel — ver [`docs/influxdb.md`](docs/influxdb.md).
+9. **La versión**: subir `APP_VERSION` en `system/version.py` en el commit que cierra el
+   cambio. Es el número que el operador lee por teléfono cuando algo anda mal.
 
 ## Qué se toca y qué no
 
 Tres categorías, y la regla que las separa: **si un archivo describe cómo se hace algo,
-es maquinaria y se cross-portea; si describe qué se mide en esta planta, es del fork.**
+es maquinaria y se cross-portea; si describe qué se mide en esta cinta, es de este
+proyecto.**
 
-### Se reescriben en cada fork
+### De este proyecto
 
-| Archivo | Qué se escribe |
+| Archivo | Qué tiene |
 |---|---|
 | `config.yaml` | todos los valores, y la sección `process:` completa |
-| `system/modbus/register_map.yaml` | las filas de inferencia; el resto del mapa es plantilla |
-| `system/inference/pipeline.py` | el orden de las etapas y sus cortocircuitos |
-| `system/inference/metrics.py` | la cuenta del proceso |
-| `system/version.py` | la versión del fork; se sube en cada release |
-| `main.py` | **sólo el bloque «Lo que cambia en cada fork»**: el widget del monitor, el analyzer y los annotators. El resto es cableado genérico |
-| `CLAUDE.md` | el mapa y las decisiones del fork |
-| `README.md` | esta guía, reemplazada por la del proyecto |
+| `system/modbus/register_map.yaml` | el mapa que ya lee el PLC; las direcciones no se mueven |
+| `system/inference/models/yolo_seg_model.py` | el segmentador sobre ultralytics |
+| `system/inference/pipeline.py` | una etapa: el segmentador de la cinta |
+| `system/inference/metrics.py` | composición y carga, por conteo de píxeles por unión |
+| `system/inference/annotations.py` | el rectángulo de cinta y el panel de composición |
+| `system/version.py` | la versión del equipo; se sube en cada release |
+| `main.py` | el bloque «Lo que cambia en cada fork», **más** la divergencia de telemetría y el cableado de GPIO y medias móviles |
+| `CLAUDE.md`, `README.md` | el mapa, las decisiones y esta guía |
+
+### Agregados que valen para el template
+
+Genéricos, no tienen nada de esta planta y conviene devolverlos —ver «Cómo devolver una
+mejora al template» más abajo—:
+
+| Archivo | Qué es |
+|---|---|
+| `system/gpio_control.py` | entradas y salidas digitales por libgpiod; el template lo declaraba pendiente |
+| `system/formats/gpio_status.py` | las dos palabras de GPIO que van al PLC |
+| `system/inference/rolling.py` | media móvil por ventana de tiempo, con su cobertura |
+| `ui/dialogs/roi_dialog.py` | **una línea**: el prefijo de config pasó a ser parámetro, para poder dibujar más de un rectángulo por cámara |
 
 ### Se agregan, sin editar lo que ya está
 
 | Archivo | Cuándo |
 |---|---|
-| `system/inference/models/<mi_modelo>.py` | el modelo del proyecto, más **una línea** en `model_factory.py` |
-| `system/inference/annotations.py` | referencias de la planta: un límite de carga, una zona |
 | `tools/camera/<mi_driver>.py` | una cámara de otro fabricante, más **una línea** en `camera_factory.py` |
 | `tools/camera/camera_catalog.py` | un modelo de cámara que falte en el catálogo |
-| el widget central del monitor | qué mira el operador; entra por `set_content()`. Una disposición propia —tres cámaras por pantalla, por ejemplo— son varias `CameraGrid(cfg, camera_slots=...)` dentro de ese widget |
-| `ui/views/config/process_tab.py` | los campos de `process:`; la pestaña ya está registrada y vacía |
+| el widget central del monitor | hoy es la grilla genérica; un widget propio entra por `_build_monitor_content()` de `main.py`, sin tocar nada más |
+| `ui/views/config/process_tab.py` | ya tiene los campos de `process:` de este equipo; se le agregan los que el proceso sume |
 | `ui/views/config/<otra>_tab.py` | otra sección propia, más **una línea** en `_TAB_CLASSES` |
 | `test/` | un test por archivo nuevo, espejando el árbol |
 | `manual_test/<tema>/` | verificaciones con hardware, con su `config.yaml` al lado |
@@ -211,8 +148,8 @@ lo que falta es un punto de extensión, no un parche.
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
 | captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/models/*` (menos el del fork), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
-| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` |
+| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
+| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` (`gpio_status.py` es de acá) |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
@@ -348,7 +285,8 @@ pestañas que cubren todas las secciones genéricas del `config.yaml`, cuatro de
 diagnóstico, dos temas y los widgets reutilizables. Los tres huecos son a propósito: el
 área central del monitor la llena el fork, la pestaña de proceso llega vacía porque sus
 campos cambian en cada instalación, y el diálogo de GPIO espera un
-`system/gpio_control.py` que todavía no existe.
+`system/gpio_control.py`, que este proyecto sí trae: el botón aparece cuando `main.py`
+le inyecta el controlador.
 
 Cómo se toca cada atributo —dónde vive un color, un texto, una medida; cómo se agrega
 una pestaña o un widget; qué cosas la UI **no** hace— está en [docs/ui.md](docs/ui.md).
@@ -362,9 +300,9 @@ genérica la maquinaria y testeable lo del proyecto.
 |---|---|---|
 | `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
 | `pipeline` | qué modelos corren y en qué orden | `pipeline.py` |
-| `classifier` | qué detecciones cuentan y con qué clase | del fork, con `process:` |
-| `analyzer` | qué significan las detecciones | `metrics.py` |
-| `annotator` | qué se dibuja además del resultado | `annotations.py` |
+| `classifier` | qué detecciones cuentan y con qué clase | **sin usar acá**: no hay nada calibrado por cámara |
+| `analyzer` | qué significan las detecciones | `metrics.py`, con `process:` |
+| `annotator` | qué se dibuja además del resultado | `annotations.py`, con `process:` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |
 
 El `classifier` corre entre el pipeline y el promedio de confianza, y es el único lugar
@@ -391,6 +329,10 @@ referencia. El brillo cambia **cómo se ve** y no mueve nada: por eso va sólo e
 de visualización y no contamina el dataset.
 
 ## Cuando un ciclo son varias imágenes
+
+**Este equipo mide una imagen por medición** (`frames_per_cycle: 1`), así que el scheduler
+es un pass-through y cada frame sale como su propia medición, igual que en la versión
+anterior. Lo que sigue es para el día que eso cambie.
 
 Un proyecto que responde con N imágenes por medición declara N en
 `inference.pipelines.<slot>.frames_per_cycle`. El motor no lo lee —emite un resultado por
