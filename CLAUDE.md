@@ -262,6 +262,19 @@ siguen vienen del template.
   la cinta estuvo parada. Por eso hay dos registros que validan las medias —cuánto de la
   hora se midió y cuánto de lo medido tenía material—: sin ellos, una media de tres muestras
   sobre una hora se lee igual que una hora entera bien medida.
+- **El refinamiento de fondo oscuro lo aplica el modelo sobre sus propias máscaras**, no
+  el analyzer. Corrige una debilidad conocida de la salida del segmentador —el contorno es
+  aproximadamente convexo y se traga el fondo que hay entre partículas sueltas—, así que es
+  postproceso del modelo y no de la planta. Y hacerlo ahí es lo único que garantiza que la
+  máscara que se mide y la que se dibuja sean la misma: calculado en el analyzer, el overlay
+  pintaba píxeles que no contaban y el umbral era invisible justo mientras se lo calibra.
+  Vale mientras haya una sola cámara; con dos con distinta iluminación se muda al
+  `classifier`, que sí recibe el slot.
+- **Las rutas de los streams llevan el nombre viejo de la cámara.** `video.http.stream_names`
+  mapea `camera_1` a `cinta` para no romper las URLs que ya están puestas en tableros y
+  navegadores de la planta. Es deuda, no diseño: afecta sólo a la ruta —en los registros y
+  en la telemetría la cámara sigue siendo `camera_1`— y cuando no quede nadie apuntando a
+  `/cinta/...` se saca la clave.
 - **La estructura de la telemetría NO es la del template, y es una deuda consciente.** El
   dashboard ya existía cuando el proyecto se migró, así que se conservaron los measurements
   y los nombres de campo viejos —varios en castellano— en vez de renombrar las series: una
