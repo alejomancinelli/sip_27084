@@ -13,6 +13,9 @@ Qué se publica y con qué nombres:
 | Dashboard (InfluxDB) | [`docs/influxdb.md`](docs/influxdb.md) |
 | Broker (MQTT) | [`docs/mqtt.md`](docs/mqtt.md) |
 
+Qué de este repo no es el template —y qué hacer con cada cosa cuando se traiga una
+versión nueva— está en [`docs/template_divergences.md`](docs/template_divergences.md).
+
 Es un fork del template de la familia: la plomería —captura, hilos, servidores, dataset,
 overlay, licencia, interfaz— se cross-portea sin editarla. Qué es de este proyecto y qué
 viene del template está en [CLAUDE.md](CLAUDE.md), junto con los contratos entre módulos y

@@ -650,6 +650,9 @@ La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Dónde va lo que se escribe
 
+- En qué diverge este equipo del template, y qué hacer con cada divergencia en un merge
+  → `docs/template_divergences.md`. Es lo primero que se lee antes de traer una versión
+  nueva del template.
 - El contrato de un módulo → su docstring, en la misma edición que el código.
 - El mapa, las decisiones y lo que falta → este archivo.
 - Un documento con público propio —notas de puesta en marcha, un protocolo nuevo—
