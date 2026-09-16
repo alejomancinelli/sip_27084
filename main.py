@@ -588,6 +588,8 @@ class Application(QObject):
                 analyzer=analyzer,
                 annotator=annotator,
                 annotate_gate=self._is_annotated_watched,
+                # El anotado se ve como el stream crudo: los dos los mira una persona.
+                canvas_adjust=self._for_display,
             )
             engine.result_ready.connect(self._on_result_ready)
             self._engines.append(engine)
@@ -674,6 +676,11 @@ class Application(QObject):
         self._telemetry_tags = {"proyecto": str(config.get("project.project_id", "") or "")}
         self._legacy_net_labels = config.get(
             "telemetry.influxdb.legacy_net_labels", {}) or {}
+        self._legacy_camera_ids = config.get(
+            "telemetry.influxdb.legacy_camera_ids", {}) or {}
+        # Qué cámara alimentó las ventanas de la hora. Se publica con su tag para que el
+        # bloque quede en la misma serie que la medición, como en la versión anterior.
+        self._rolling_camera_slot = ""
         self._timers = [
             self._start_timer(_REGISTERS_INTERVAL_MS, self._on_registers_tick),
             self._start_timer(_STATUS_INTERVAL_MS, self._on_status_tick),
@@ -730,8 +737,9 @@ class Application(QObject):
         belt_roi_px = (self._config.get("process.belt_roi_px", {}) or {}).get(camera_slot)
         if belt_roi_px:
             context["belt_roi_px"] = dict(belt_roi_px)
-        thresholds = (self._config.get("process.dark_background_threshold", {})
-                      or {}).get(camera_slot)
+        thresholds = (self._config.get(
+            f"inference.models.{_SEGMENTER_SLOT}.params.dark_background_threshold", {})
+            or {})
         if thresholds:
             context["dark_background_threshold"] = dict(thresholds)
         return context or None
@@ -760,8 +768,6 @@ class Application(QObject):
             class_names=self._config.get(
                 f"inference.models.{_SEGMENTER_SLOT}.class_names", []) or [],
             belt_roi_px=self._config.get("process.belt_roi_px", {}) or {},
-            dark_background_threshold=self._config.get(
-                "process.dark_background_threshold", {}) or {},
         )
 
     def _build_annotator(self):
@@ -1002,6 +1008,7 @@ class Application(QObject):
         averaged = analysis.average_metrics(results)
         if not averaged:
             return
+        self._rolling_camera_slot = results[-1].camera_slot
         now_s = time.monotonic()
         self._last_inference_s = now_s
         composition_pct = {name: averaged[name] for name in _ROLLING_METRIC_NAMES
@@ -1190,7 +1197,7 @@ class Application(QObject):
                                 (service_status.SERVICE_VIDEO_RTSP, self._rtsp_video)):
             self._ui.set_client_count(service, server.get_client_count())
         self._ui.set_stream_urls(
-            service_status.SERVICE_VIDEO_HTTP, self._build_http_urls()
+            service_status.SERVICE_VIDEO_HTTP, self._http_video.get_stream_urls()
         )
         self._ui.set_stream_urls(
             service_status.SERVICE_VIDEO_RTSP, self._rtsp_video.get_stream_urls()
@@ -1311,7 +1318,7 @@ class Application(QObject):
             if status is None:
                 continue
             lens = self._lens_monitor.get_status(camera_slot, now_s=now_s)
-            camera_tags = {**self._telemetry_tags, "camara_id": camera_slot}
+            camera_tags = self._camera_tags(camera_slot)
             self._telemetry.push_data(
                 _MEASUREMENT_CAMERA,
                 {
@@ -1370,8 +1377,7 @@ class Application(QObject):
             self._telemetry.push_data(
                 _MEASUREMENT_INFERENCE,
                 _build_inference_fields(results),
-                tags={**self._telemetry_tags,
-                      "camara_id": camera_slot, "pipeline": pipeline_slot},
+                tags={**self._camera_tags(camera_slot), "pipeline": pipeline_slot},
                 # El instante del último resultado, no el del tick: el punto vale por
                 # cuándo se midió y entre las dos cosas hay hasta una muestra entera.
                 time_s=results[-1].timestamp_s,
@@ -1388,8 +1394,10 @@ class Application(QObject):
         se cae dejarían de llegar los dos y el dashboard mostraría el último valor bueno
         para siempre. Acá el desplome de la cobertura es el que cuenta lo que pasó.
 
-        Va sin tag de cámara porque las ventanas son una sola para el equipo, igual que los
-        registros 6-10.
+        Lleva el tag de la cámara que las alimentó, no porque las ventanas sean suyas
+        —son una sola para el equipo, igual que los registros 6-10— sino porque así queda
+        en la misma serie en la que el dashboard ya las venía leyendo. Con una segunda
+        cámara esto deja de tener sentido y las ventanas pasan a ser por cámara.
         """
         fields = {f"{name}{_ROLLING_SUFFIX}": float(window.mean() or 0.0)
                   for name, window in self._rolling.items()}
@@ -1399,7 +1407,7 @@ class Application(QObject):
             self._rolling[_ROLLING_COMPOSITION_NAME].count(), load.count())
         fields["inference_age_s"] = self._inference_age_s()
         self._telemetry.push_data(_MEASUREMENT_INFERENCE, fields,
-                                  tags=self._telemetry_tags)
+                                  tags=self._camera_tags(self._rolling_camera_slot))
 
     def _inference_age_s(self) -> int:
         """
@@ -1412,6 +1420,20 @@ class Application(QObject):
             return _NO_INFERENCE_AGE_S
         return min(_NO_INFERENCE_AGE_S,
                    int(round(time.monotonic() - self._last_inference_s)))
+
+    def _camera_tags(self, camera_slot: str) -> dict:
+        """
+        Los tags de una serie por cámara, con el id que el dashboard ya conoce.
+
+        El valor del tag **no es la clave del slot**: la versión anterior publicaba
+        `cam1` y una serie con otro valor de tag es otra serie, así que un panel filtrando
+        por `cam1` no encontraría nada. La traducción está en
+        `telemetry.influxdb.legacy_camera_ids`; una cámara que no figure sale con su slot.
+        """
+        if not camera_slot:
+            return dict(self._telemetry_tags)
+        return {**self._telemetry_tags,
+                "camara_id": self._legacy_camera_ids.get(camera_slot, camera_slot)}
 
     def _warn_if_telemetry_margin_is_thin(self):
         """
@@ -1688,23 +1710,6 @@ class Application(QObject):
             service_status.SERVICE_INFLUXDB: self._telemetry.backend_status("influxdb"),
             service_status.SERVICE_MQTT: self._telemetry.backend_status("mqtt"),
         }
-
-    def _build_http_urls(self) -> list[str]:
-        """
-        URLs del servidor HTTP, armadas acá y no en la UI.
-
-        La forma de la ruta es del servidor de video: si la compusiera la vista, el
-        formato quedaría definido en dos lugares. El RTSP ya las publica con
-        `get_stream_urls()`; el HTTP todavía no, así que las arma quien cablea.
-        """
-        if self._http_video.status != STATUS_ACTIVE:
-            return []
-        port = int(self._config.get("video.http.port", 8091))
-        return [
-            f"http://127.0.0.1:{port}/{camera_slot}/{mode}"
-            for camera_slot in (self._config.get("cameras", {}) or {})
-            for mode in MODES
-        ]
 
     def _is_synthetic(self, camera_slot: str) -> bool:
         thread = self._capture_threads.get(camera_slot)

@@ -49,6 +49,16 @@ video:
     jpeg_quality: 80            # 0–100; menos calidad = menos bytes por frame
     frame_width_px: 960         # ancho al que se reduce antes de codificar; 0 = nativo
     log_connections: true       # una línea de log por cliente que entra o sale del stream
+    stream_names:
+      # Nombre del slot en la RUTA del stream, y nada más: en los registros, en la
+      # telemetría y en el resto del sistema la cámara sigue siendo `camera_1`.
+      #
+      # Está para no romper las URLs que la versión anterior del equipo ya publicaba
+      # —`/cinta/raw` y `/cinta/annotated`—, que están puestas en tableros y navegadores
+      # que este equipo no controla. **Es deuda, no diseño**: lo natural es que la ruta
+      # lleve el slot. Cuando no quede nadie apuntando a `/cinta/...`, se saca esta clave
+      # y las URLs pasan a ser `/camera_1/...`.
+      camera_1: cinta
   rtsp:
     # RTSP: rtsp://<ip>:<puerto>/camera_1/raw y /camera_1/annotated. Es el video de
     # resolución completa, para un NVR o un reproductor. Necesita GStreamer con
@@ -87,19 +97,6 @@ process:
     # de inferir y `pct_pellet` pasaría a dividirse por la misma área que `pct_carga`,
     # cambiando en silencio todos los porcentajes publicados.
     camera_1: {x_px: 425, y_px: 0, width_px: 1445, height_px: 1515}
-  dark_background_threshold:
-    # Por cámara y por clase: luma por debajo de la cual un píxel de la máscara de esa
-    # clase se descarta. Es el fondo oscuro que el polígono aproximadamente convexo de
-    # YOLO mete entre partículas dispersas de la pila, y por eso aplica al desmenuzado y
-    # no al pellet, que viene apilado y sin huecos. Una clase que no figura no se refina.
-    #
-    # El nombre de la clase es dato de configuración y tiene que coincidir con el de
-    # `inference.models.segmenter.class_names`.
-    #
-    # El valor heredado (60) se calibró sobre la imagen con el brillo de software aplicado.
-    # Sobre el frame crudo NO significa lo mismo: hay que recalibrarlo con la exposición
-    # definitiva, mirando la cinta.
-    camera_1: {desmenuzado: 60}
   rolling_window_s: 3600        # ventana de las medias móviles que van a los registros 6-10
 
 inference:
@@ -159,7 +156,17 @@ inference:
       # El índice es el que devuelve el framework. El orden de acá decide qué color y qué
       # nombre de métrica le toca a cada clase: invertirlo invierte todos los porcentajes.
       class_names: [desmenuzado, pellet]
-      params: {}
+      params:
+        # Luma por debajo de la cual un píxel de esa clase no cuenta: es el fondo que el
+        # contorno del segmentador mete entre partículas sueltas. Va acá y no en `process:`
+        # porque corrige la salida de ESTE modelo, y porque aplicándolo sobre sus máscaras
+        # lo que se mide y lo que se dibuja son lo mismo.
+        #
+        # En 0 no refina nada. El 60 heredado se calibró sobre la imagen amplificada por
+        # software de la versión anterior y sobre el frame crudo se come la clase entera:
+        # hay que recalibrarlo con la exposición definitiva.
+        dark_background_threshold:
+          desmenuzado: 0
 
 image_collector:
   # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:
@@ -195,6 +202,11 @@ telemetry:
     url: http://localhost:8086
     org: Cargill-APG
     bucket: '27084'
+    legacy_camera_ids:
+      # Slot de cámara -> valor del tag `camara_id` con el que el dashboard ya la conoce.
+      # Una serie con otro valor de tag es otra serie: sin esto, los paneles por cámara
+      # filtran por `cam1` y no encuentran nada.
+      camera_1: cam1
     legacy_net_labels:
       # Interfaz del sistema operativo -> etiqueta con la que el dashboard la conoce.
       # Existe sólo por compatibilidad: sin esto los campos de red pasarían a llamarse

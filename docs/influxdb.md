@@ -41,12 +41,18 @@ Tres, y ninguno es un literal en el código:
 | Tag | De dónde sale | Para qué |
 |---|---|---|
 | `proyecto` | `project.project_id` del config (`27084`) | distinguir equipos que comparten bucket |
-| `camara_id` | la clave del slot (`camera_1`) | una serie por cámara, mismos campos |
+| `camara_id` | **no es la clave del slot**: sale de `telemetry.influxdb.legacy_camera_ids`, que traduce `camera_1` a `cam1` | una serie por cámara, mismos campos |
 | `pipeline` | la clave del slot (`pipeline_1`) | separar dos pipelines sobre la misma cámara |
 
 **La cámara va en un tag y no en el nombre del campo.** Con el tag, agregar una cámara
 agrega series y los dashboards no se tocan: se agrupa por `camara_id`. Con el prefijo en el
 campo, cada cámara nueva es una consulta nueva.
+
+**El valor del tag es el de la versión anterior, no el del slot.** Una serie con otro valor
+de tag **es otra serie**: publicando `camara_id="camera_1"` los paneles que filtran por
+`cam1` no encuentran nada, y no falla nada — simplemente quedan vacíos. La traducción está
+en `telemetry.influxdb.legacy_camera_ids`. El tag `pipeline` sí es nuevo, y eso no rompe
+nada: agregar un tag no cambia la serie para una consulta que no lo menciona.
 
 ## Los dos intervalos, y ninguno está en el config
 
