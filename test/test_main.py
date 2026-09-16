@@ -228,10 +228,11 @@ class TestInferenceFields:
                    for value in (40, 62)]
         assert main._build_inference_fields(results)["pct_pellet"] == 51
 
-    def test_the_composition_stays_decimal(self):
+    def test_the_composition_is_an_integer_too(self):
+        """La versión anterior redondeaba también la composición y la carga."""
         results = [InferenceResult(camera_slot="camera_1",
-                                   metrics={"pct_pellet_norm": 33.333})]
-        assert main._build_inference_fields(results)["pct_pellet_norm"] == 33.33
+                                   metrics={"pct_pellet_norm": 33.7})]
+        assert main._build_inference_fields(results)["pct_pellet_norm"] == 34
 
     def test_confidence_and_illumination_use_their_legacy_names(self):
         results = [InferenceResult(camera_slot="camera_1", confidence_pct=87.0,
@@ -407,3 +408,92 @@ class TestLensCalibration:
         app._collect_lens_calibration("camera_1", self._measurement(400.0))
         assert app._lens_monitor.get_status(
             "camera_2", now_s=0.0)["reference_variance"] == 900.0
+
+
+class TestLegacyFieldTypes:
+    """
+    Los nombres y los tipos con los que cada serie ya está guardada en el bucket.
+
+    **InfluxDB fija el tipo de cada campo con el primer punto que lo trae.** Estos los fijó
+    la versión anterior del equipo, así que mandar un decimal donde había un entero no
+    convierte nada: el backend rechaza la escritura entera y se pierden también los puntos
+    de las otras series que iban en el mismo batch. Un renombre hace algo peor, porque no
+    falla: el panel deja de encontrar la serie y nadie se entera.
+
+    Por eso esto se afirma campo por campo y no por muestreo.
+    """
+
+    _SYSTEM_METRICS = {
+        "cpu_usage_pct": 34.2, "gpu_usage_pct": 61.0,
+        "cpu_temp_c": 52.4, "gpu_temp_c": 58.9,
+        "ram_used_mb": 3820.7, "ram_total_mb": 16384, "disk_free_gb": 214.7,
+        "power_w": 18.4,
+        "net_mbps": {"enP1p1s0": {"rx_mbps": 12.6, "tx_mbps": 0.9}},
+        "temps_c": {"zona": 52.0},
+    }
+
+    def _system(self) -> dict:
+        return main._build_system_fields(self._SYSTEM_METRICS, {"enP1p1s0": "eth0"})
+
+    def test_the_hardware_fields_keep_their_old_names(self):
+        assert set(self._system()) == {
+            "cpu_usage", "gpu_usage", "ram_mb", "ram_total_mb", "disk_gb",
+            "temp_cpu", "temp_gpu", "power_w", "rx_eth0", "tx_eth0",
+        }
+
+    def test_every_hardware_field_is_an_integer(self):
+        assert all(isinstance(value, int) for value in self._system().values())
+
+    def test_the_thermal_zones_are_not_published(self):
+        """Sus nombres cambian entre equipos: no sirven para un dashboard portable."""
+        assert "temps_c" not in self._system() and "zona" not in self._system()
+
+    def test_an_interface_without_a_label_still_gets_published(self):
+        fields = main._build_system_fields(self._SYSTEM_METRICS, {})
+        assert "rx_enP1p1s0" in fields
+
+    def _inference(self) -> dict:
+        result = InferenceResult(
+            camera_slot="camera_1", confidence_pct=87.4, illumination_pct=58,
+            inference_time_ms=196.3,
+            metrics={"pct_pellet": 41.4, "pct_desmenuzado": 8.6, "pct_fondo": 50.2,
+                     "pct_carga": 63.28, "pct_pellet_norm": 82.04,
+                     "pct_desmenuzado_norm": 17.96},
+        )
+        return main._build_inference_fields([result])
+
+    def test_every_instantaneous_percentage_is_an_integer(self):
+        """Incluidas la composición y la carga: la versión anterior las redondeaba."""
+        fields = self._inference()
+        percentages = {name: value for name, value in fields.items()
+                       if name.startswith("pct_")}
+        assert percentages and all(isinstance(v, int) for v in percentages.values())
+
+    def test_confidence_and_illumination_are_integers(self):
+        fields = self._inference()
+        assert isinstance(fields["confianza"], int)
+        assert isinstance(fields["iluminacion"], int)
+
+    def test_the_inference_time_stays_decimal(self):
+        assert isinstance(self._inference()["inference_time_ms"], float)
+
+    def test_the_frame_count_is_an_integer(self):
+        assert isinstance(self._inference()["frames"], int)
+
+    _LENS = {"state": 0, "sharpness_max_pct": 96, "sample_count": 2880,
+             "reference_variance": 50.7, "max_variance": 48.7, "variance": 47.9,
+             "sharpness_pct": 94, "luma": 11.8}
+
+    def test_the_optics_fields_keep_their_names_and_types(self):
+        fields = main._build_optics_fields(self._LENS)
+        assert {name: type(value) for name, value in sorted(fields.items())} == {
+            "estado": int, "nitidez_max_pct": int, "muestras": int, "referencia": float,
+            "varianza_max": float, "varianza": float, "nitidez_pct": int, "luma": float,
+        }
+
+    def test_a_camera_that_never_measured_publishes_only_the_fixed_fields(self):
+        """El hueco en la serie dice que no se midió; un número repetido, no."""
+        lens = {**self._LENS, "max_variance": None, "variance": None,
+                "sharpness_pct": None, "luma": None}
+        assert set(main._build_optics_fields(lens)) == {
+            "estado", "nitidez_max_pct", "muestras", "referencia"}

@@ -207,13 +207,24 @@ _MEASUREMENT_OPTICS = "optica"      # el template lo publica como campos de `cam
 # uint16: un 0 se leería como «recién medido», que es justo lo contrario.
 _NO_INFERENCE_AGE_S = 65535
 
-# Métricas de hardware que van directo a fields. `net_mbps` y `temps_c` no están porque
-# son dicts anidados y un field de Influx es escalar: la red se aplana y las zonas
-# térmicas no se publican. Filtrar por tipo, en cambio, perdería la red sin avisar.
-_SYSTEM_METRIC_KEYS = (
-    "cpu_usage_pct", "gpu_usage_pct", "cpu_temp_c", "gpu_temp_c",
-    "ram_used_mb", "ram_total_mb", "disk_free_gb", "power_w",
-)
+# Métrica de hardware -> el nombre con el que ya está en el bucket. Los de la izquierda
+# son los de `SystemMonitor.get_metrics()`; los de la derecha, los que la versión anterior
+# del equipo publicó y que el dashboard consulta.
+#
+# `net_mbps` y `temps_c` no están porque son dicts anidados y un field de Influx es
+# escalar: la red se aplana más abajo y las zonas térmicas no se publican. Filtrar por
+# tipo, en cambio, perdería la red sin avisar.
+_LEGACY_SYSTEM_FIELDS = {
+    "cpu_usage_pct": "cpu_usage",
+    "gpu_usage_pct": "gpu_usage",
+    "ram_used_mb": "ram_mb",
+    "disk_free_gb": "disk_gb",
+    "cpu_temp_c": "temp_cpu",
+    "gpu_temp_c": "temp_gpu",
+    "power_w": "power_w",
+    # El único que la serie vieja no tenía. Es un campo nuevo, así que no choca con nada.
+    "ram_total_mb": "ram_total_mb",
+}
 
 _LOG_FILENAME = "app.log"
 _LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -1846,21 +1857,22 @@ def _build_inference_fields(results: list) -> dict:
 _SCALAR_METRIC_NAMES = ("confidence_pct", "inference_time_ms")
 
 _INTEGER_FIELD_PREFIX = "pct_"
-_FLOAT_FIELD_SUFFIXES = ("_norm", "_carga")
 
 
 def _rounded(name: str, value: object) -> object:
     """
     Redondea una métrica al tipo con el que ya está guardada en el bucket.
 
-    Los porcentajes por clase se guardaron como enteros y la composición y la carga como
-    decimales, desde la primera versión del equipo. InfluxDB fija el tipo del campo con el
-    primer punto, así que cambiarlo ahora hace que rechace la escritura.
+    **Todos los porcentajes instantáneos se guardaron como enteros**, incluidas la
+    composición y la carga: la versión anterior los pasaba por `round()` sin decimales. Los
+    de la ventana de una hora sí son decimales, pero no salen por acá.
+
+    InfluxDB fija el tipo de cada campo con el primer punto que lo trae, así que un decimal
+    donde había un entero no se convierte: el backend rechaza la escritura entera y se
+    pierden también los puntos de las otras series del mismo batch.
     """
     number = float(value)
-    if name.startswith(_INTEGER_FIELD_PREFIX) and not name.endswith(_FLOAT_FIELD_SUFFIXES):
-        return round(number)
-    return round(number, 2)
+    return round(number) if name.startswith(_INTEGER_FIELD_PREFIX) else round(number, 2)
 
 
 def _build_optics_fields(lens: dict) -> dict:
@@ -1888,7 +1900,11 @@ def _build_optics_fields(lens: dict) -> dict:
 
 def _build_system_fields(metrics: dict, legacy_labels: dict | None = None) -> dict:
     """
-    Métricas de hardware como fields de Influx: escalares, con la red aplanada.
+    Métricas de hardware como fields de Influx: escalares, enteras y con la red aplanada.
+
+    **Los nombres y los tipos son los que la serie ya tiene en el bucket**, que no son los
+    de `get_metrics()`: la versión anterior del equipo publicaba `cpu_usage` y no
+    `cpu_usage_pct`, y todo en entero. La traducción está en `_LEGACY_SYSTEM_FIELDS`.
 
     `net_mbps` llega como `{interfaz: {rx_mbps, tx_mbps}}` y un field de Influx es
     escalar, así que cada interfaz se abre en dos campos con su nombre adentro. Filtrar
@@ -1907,12 +1923,25 @@ def _build_system_fields(metrics: dict, legacy_labels: dict | None = None) -> di
     que tenga que andar en los dos.
     """
     legacy_labels = legacy_labels or {}
-    fields = {key: metrics[key] for key in _SYSTEM_METRIC_KEYS if key in metrics}
+    fields = {legacy: _as_integer(metrics[key])
+              for key, legacy in _LEGACY_SYSTEM_FIELDS.items() if key in metrics}
     for iface, throughput in (metrics.get("net_mbps") or {}).items():
         label = legacy_labels.get(iface) or str(iface).replace(" ", "_")
-        fields[f"rx_{label}"] = float(throughput.get("rx_mbps", 0.0))
-        fields[f"tx_{label}"] = float(throughput.get("tx_mbps", 0.0))
+        fields[f"rx_{label}"] = _as_integer(throughput.get("rx_mbps", 0))
+        fields[f"tx_{label}"] = _as_integer(throughput.get("tx_mbps", 0))
     return fields
+
+
+def _as_integer(value: object) -> int:
+    """
+    Entero, que es el tipo con el que toda la serie de hardware está en el bucket.
+
+    **InfluxDB fija el tipo de cada campo con el primer punto que lo trae**, y estos los
+    fijó la versión anterior del equipo, que publicaba enteros. Mandar un float ahora no
+    convierte nada: el backend rechaza la escritura entera con un conflicto de tipo, así
+    que se pierden también los puntos de las demás series que iban en el mismo batch.
+    """
+    return int(round(float(value)))
 
 
 def main(argv: list | None = None) -> int:

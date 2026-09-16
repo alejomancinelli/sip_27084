@@ -79,11 +79,11 @@ Los valores son de ejemplo; los nombres y los tipos son los reales.
 ```json
 {
   "proyecto": "27084",
-  "cpu_usage_pct": 34.2, "gpu_usage_pct": 61.0,
-  "cpu_temp_c": 52.0, "gpu_temp_c": 58.0,
-  "ram_used_mb": 3820.0, "ram_total_mb": 16384.0,
-  "disk_free_gb": 214.7, "power_w": 18.4,
-  "rx_eth0": 12.6, "tx_eth0": 0.9, "rx_eth1": 0.2, "tx_eth1": 0.4,
+  "cpu_usage": 34, "gpu_usage": 61,
+  "temp_cpu": 52, "temp_gpu": 58,
+  "ram_mb": 3820, "ram_total_mb": 16384,
+  "disk_gb": 214, "power_w": 18,
+  "rx_eth0": 13, "tx_eth0": 1, "rx_eth1": 0, "tx_eth1": 0,
   "time": 1757340012.412
 }
 ```
@@ -131,7 +131,7 @@ andando.
   "proyecto": "27084", "camara_id": "camera_1", "pipeline": "pipeline_1",
   "frames": 14, "invalid_count": 1, "invalid_reason": "dark_frame",
   "pct_pellet": 41, "pct_desmenuzado": 9, "pct_fondo": 50,
-  "pct_carga": 63.28, "pct_pellet_norm": 82.0, "pct_desmenuzado_norm": 18.0,
+  "pct_carga": 63, "pct_pellet_norm": 82, "pct_desmenuzado_norm": 18,
   "confianza": 87, "iluminacion": 58, "inference_time_ms": 196.3,
   "time": 1757340012.431
 }

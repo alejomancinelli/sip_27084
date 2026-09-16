@@ -66,14 +66,23 @@ de escritura no deforma la serie: sólo agrega latencia.
 Una por muestra, tag `proyecto`. Los campos son los de `SystemMonitor.get_metrics()`, con el
 mismo nombre.
 
-| Campo | Unidad |
-|---|---|
-| `cpu_usage_pct`, `gpu_usage_pct` | % |
-| `cpu_temp_c`, `gpu_temp_c` | °C |
-| `ram_used_mb`, `ram_total_mb` | MB |
-| `disk_free_gb` | GB |
-| `power_w` | W |
-| `rx_eth0`, `tx_eth0`, `rx_eth1`, `tx_eth1` | Mbps |
+| Campo | Unidad | Tipo |
+|---|---|---|
+| `cpu_usage`, `gpu_usage` | % | entero |
+| `temp_cpu`, `temp_gpu` | °C | entero |
+| `ram_mb` | MB usados | entero |
+| `ram_total_mb` | MB | entero |
+| `disk_gb` | GB libres | entero |
+| `power_w` | W | entero |
+| `rx_eth0`, `tx_eth0`, `rx_eth1`, `tx_eth1` | Mbps | entero |
+
+**Los nombres no son los de `SystemMonitor.get_metrics()`**, que los llama `cpu_usage_pct`,
+`ram_used_mb`, `disk_free_gb`, `cpu_temp_c` y `gpu_temp_c`. La traducción está en
+`_LEGACY_SYSTEM_FIELDS` de `main.py`, y existe por lo mismo que todo el resto de esta
+divergencia: son los nombres con los que la serie ya está en el bucket.
+
+**Toda la serie es entera**, incluidos los Mbps de red. `ram_total_mb` es el único campo
+que la versión anterior no publicaba.
 
 **Los campos de red llevan la etiqueta y no el nombre de la interfaz.** El dashboard conoce
 las interfaces por su papel —`eth0` es la de cámaras, `eth1` la del PLC— y no por el nombre
@@ -138,8 +147,8 @@ desde la muestra anterior. Tags `proyecto`, `camara_id` y `pipeline`.
 
 | Campo | Qué es |
 |---|---|
-| `pct_pellet`, `pct_desmenuzado` | % del **frame** cubierto por cada clase, entero |
-| `pct_fondo` | % del frame que es cinta a la vista, entero |
+| `pct_pellet`, `pct_desmenuzado` | % del **frame** cubierto por cada clase |
+| `pct_fondo` | % del frame que es cinta a la vista |
 | `pct_carga` | % del **ROI de cinta** cubierto; pasa de 100 si hay desborde |
 | `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición: entre las dos suman 100 |
 | `confianza` | confianza media, sólo sobre los resultados confiables |
@@ -154,10 +163,15 @@ dividen por el frame completo; `pct_carga`, por el rectángulo de cinta de
 `process.belt_roi_px`. Por eso `pct_pellet + pct_desmenuzado` no da `pct_carga`, y por eso
 la carga puede pasar de 100 % sin que ningún porcentaje por clase lo haga.
 
-**Los tipos importan.** Los `pct_<clase>` y `pct_fondo` se guardan como **enteros** y la
-composición y la carga como decimales, desde la primera versión del equipo. InfluxDB fija el
-tipo de cada campo con el primer punto que recibe: mandarlos como float ahora hace que el
-backend rechace la escritura.
+**Los tipos importan, y acá se pagan caro.** Todos los `pct_*` de este punto son
+**enteros**, igual que `confianza` y `iluminacion`; sólo `inference_time_ms` es decimal. Los
+de la ventana de una hora, en cambio, sí son decimales.
+
+InfluxDB **fija el tipo de cada campo con el primer punto que lo trae**, y estos los fijó la
+versión anterior del equipo. Mandar un decimal donde hay un entero no convierte nada: el
+backend contesta `422 field type conflict` y **descarta el batch entero**, así que se pierden
+también los puntos de las otras series que viajaban con él. Los tipos están afirmados campo
+por campo en `test/test_main.py`.
 
 **Punto 2 — la ventana de una hora**, uno por muestra, con tag `proyecto` solamente.
 
@@ -228,7 +242,7 @@ from(bucket: "27084") |> range(start: -30d)
 
 -- ¿Se está quedando sin disco?
 from(bucket: "27084") |> range(start: -7d)
-  |> filter(fn: (r) => r._measurement == "sistema" and r._field == "disk_free_gb")
+  |> filter(fn: (r) => r._measurement == "sistema" and r._field == "disk_gb")
 
 -- ¿La cámara perdió fps?
 from(bucket: "27084") |> range(start: -6h)
