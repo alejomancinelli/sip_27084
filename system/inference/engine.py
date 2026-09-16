@@ -108,7 +108,8 @@ class InferenceThread(QThread):
                  classifier: Callable[[list, str], list] | None = None,
                  analyzer: Callable[[InferenceResult], dict] | None = None,
                  annotator: Callable[[np.ndarray, InferenceResult], None] | None = None,
-                 annotate_gate: Callable[[str], bool] | None = None):
+                 annotate_gate: Callable[[str], bool] | None = None,
+                 canvas_adjust: Callable[[np.ndarray], np.ndarray] | None = None):
         super().__init__()
         self.pipeline_slot = pipeline.pipeline_slot
         self._config = config_manager
@@ -118,6 +119,11 @@ class InferenceThread(QThread):
         self._analyzer = analyzer
         self._annotator = annotator
         self._annotate_gate = annotate_gate
+        # Cómo tiene que verse el lienzo del anotado. El anotado es de los tres caminos el
+        # único que mira una persona y que además se dibuja acá, así que el ajuste de
+        # visualización tiene que entrar antes del dibujo: aplicado después le correría el
+        # color a las máscaras y a las referencias. La medición no lo ve.
+        self._canvas_adjust = canvas_adjust
 
         # Último frame de cada cámara esperando su turno, y el turno mismo: el índice
         # rota sobre los slots pendientes para que ninguna cámara tape a las otras.
@@ -475,7 +481,8 @@ class InferenceThread(QThread):
                 and not self._annotate_gate(result.camera_slot)):
             return None
         try:
-            annotated = overlay.annotate(result, self._read_overlay_options())
+            annotated = overlay.annotate(result, self._read_overlay_options(),
+                                         canvas_adjust=self._canvas_adjust)
         except Exception as e:
             self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
             return None
