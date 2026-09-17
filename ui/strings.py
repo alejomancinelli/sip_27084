@@ -518,15 +518,21 @@ _TEXTS: dict[str, dict[str, str]] = {
     "mb_register_count":      {"es": "Registros expuestos:",
                                "en": "Exposed registers:",
                                "pt": "Registradores expostos:"},
-    "mb_map_extent":          {"es": "El mapa cargado usa hasta el registro {max_addr}.",
-                               "en": "The loaded map uses up to register {max_addr}.",
-                               "pt": "O mapa carregado usa até o registrador {max_addr}."},
-    "mb_map_overflow":        {"es": "El mapa llega al registro {max_addr}, más allá de los "
-                                     "{count} expuestos: esos registros no se publican.",
-                               "en": "The map reaches register {max_addr}, past the {count} "
-                                     "exposed: those registers are not published.",
-                               "pt": "O mapa chega ao registrador {max_addr}, além dos {count} "
-                                     "expostos: esses registradores não são publicados."},
+    "mb_map_extent":          {"es": "El mapa cargado usa hasta el registro {max_addr} "
+                                     "({plc_addr} para el PLC).",
+                               "en": "The loaded map uses up to register {max_addr} "
+                                     "({plc_addr} for the PLC).",
+                               "pt": "O mapa carregado usa até o registrador {max_addr} "
+                                     "({plc_addr} para o CLP)."},
+    "mb_map_overflow":        {"es": "El mapa llega al registro {max_addr} ({plc_addr} para "
+                                     "el PLC), más allá de los {count} expuestos: esos "
+                                     "registros no se publican.",
+                               "en": "The map reaches register {max_addr} ({plc_addr} for the "
+                                     "PLC), past the {count} exposed: those registers are "
+                                     "not published.",
+                               "pt": "O mapa chega ao registrador {max_addr} ({plc_addr} para "
+                                     "o CLP), além dos {count} expostos: esses registradores "
+                                     "não são publicados."},
     "mb_serial_port":         {"es": "Puerto serie:",  "en": "Serial port:",  "pt": "Porta serial:"},
     "mb_baudrate":            {"es": "Baudrate:",      "en": "Baud rate:",    "pt": "Baud rate:"},
     "mb_parity":              {"es": "Paridad:",       "en": "Parity:",       "pt": "Paridade:"},

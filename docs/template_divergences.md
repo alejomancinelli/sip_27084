@@ -104,6 +104,7 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 | `system/gpio_control.py`, `system/formats/gpio_status.py` | Módulos nuevos | El template declaraba el subsistema como pendiente y `ui/dialogs/gpio_dialog.py` ya documentaba la interfaz que esperaba |
 | `system/inference/rolling.py` | Módulo nuevo | Media móvil por ventana de tiempo, con su cobertura. No hay nada de esta planta adentro |
 | `system/inference/abstract_pipeline.py` + `engine.py` | `_run()` recibe `(frame_bgr, camera_slot)` | El pipeline era ciego a la cámara y el `classifier` existía sólo para tapar eso. Con el slot, lo calibrado por montaje entra donde está la lógica del proceso |
+| `system/modbus/schema.py` + `export_map.py` + las dos pestañas de Modbus | `to_plc_address()` y las pantallas mostrando `40001` además del registro base-1 | Quien mira esas pantallas tiene el PLC al lado, donde el registro 1 es el 40001. La conversión tenía un solo uso y ahora tiene tres: vive en el módulo dueño del protocolo, no en cada vista |
 | `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS` | Va en el bloque del fork, que es su punto de extensión. Deja de hacer falta si el template incorpora el subsistema de GPIO |
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
