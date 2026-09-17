@@ -10,6 +10,8 @@ Guardar es atómico para el usuario: si una pestaña levanta una excepción se a
 se persiste nada, así el config.yaml no queda con la mitad de los cambios.
 """
 
+from functools import partial
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget,
@@ -37,7 +39,7 @@ _TAB_CLASSES = (
     LensHealthTab,
     VideoTab,
     InferenceTab,
-    ProcessTab,      # el rectángulo de cinta y los umbrales de esta instalación
+    ProcessTab,      # los parámetros de lo que mide esta instalación
     CollectorTab,
     TelemetryTab,
     ModbusTab,
@@ -49,8 +51,9 @@ class ConfigView(QWidget):
     """Panel de configuración. Emite `config_saved` recién cuando el archivo se escribió."""
 
     config_saved = Signal()               # el config.yaml se persistió sin errores
-    open_roi_requested = Signal(str)      # slot de la cámara cuyo ROI hay que dibujar
-    open_belt_roi_requested = Signal(str)   # slot cuyo rectángulo de cinta hay que dibujar
+    # (slot de cámara, clave del config donde va el rectángulo, clave de idioma del título).
+    # Lo manda la pestaña que lo pide: esta vista lo reenvía sin leerlo.
+    open_roi_requested = Signal(str, str, str)
     calibrate_lens_requested = Signal(str)  # slot de la cámara cuya óptica hay que calibrar
 
     def __init__(self, config_manager: ConfigManager, parent=None):
@@ -78,12 +81,13 @@ class ConfigView(QWidget):
             tab_widget.addTab(wrap_in_card(tab, scroll=True), tr(tab.TITLE_KEY))
         layout.addWidget(tab_widget, stretch=1)
 
-        cameras_tab = self._get_cameras_tab()
-        if cameras_tab is not None:
-            cameras_tab.open_roi_requested.connect(self.open_roi_requested)
-        process_tab = self._get_process_tab()
-        if process_tab is not None:
-            process_tab.open_belt_roi_requested.connect(self.open_belt_roi_requested)
+        # Cualquier pestaña que sepa dibujar un rectángulo, sin nombrar ninguna: una
+        # pestaña nueva con otro rectángulo se engancha sola.
+        self._roi_requester = None
+        for tab in self._tabs:
+            signal = getattr(tab, "open_roi_requested", None)
+            if signal is not None:
+                signal.connect(partial(self._on_roi_requested, tab))
         lens_tab = self._get_lens_health_tab()
         if lens_tab is not None:
             lens_tab.calibrate_requested.connect(self.calibrate_lens_requested)
@@ -119,16 +123,14 @@ class ConfigView(QWidget):
                 self._loaded_tabs.add(tab)
 
     def refresh_roi_fields(self, camera_slot: str):
-        """Recarga los campos de ROI de una cámara tras cerrarse el diálogo interactivo."""
-        cameras_tab = self._get_cameras_tab()
-        if cameras_tab is not None:
-            cameras_tab.refresh_roi_fields(camera_slot)
+        """
+        Recarga el rectángulo tras cerrarse el diálogo, en la pestaña que lo pidió.
 
-    def refresh_belt_roi_fields(self, camera_slot: str):
-        """Recarga el rectángulo de cinta de una cámara tras cerrarse el diálogo."""
-        process_tab = self._get_process_tab()
-        if process_tab is not None:
-            process_tab.refresh_belt_roi_fields(camera_slot)
+        Sólo esa: recargarlas todas descartaría lo que el operador esté editando en otra
+        —abrir el dibujo de un ROI no es motivo para perder una exposición a medio cambiar—.
+        """
+        if self._roi_requester is not None:
+            self._roi_requester.reload_roi(camera_slot)
 
     def _build_button_row(self) -> QHBoxLayout:
         discard_button = QPushButton(tr("config_discard"))
@@ -159,17 +161,11 @@ class ConfigView(QWidget):
                 return tab
         return None
 
-    def _get_cameras_tab(self) -> CamerasTab | None:
-        for tab in self._tabs:
-            if isinstance(tab, CamerasTab):
-                return tab
-        return None
-
-    def _get_process_tab(self) -> ProcessTab | None:
-        for tab in self._tabs:
-            if isinstance(tab, ProcessTab):
-                return tab
-        return None
+    def _on_roi_requested(self, tab, camera_slot: str, config_prefix: str,
+                          title_key: str):
+        """Recuerda quién pidió el rectángulo y reenvía el pedido tal cual."""
+        self._roi_requester = tab
+        self.open_roi_requested.emit(camera_slot, config_prefix, title_key)
 
     def _on_discard_clicked(self):
         self.reload()

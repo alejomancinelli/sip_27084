@@ -447,8 +447,6 @@ class MainWindow(QMainWindow):
         self._config_view = ConfigView(self._config)
         self._config_view.config_saved.connect(self._on_config_saved)
         self._config_view.open_roi_requested.connect(self._on_open_roi_requested)
-        self._config_view.open_belt_roi_requested.connect(
-            self._on_open_belt_roi_requested)
         self._config_view.calibrate_lens_requested.connect(
             self._on_calibrate_lens_requested)
 
@@ -481,18 +479,15 @@ class MainWindow(QMainWindow):
         self.set_status_message(tr("status_config_saved"))
         self.config_saved.emit()
 
-    def _on_open_roi_requested(self, camera_slot: str):
-        """Abre el diálogo para el ROI de análisis de esa cámara."""
-        self._open_roi_dialog(camera_slot, on_closed=self._refresh_roi_fields)
-
-    def _refresh_roi_fields(self, camera_slot: str):
-        if self._config_view is not None:
-            self._config_view.refresh_roi_fields(camera_slot)
-
-    def _open_roi_dialog(self, camera_slot: str, *, config_prefix: str = "",
-                         title_key: str = "roi_title", on_closed=None):
+    def _on_open_roi_requested(self, camera_slot: str, config_prefix: str,
+                               title_key: str):
         """
         Abre el diálogo de ROI alimentado con el frame en vivo de esa cámara.
+
+        **Qué rectángulo se dibuja lo dice quien lo pide.** La pestaña manda bajo qué clave
+        guardarlo y cómo titular la ventana, así que esta ventana no conoce ninguna sección
+        del config: sirve igual al ROI de análisis de una cámara que al rectángulo que un
+        proyecto mida aparte, sin enterarse de cuál es cuál.
 
         El frame sale del panel que la vista de monitor tenga para ese slot: si el widget
         del centro no expone uno, el diálogo se abre igual y se dibuja sobre negro, que es
@@ -509,27 +504,8 @@ class MainWindow(QMainWindow):
         dialog.exec()
         if panel is not None:
             panel.frame_updated.disconnect(dialog.update_frame)
-        if on_closed is not None:
-            on_closed(camera_slot)
-
-    def _on_open_belt_roi_requested(self, camera_slot: str):
-        """
-        Abre el mismo diálogo de ROI, apuntado al rectángulo de cinta de `process:`.
-
-        Es el mismo gesto sobre el mismo frame en vivo que el ROI de análisis: lo único que
-        cambia es bajo qué clave se guarda y qué dice el título, así que se reusa el diálogo
-        en vez de escribir un segundo lienzo que habría que mantener igual al primero.
-        """
-        self._open_roi_dialog(
-            camera_slot,
-            config_prefix=f"process.belt_roi_px.{camera_slot}",
-            title_key="process_belt_title",
-            on_closed=self._refresh_belt_roi_fields,
-        )
-
-    def _refresh_belt_roi_fields(self, camera_slot: str):
         if self._config_view is not None:
-            self._config_view.refresh_belt_roi_fields(camera_slot)
+            self._config_view.refresh_roi_fields(camera_slot)
 
     def _on_calibrate_lens_requested(self, camera_slot: str):
         """
