@@ -1,10 +1,3 @@
-# Config de la prueba manual de medición de la cinta. Es una copia del config del equipo
-# con lo que no hace falta acá apagado: sin interfaz, sin Modbus, sin telemetría y sin
-# servidores de video. Lo que importa —la cámara, el modelo, `process:` y el overlay— es
-# igual al de producción, porque lo que se está verificando es justamente eso.
-#
-# `belt_measure.py` lee ESTE archivo y no el de la raíz.
-
 project:
   client: Cargill APG
   project_id: 27084
@@ -28,10 +21,10 @@ process:
       y_px: 0
       width_px: 1445
       height_px: 1515
+  rolling_window_s: 3600
   dark_background_threshold:
     camera_1:
       desmenuzado: 60
-  rolling_window_s: 3600
 inference:
   overlay:
     enabled: true

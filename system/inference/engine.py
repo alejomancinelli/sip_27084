@@ -329,7 +329,7 @@ class InferenceThread(QThread):
         reason = self._gate_frame(result, camera_slot)
         if not reason:
             try:
-                detections = self._pipeline.run(region_bgr)
+                detections = self._pipeline.run(region_bgr, camera_slot)
             except Exception as e:
                 logger.error(
                     f"[Inference/{self.pipeline_slot}] Fallo en el pipeline para "

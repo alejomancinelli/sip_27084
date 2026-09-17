@@ -359,13 +359,14 @@ class _DemoApp(QObject):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config, BeltPipeline(config, pipeline_slot),
+                config,
+                BeltPipeline(config, pipeline_slot,
+                             dark_background_threshold=config.get(
+                                 "process.dark_background_threshold", {}) or {}),
                 analyzer=metrics.build_analyzer(
                     class_names=config.get(
                         "inference.models.segmenter.class_names", []) or [],
-                    belt_roi_px=config.get("process.belt_roi_px", {}) or {},
-                    dark_background_threshold=config.get(
-                        "process.dark_background_threshold", {}) or {}),
+                    belt_roi_px=config.get("process.belt_roi_px", {}) or {}),
                 annotator=annotations.chain(
                     annotations.belt_roi_annotator(
                         config.get("process.belt_roi_px", {}) or {}),

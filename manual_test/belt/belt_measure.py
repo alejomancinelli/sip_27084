@@ -71,7 +71,13 @@ def main(argv: list | None = None) -> int:
         print("El config.yaml no declara ninguna cámara.")
         return 1
 
-    pipeline = BeltPipeline(config, args.pipeline)
+    dark_background_threshold = config.get("process.dark_background_threshold", {}) or {}
+    if args.no_refine:
+        dark_background_threshold = {}
+        print()
+        print("Sin refinamiento: las máscaras salen como las da el modelo.")
+    pipeline = BeltPipeline(config, args.pipeline,
+                            dark_background_threshold=dark_background_threshold)
     pipeline.load()
     _report_pipeline(pipeline, config)
     if not pipeline.is_loaded:
@@ -80,15 +86,13 @@ def main(argv: list | None = None) -> int:
 
     class_names = config.get(f"inference.models.{args.model}.class_names", []) or []
     belt_roi_px = config.get("process.belt_roi_px", {}) or {}
-    thresholds = config.get("process.dark_background_threshold", {}) or {}
-    analyze = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px,
-                                     dark_background_threshold=thresholds)
-    # El mismo analyzer sin el refinamiento de fondo oscuro. Correr los dos y comparar es
-    # lo que separa «el umbral se está comiendo la clase» de «el modelo no la detecta»,
-    # que desde el resultado final se ven igual: la clase en cero.
-    analyze_raw = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px,
-                                         dark_background_threshold={})
-    diagnose = _Diagnosis(analyze_raw, thresholds) if thresholds else None
+    thresholds = dark_background_threshold.get(camera_slot) or {}
+    analyze = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px)
+    # El refinamiento lo aplica el modelo sobre sus máscaras, así que acá no se puede
+    # deshacer: para comparar hay que correr el script otra vez con `--no-refine`, que
+    # carga el modelo sin umbrales. Es lo que separa «el umbral se está comiendo la clase»
+    # de «el modelo no la detecta», que desde el resultado final se ven igual.
+    diagnose = _Diagnosis(thresholds) if thresholds else None
     annotate = annotations.chain(
         annotations.belt_roi_annotator(config.get("process.belt_roi_px", {}) or {}),
         annotations.composition_panel_annotator(
@@ -182,7 +186,7 @@ def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: BeltPipeline,
              analyze) -> InferenceResult:
     """Un resultado completo, por el mismo camino que el motor: pipeline y después analyzer."""
     started_s = time.perf_counter()
-    detections = pipeline.run(frame_bgr)
+    detections = pipeline.run(frame_bgr, camera_slot)
     elapsed_ms = (time.perf_counter() - started_s) * 1000
     result = InferenceResult(
         camera_slot=camera_slot,
@@ -216,38 +220,26 @@ def _print_measurement(label: str, result: InferenceResult, diagnose=None):
 
 class _Diagnosis:
     """
-    Compara la medición con y sin el refinamiento de fondo oscuro, clase por clase.
+    Dice con qué umbral se midió cada clase y contra qué luma se lo puede elegir.
 
     Una clase en cero se ve igual venga de donde venga: el modelo no la detectó, o la
-    detectó y el umbral se la comió entera. Son dos problemas distintos —uno se arregla en
-    el `.engine` o en la exposición, el otro en `process:`— y desde el número final no se
-    distinguen. Esto los separa.
+    detectó y el umbral se la comió entera. Para separarlos se corre el script dos veces,
+    la segunda con `--no-refine`, y se comparan los dos resúmenes.
     """
 
-    def __init__(self, analyze_raw, thresholds: dict):
-        self._analyze_raw = analyze_raw
-        self._thresholds = thresholds
+    def __init__(self, threshold_by_class: dict):
+        self._threshold_by_class = threshold_by_class
 
     def __call__(self, result: InferenceResult, gray):
-        raw = self._analyze_raw(result)
-        # Sólo las claves por clase: la carga y la fracción de cinta no son de ninguna.
-        skip = {metrics.FRAME_FRACTION_KEY, metrics.LOAD_KEY}
-        rows = [(name[len("pct_"):], int(raw[name]), int(result.metrics.get(name, 0)))
-                for name in sorted(raw)
-                if name.startswith("pct_") and not name.endswith("_norm")
-                and name not in skip]
-        by_class = self._thresholds.get(result.camera_slot, {}) or {}
-        for class_name, without, with_refinement in rows:
-            threshold = by_class.get(class_name)
-            note = "sin umbral" if not threshold else f"umbral {threshold}"
-            eaten = " <-- el umbral se la come entera" if (
-                without > 0 and with_refinement == 0) else ""
-            print(f"      {class_name:14s} {without:3d} % sin refinar -> "
-                  f"{with_refinement:3d} % ({note}){eaten}")
+        for class_name, threshold in sorted(self._threshold_by_class.items()):
+            measured = result.metrics.get(f"pct_{class_name}")
+            eaten = " <-- ¿se la come el umbral? probar con --no-refine" if (
+                measured == 0 and int(threshold) > 0) else ""
+            print(f"      {class_name:14s} umbral {int(threshold):3d} -> "
+                  f"{measured} %{eaten}")
         # Los percentiles dicen dónde poner el umbral: por debajo del que deja pasar la
         # fracción de imagen que de verdad es material.
-        percentiles = [int(value) for value in
-                       np.percentile(gray, [5, 25, 50, 75, 95])]
+        percentiles = [int(value) for value in np.percentile(gray, [5, 25, 50, 75, 95])]
         print(f"      luma p5/p25/p50/p75/p95 = {percentiles}")
 
 
@@ -321,6 +313,8 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--model", default="segmenter", help="slot del modelo")
     parser.add_argument("--json", default="", help="archivo donde guardar las mediciones")
     parser.add_argument("--no-window", action="store_true", help="sin ventana, sólo consola")
+    parser.add_argument("--no-refine", action="store_true",
+                        help="carga el modelo sin umbrales de fondo oscuro, para comparar")
     return parser.parse_args(argv)
 
 

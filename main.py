@@ -562,6 +562,9 @@ class Application(QObject):
         # Un hilo por pipeline habilitado: las cámaras que comparten pipeline comparten
         # el hilo, así los pesos se cargan una vez y el acceso a la GPU queda
         # serializado por construcción.
+        # `process:` la lee este archivo y se la pasa hecha a quien la necesite, igual que
+        # al analyzer y a los annotators: así el pipeline se testea con tres números.
+        dark_background_threshold = config.get("process.dark_background_threshold", {}) or {}
         preprocessor = self._build_preprocessor()
         classifier = self._build_classifier()
         analyzer = self._build_analyzer()
@@ -582,7 +585,9 @@ class Application(QObject):
                 )
                 continue
             engine = InferenceThread(
-                config, BeltPipeline(config, pipeline_slot),
+                config,
+                BeltPipeline(config, pipeline_slot,
+                             dark_background_threshold=dark_background_threshold),
                 preprocessor=preprocessor,
                 classifier=classifier,
                 analyzer=analyzer,
@@ -737,9 +742,8 @@ class Application(QObject):
         belt_roi_px = (self._config.get("process.belt_roi_px", {}) or {}).get(camera_slot)
         if belt_roi_px:
             context["belt_roi_px"] = dict(belt_roi_px)
-        thresholds = (self._config.get(
-            f"inference.models.{_SEGMENTER_SLOT}.params.dark_background_threshold", {})
-            or {})
+        thresholds = (self._config.get("process.dark_background_threshold", {})
+                      or {}).get(camera_slot)
         if thresholds:
             context["dark_background_threshold"] = dict(thresholds)
         return context or None

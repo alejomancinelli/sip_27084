@@ -97,6 +97,19 @@ process:
     # de inferir y `pct_pellet` pasaría a dividirse por la misma área que `pct_carga`,
     # cambiando en silencio todos los porcentajes publicados.
     camera_1: {x_px: 425, y_px: 0, width_px: 1445, height_px: 1515}
+  dark_background_threshold:
+    # Por cámara y por clase: luma por debajo de la cual un píxel de esa clase no cuenta.
+    # Es la cinta que se ve ENTRE partículas sueltas, que el contorno del segmentador se
+    # traga. 0 = sin refinar.
+    #
+    # Va por cámara porque depende de la iluminación y de la exposición, que son de cada
+    # montaje. Lo aplica `pipeline.py` sobre las máscaras, antes del analyzer y del overlay,
+    # así que lo que se mide y lo que se dibuja son lo mismo.
+    #
+    # El 60 heredado se calibró sobre la imagen amplificada por software de la versión
+    # anterior; sobre el frame crudo se come la clase entera. Recalibrar con la exposición
+    # definitiva, mirando los percentiles de luma que imprime manual_test/belt.
+    camera_1: {desmenuzado: 0}
   rolling_window_s: 3600        # ventana de las medias móviles que van a los registros 6-10
 
 inference:
@@ -156,17 +169,7 @@ inference:
       # El índice es el que devuelve el framework. El orden de acá decide qué color y qué
       # nombre de métrica le toca a cada clase: invertirlo invierte todos los porcentajes.
       class_names: [desmenuzado, pellet]
-      params:
-        # Luma por debajo de la cual un píxel de esa clase no cuenta: es el fondo que el
-        # contorno del segmentador mete entre partículas sueltas. Va acá y no en `process:`
-        # porque corrige la salida de ESTE modelo, y porque aplicándolo sobre sus máscaras
-        # lo que se mide y lo que se dibuja son lo mismo.
-        #
-        # En 0 no refina nada. El 60 heredado se calibró sobre la imagen amplificada por
-        # software de la versión anterior y sobre el frame crudo se come la clase entera:
-        # hay que recalibrarlo con la exposición definitiva.
-        dark_background_threshold:
-          desmenuzado: 0
+      params: {}
 
 image_collector:
   # Dataset de imágenes en `system.paths.dataset`, una carpeta por fecha y cámara:
