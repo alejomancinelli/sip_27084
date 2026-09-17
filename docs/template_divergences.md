@@ -103,6 +103,7 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 | `ui/dialogs/roi_dialog.py` | `config_prefix` y `title_key` como parámetros | Un proyecto puede tener más de un rectángulo por cámara; el diálogo es el mismo |
 | `system/gpio_control.py`, `system/formats/gpio_status.py` | Módulos nuevos | El template declaraba el subsistema como pendiente y `ui/dialogs/gpio_dialog.py` ya documentaba la interfaz que esperaba |
 | `system/inference/rolling.py` | Módulo nuevo | Media móvil por ventana de tiempo, con su cobertura. No hay nada de esta planta adentro |
+| `system/inference/abstract_pipeline.py` + `engine.py` | `_run()` recibe `(frame_bgr, camera_slot)` | El pipeline era ciego a la cámara y el `classifier` existía sólo para tapar eso. Con el slot, lo calibrado por montaje entra donde está la lógica del proceso |
 | `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS` | Va en el bloque del fork, que es su punto de extensión. Deja de hacer falta si el template incorpora el subsistema de GPIO |
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
@@ -113,44 +114,46 @@ la de acá. Si no la trae, conservarla y abrir el PR.
 ## C. Límites mal puestos — arreglar, no conservar
 
 Acá está lo que se metió donde no iba. Se lista con el arreglo, no con una justificación.
+Los dos primeros ya están arreglados y quedan asentados porque el arreglo es el patrón a
+aplicar la próxima vez.
 
-### C1. `ui/main_window.py` conoce una clave de `process:`
+### ~~C1 y C2~~ — resueltos
 
-```python
-config_prefix=f"process.belt_roi_px.{camera_slot}",
-title_key="process_belt_title",
-```
+`ui/main_window.py` armaba la clave `process.belt_roi_px.<slot>` y `ui/views/config_view.py`
+tenía una señal llamada `open_belt_roi_requested`: dos archivos de maquinaria que sabían que
+esta instalación mide una cinta.
 
-`main_window.py` es maquinaria y ahora sabe que esta instalación tiene un rectángulo de
-cinta guardado en esa clave. Un fork con otro segundo rectángulo tendría que editar el
-mismo archivo, que es exactamente la señal de que falta un punto de extensión.
+Se resolvieron juntos, porque eran el mismo agujero: **faltaba que el pedido llevara el
+dato**. Ahora la señal es `open_roi_requested(camera_slot, config_prefix, title_key)` y la
+manda la pestaña, que es la dueña de su sección del config —`cameras_tab` manda
+`cameras.<slot>.roi`, `process_tab` manda `process.belt_roi_px.<slot>`—. `ConfigView` la
+reenvía sin leerla y `MainWindow` abre el diálogo con lo que le dan.
 
-**Arreglo:** que la señal lleve el dato en vez de que lo sepa quien la recibe.
-`ProcessTab` emite `(camera_slot, config_prefix, title_key)`, `ConfigView` la reenvía tal
-cual y `MainWindow` abre el diálogo con lo que le dan. Ningún archivo de maquinaria vuelve
-a nombrar `belt_roi_px`.
+`ConfigView` engancha a **cualquier** pestaña que declare esa señal, sin nombrar ninguna,
+así que una pestaña nueva con otro rectángulo se conecta sola. Y recuerda cuál pidió para
+recargar sólo esa al cerrarse el diálogo: recargarlas todas descartaría lo que el operador
+esté editando en otra.
 
-### C2. `ui/views/config_view.py` tiene una señal con nombre de esta planta
+Queda como referencia de la forma que tiene el arreglo cuando algo del proyecto se filtra
+en maquinaria: **el dato viaja con el pedido**, no lo deduce quien lo recibe.
 
-`open_belt_roi_requested` y `refresh_belt_roi_fields()` nombran un concepto del proyecto
-dentro de maquinaria. Se resuelve con el mismo arreglo de C1: una sola señal genérica de
-«dibujar un rectángulo», sin adjetivo.
+### ~~C3~~ — resuelto, ensanchando el contrato del pipeline
 
-### C3. El umbral de fondo oscuro es por modelo y debería ser por cámara
+El umbral de fondo oscuro colgaba del modelo, que es uno solo para todas las cámaras del
+pipeline: dos cámaras con distinta iluminación no podían tener umbrales distintos. Con una
+sola cámara no se notaba, que es lo que lo hacía peligroso.
 
-**Dónde:** `inference.models.<slot>.params.dark_background_threshold`, aplicado en
-`system/inference/models/yolo_seg_model.py`.
+Se resolvió donde estaba el problema y no alrededor: **`AbstractPipeline._run()` pasa a
+recibir `(frame_bgr, camera_slot)`**. Es un ensanche —ninguna implementación existente
+cambia de comportamiento— y con eso el refinamiento se mudó a `BeltPipeline`, que es una
+etapa posterior a la segmentación, corre antes del analyzer y del overlay, y ahora sabe de
+qué cámara viene el frame. El umbral volvió a `process.dark_background_threshold`, por
+cámara y por clase.
 
-El umbral depende de la **iluminación**, que es de cada cámara y de su montaje. Está en el
-modelo porque ahí estaba el frame antes de que dibujara el overlay, y el modelo es **uno por
-pipeline y compartido por todas sus cámaras**: dos cámaras con luz distinta no pueden tener
-umbrales distintos hoy. Con una sola cámara no se nota, y por eso pasó.
-
-**Arreglo:** mudarlo al `classifier` del motor, que corre antes del analyzer y del overlay
-—así la máscara que se mide y la que se dibuja siguen siendo la misma— y que **sí recibe el
-slot de la cámara**. Para eso el `classifier` tiene que recibir también el frame de
-referencia: hoy su firma es `(detections, camera_slot)`. Es un cambio de contrato de
-maquinaria, y de los tres de esta sección es el único que no es sólo mover código.
+Es un cambio de maquinaria y **va a la sección B**: `engine.py` le pasa el slot,
+`abstract_pipeline.py` lo declara, y al modelo se le sigue sin pasar a propósito. Lo que
+queda para el `classifier` es lo que necesite coordenadas del frame completo, porque corre
+después de `offset_detections`.
 
 ---
 

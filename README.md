@@ -302,8 +302,8 @@ genérica la maquinaria y testeable lo del proyecto.
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
 | `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
-| `pipeline` | qué modelos corren y en qué orden | `pipeline.py` |
-| `classifier` | qué detecciones cuentan y con qué clase | **sin usar acá**: no hay nada calibrado por cámara |
+| `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
+| `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | **sin usar acá**: lo calibrado por cámara lo resuelve el pipeline |
 | `analyzer` | qué significan las detecciones | `metrics.py`, con `process:` |
 | `annotator` | qué se dibuja además del resultado | `annotations.py`, con `process:` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |

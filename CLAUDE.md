@@ -175,8 +175,10 @@ Son punteros: el contrato vive en el archivo, no acá.
   De dónde sale la clave es de `model_key.py`, y cómo se protege un modelo está en
   `docs/model_protection.md`.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
-  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. El
-  pipeline concreto es `system/inference/pipeline.py`.
+  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. `_run()`
+  recibe `(frame_bgr, camera_slot)`: el pipeline **sí** sabe de qué cámara viene el frame y
+  el modelo no, que es lo que deja poner acá lo calibrado por montaje. El pipeline concreto
+  es `system/inference/pipeline.py`.
 - **Resultado de inferencia** — `system/inference/result.py`: los campos de
   `Detection` e `InferenceResult`, el reparto entre `detections`, `labels` y `metrics`,
   el vocabulario de `invalid_reason` y qué significa `is_valid`. Es el objeto que
@@ -188,8 +190,11 @@ Son punteros: el contrato vive en el archivo, no acá.
   que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
   está en `tools/image/undistort.py`.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
-  entre el pipeline y el promedio de confianza. Es donde entra lo calibrado por cámara, que
-  el modelo no puede aplicar porque es uno solo para todas las del pipeline.
+  entre el pipeline y el promedio de confianza. Corre **después** de devolver las
+  detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
+  absolutas —una zona a ignorar, una regla por dónde cae la detección—. Lo que alcanza con
+  el recorte del ROI ya lo puede hacer el pipeline, que también recibe la cámara. Este
+  proyecto no lo usa.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
@@ -262,14 +267,20 @@ siguen vienen del template.
   la cinta estuvo parada. Por eso hay dos registros que validan las medias —cuánto de la
   hora se midió y cuánto de lo medido tenía material—: sin ellos, una media de tres muestras
   sobre una hora se lee igual que una hora entera bien medida.
-- **El refinamiento de fondo oscuro lo aplica el modelo sobre sus propias máscaras**, no
-  el analyzer. Corrige una debilidad conocida de la salida del segmentador —el contorno es
-  aproximadamente convexo y se traga el fondo que hay entre partículas sueltas—, así que es
-  postproceso del modelo y no de la planta. Y hacerlo ahí es lo único que garantiza que la
-  máscara que se mide y la que se dibuja sean la misma: calculado en el analyzer, el overlay
-  pintaba píxeles que no contaban y el umbral era invisible justo mientras se lo calibra.
-  Vale mientras haya una sola cámara; con dos con distinta iluminación se muda al
-  `classifier`, que sí recibe el slot.
+- **El refinamiento de fondo oscuro lo aplica el pipeline sobre las máscaras del
+  segmentador.** El contorno del modelo es aproximadamente convexo y se traga la cinta que
+  se ve *entre* partículas sueltas, así que una pila dispersa mediría como una compacta.
+  Corregirlo es una etapa posterior a la segmentación, que es exactamente lo que el pipeline
+  es. Ni el modelo ni el analyzer sirven: el modelo es uno solo para todas las cámaras y el
+  umbral depende de la iluminación, que es de cada montaje; y el analyzer no modifica el
+  resultado, así que arreglaría los números mientras el overlay sigue pintando los píxeles
+  descartados —y el umbral quedaría invisible justo mientras se lo calibra—.
+- **Para que el pipeline pudiera hacerlo, `_run()` pasó a recibir el `camera_slot`.** Es un
+  ensanche del contrato, no un cambio de comportamiento: la instancia sigue siendo una sola
+  para todas las cámaras del pipeline y los pesos se cargan una vez. Lo que cambia es que la
+  lógica del proceso ya puede depender de la cámara sin pasar por el `classifier`, que
+  existía justamente para tapar esa ceguera. Al modelo se le sigue sin pasar: un modelo es un
+  envoltorio de framework y se reusa entre proyectos; el pipeline es código del fork.
 - **Las rutas de los streams llevan el nombre viejo de la cámara.** `video.http.stream_names`
   mapea `camera_1` a `cinta` para no romper las URLs que ya están puestas en tableros y
   navegadores de la planta. Es deuda, no diseño: afecta sólo a la ruta —en los registros y
@@ -617,6 +628,30 @@ describe qué se mide en esta cinta, es de este proyecto.**
 - **Todo lo demás es maquinaria** y se cross-portea sin editar. Si hay que tocarla para que
   algo de la cinta funcione, el límite está mal puesto: lo que falta es un punto de
   extensión, no un parche.
+
+**Cuando algo del proyecto aparece adentro de maquinaria, el arreglo casi siempre es que el
+dato viaje con el pedido, no que la maquinaria lo aprenda.** Es la forma que toma la regla
+de arriba cuando ya se rompió, y conviene buscarla antes de agregar un `if`, una constante o
+un nombre propio a un archivo genérico.
+
+Un archivo de maquinaria que nombra algo de esta planta —una clave de `process:`, una clase
+del modelo, un slot de cámara— está haciendo de intermediario que *deduce* lo que alguien
+más ya sabía. El que sabe es el que pide: la pestaña que es dueña de su sección del config,
+el fork que conoce sus clases, el cableado que leyó el archivo. Que lo mande.
+
+El caso testigo: el diálogo de ROI se abría desde `main_window.py`, que armaba
+`process.belt_roi_px.<slot>` —una clave del proyecto adentro de la ventana principal—. El
+arreglo no fue mover el `if`, fue que la señal pasara a ser
+`open_roi_requested(camera_slot, config_prefix, title_key)`: cada pestaña manda **su** clave,
+`ConfigView` la reenvía sin leerla y `MainWindow` abre lo que le den. Ningún archivo de
+maquinaria volvió a nombrar el rectángulo, y una pestaña nueva con otro se engancha sola.
+
+Tres señales de que hace falta esto, y no un parche:
+
+- Un archivo genérico menciona una clave de `config.yaml` que no es suya.
+- Un `if` sobre el nombre de una cámara, de una clase o de un pipeline fuera de una fábrica.
+- Una señal o un método de maquinaria con un adjetivo del proyecto en el nombre
+  (`open_belt_roi_requested`).
 
 Los seis puntos de extensión del motor —`preprocessor`, `pipeline`, `classifier`,
 `analyzer`, `annotator`, `annotate_gate`— entran por su constructor y los cablea `main.py`.
