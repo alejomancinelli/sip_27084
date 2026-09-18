@@ -74,16 +74,18 @@ class RollingMean:
         return ratio_pct(len(self._samples), int(round(expected)))
 
 
-def has_material(fraction_pct_by_class: dict) -> bool:
+def has_composition(fraction_pct_by_class: dict) -> bool:
     """
-    Si la muestra representa una composición real y no una cinta vacía.
+    Si la muestra tiene un reparto entre clases del que se pueda hablar.
 
-    La composición de una cinta sin material no es 50/50 ni 0/0: no existe, y promediarla
-    con las que sí tienen material corre la media hacia donde no hay proceso. Por eso la
-    carga promedia todo —ahí el 0 es una medición legítima— y la composición sólo estas.
+    Sin nada detectado **no hay composición**: no es 50/50 ni 0/0, no existe. Promediar esas
+    muestras con las que sí detectaron algo corre la media hacia donde no hay proceso. Una
+    magnitud que sí se pueda medir en cero —cuánto se cubrió— se promedia siempre; un reparto
+    entre clases, sólo cuando hubo clases.
 
-    Es el punto único de enganche para afinar el criterio: un mínimo de carga, o el
-    veredicto de un modelo de cinta vacía, se agregan acá y valen para los dos consumidores.
+    Es el punto único de enganche para afinar el criterio: un mínimo de cobertura, o el
+    veredicto de una etapa que declare la escena vacía, se agregan acá y valen para todos
+    los consumidores.
     """
     return sum(float(value) for value in fraction_pct_by_class.values()) > 0
 
