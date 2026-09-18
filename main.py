@@ -109,9 +109,7 @@ from system.modbus.server import SharedModbusServer
 from system.system_monitor import SystemMonitor
 from system.telemetry.persistence import PersistenceThread
 from system.version import APP_VERSION
-from system.video.abstract_video_server import (
-    MODE_ANNOTATED, MODES, STATUS_ACTIVE,
-)
+from system.video.abstract_video_server import MODE_ANNOTATED
 from system.video.http_server import HttpVideoServer
 from system.video.rtsp_server import RtspVideoServer
 from tools.image.enhance import build_display_adjust
@@ -1019,7 +1017,7 @@ class Application(QObject):
                                 (service_status.SERVICE_VIDEO_RTSP, self._rtsp_video)):
             self._ui.set_client_count(service, server.get_client_count())
         self._ui.set_stream_urls(
-            service_status.SERVICE_VIDEO_HTTP, self._build_http_urls()
+            service_status.SERVICE_VIDEO_HTTP, self._http_video.get_stream_urls()
         )
         self._ui.set_stream_urls(
             service_status.SERVICE_VIDEO_RTSP, self._rtsp_video.get_stream_urls()
@@ -1475,23 +1473,6 @@ class Application(QObject):
             service_status.SERVICE_INFLUXDB: self._telemetry.backend_status("influxdb"),
             service_status.SERVICE_MQTT: self._telemetry.backend_status("mqtt"),
         }
-
-    def _build_http_urls(self) -> list[str]:
-        """
-        URLs del servidor HTTP, armadas acá y no en la UI.
-
-        La forma de la ruta es del servidor de video: si la compusiera la vista, el
-        formato quedaría definido en dos lugares. El RTSP ya las publica con
-        `get_stream_urls()`; el HTTP todavía no, así que las arma quien cablea.
-        """
-        if self._http_video.status != STATUS_ACTIVE:
-            return []
-        port = int(self._config.get("video.http.port", 8091))
-        return [
-            f"http://127.0.0.1:{port}/{camera_slot}/{mode}"
-            for camera_slot in (self._config.get("cameras", {}) or {})
-            for mode in MODES
-        ]
 
     def _is_synthetic(self, camera_slot: str) -> bool:
         thread = self._capture_threads.get(camera_slot)

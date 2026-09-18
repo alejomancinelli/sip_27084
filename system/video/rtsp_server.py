@@ -566,6 +566,8 @@ class RtspVideoServer(AbstractVideoServer):
         server.stop()
     """
 
+    CONFIG_KEY = "rtsp"
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
         self._store = _FrameStore()

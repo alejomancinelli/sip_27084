@@ -537,7 +537,7 @@ class TestPushGating:
 
 class TestSlots:
     def test_slots_keep_the_config_order(self, server):
-        assert server._server.slots == ("camera_1", "camera_2")
+        assert tuple(server._server.slot_by_name.values()) == ("camera_1", "camera_2")
 
     def test_slots_include_disabled_cameras(self, monkeypatch):
         """`enabled` cambia en caliente: la ruta no puede aparecer y desaparecer."""
@@ -545,7 +545,7 @@ class TestSlots:
         server = HttpVideoServer(_MockConfig(cameras={"camera_1": {"enabled": False}}))
         server.start()
         try:
-            assert server._server.slots == ("camera_1",)
+            assert tuple(server._server.slot_by_name.values()) == ("camera_1",)
         finally:
             server.stop()
 
@@ -555,7 +555,7 @@ class TestSlots:
         server.start()
         try:
             assert server.status == "active"
-            assert server._server.slots == ()
+            assert server._server.slot_by_name == {}
         finally:
             server.stop()
 
@@ -778,3 +778,57 @@ class TestConnectionLogging:
             server.stop()
         assert _logged(caplog, "Servidor activo")
         assert _logged(caplog, "Servidor detenido")
+
+
+class TestStreamNames:
+    """
+    La ruta puede llevar un nombre distinto del slot.
+
+    Está para una instalación cuyas URLs ya están puestas en un tablero o un NVR: cambiar
+    la ruta rompe algo de afuera que el equipo no controla. Sólo afecta a la ruta — el slot
+    sigue siendo el mismo en los registros y en la telemetría.
+    """
+
+    def _server(self, monkeypatch, **overrides):
+        monkeypatch.setattr(hvs, "_HOST", _LOOPBACK)
+        config = _MockConfig(cameras={"camera_1": {}}, **overrides)
+        server = HttpVideoServer(config)
+        server.start()
+        return server
+
+    def test_the_route_uses_the_public_name(self, monkeypatch):
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "cinta"}})
+        try:
+            assert server._server.slot_by_name == {"cinta": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_the_urls_use_the_public_name(self, monkeypatch):
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "cinta"}})
+        try:
+            assert all("/cinta/" in url for url in server.get_stream_urls())
+        finally:
+            server.stop()
+
+    def test_without_the_key_the_route_is_the_slot(self, monkeypatch):
+        server = self._server(monkeypatch)
+        try:
+            assert server._server.slot_by_name == {"camera_1": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_an_empty_name_is_ignored(self, monkeypatch):
+        """Un nombre en blanco dejaría la cámara sin ruta que servir."""
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "  "}})
+        try:
+            assert server._server.slot_by_name == {"camera_1": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_a_stopped_server_publishes_no_urls(self, monkeypatch):
+        server = self._server(monkeypatch)
+        server.stop()
+        assert server.get_stream_urls() == []
