@@ -13,6 +13,7 @@ from system.inference.pipeline import Pipeline
 from system.inference.result import Detection
 
 _PIPELINE = "pipeline_1"
+_SLOT = "camera_1"
 
 
 class _MockConfig:
@@ -67,7 +68,7 @@ class _LabellingPipeline(AbstractPipeline):
 
     model_slots = ("classifier", "segmenter")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         verdict = self._run_stage("classifier", frame_bgr)
         self._set_label("belt", "full" if verdict else "empty")
         if not verdict:
@@ -80,7 +81,7 @@ class _TwoStagePipeline(AbstractPipeline):
 
     model_slots = ("detector", "classifier")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         detections = self._run_stage("detector", frame_bgr)
         return self._run_stage("classifier", frame_bgr, detections)
 
@@ -116,7 +117,7 @@ class TestLoading:
 
     def test_a_pipeline_without_stages_is_never_loaded(self):
         class _EmptyPipeline(AbstractPipeline):
-            def _run(self, frame_bgr):
+            def _run(self, frame_bgr, camera_slot):
                 return []
 
         pipeline = _EmptyPipeline(_MockConfig(), _PIPELINE)
@@ -128,7 +129,7 @@ class TestLoading:
         _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1")})
         pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline.unload()
         assert pipeline.get_status()["models"] == {}
         assert (pipeline.stage_times_ms, pipeline.labels) == ({}, {})
@@ -141,7 +142,7 @@ class TestRunning:
         _install_models(monkeypatch, {"model_1": model})
         pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
-        detections = pipeline.run(_frame())
+        detections = pipeline.run(_frame(), _SLOT)
         assert [d.class_name for d in detections] == ["model_1"]
         assert len(model.calls) == 1
 
@@ -150,7 +151,7 @@ class TestRunning:
         _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1", loads=False)})
         pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
-        assert pipeline.run(_frame()) == []
+        assert pipeline.run(_frame(), _SLOT) == []
 
     def test_each_stage_gets_its_own_time(self, monkeypatch):
         config = _MockConfig(detector={"type": "mock"}, classifier={"type": "mock"})
@@ -158,7 +159,7 @@ class TestRunning:
                                       "classifier": _FakeModel(config, "classifier")})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert set(pipeline.stage_times_ms) == {"detector", "classifier"}
 
     def test_the_times_are_those_of_the_last_run(self, monkeypatch):
@@ -167,9 +168,9 @@ class TestRunning:
                                       "classifier": _FakeModel(config, "classifier")})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline._models.pop("classifier")
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert set(pipeline.stage_times_ms) == {"detector"}
 
     def test_a_cascade_hands_the_previous_detections_over(self, monkeypatch):
@@ -180,7 +181,7 @@ class TestRunning:
                                       "classifier": classifier})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         _, previous = classifier.calls[0]
         assert [d.class_name for d in previous] == ["detector"]
 
@@ -190,7 +191,7 @@ class TestRunning:
         _install_models(monkeypatch, {"model_1": model})
         pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert model.calls[0][1] == []
 
     def test_a_failing_stage_propagates_to_the_caller(self, monkeypatch):
@@ -202,7 +203,7 @@ class TestRunning:
         pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         with pytest.raises(RuntimeError):
-            pipeline.run(_frame())
+            pipeline.run(_frame(), _SLOT)
         assert "model_1" in pipeline.stage_times_ms
 
     def test_a_stage_can_leave_a_frame_verdict(self, monkeypatch):
@@ -211,7 +212,7 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert pipeline.labels == {"belt": "full"}
 
     def test_a_skipped_stage_leaves_the_verdict_that_skipped_it(self, monkeypatch):
@@ -223,7 +224,7 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        assert pipeline.run(_frame()) == []
+        assert pipeline.run(_frame(), _SLOT) == []
         assert pipeline.labels == {"belt": "empty"}
         assert set(pipeline.stage_times_ms) == {"classifier"}
 
@@ -234,9 +235,9 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         classifier.predict = lambda frame_bgr, previous=None: []
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert pipeline.labels == {"belt": "empty"}
 
     def test_the_labels_are_a_copy(self, monkeypatch):
@@ -245,7 +246,7 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline.labels["belt"] = "empty"
         assert pipeline.labels == {"belt": "full"}
 

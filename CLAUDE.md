@@ -159,8 +159,10 @@ Son punteros: el contrato vive en el archivo, no acá.
   De dónde sale la clave es de `model_key.py`, y cómo se protege un modelo está en
   `docs/model_protection.md`.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
-  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. El
-  pipeline concreto es `system/inference/pipeline.py`.
+  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. `_run()`
+  recibe `(frame_bgr, camera_slot)`: el pipeline **sí** sabe de qué cámara viene el frame y
+  el modelo no, así que lo calibrado por montaje entra ahí. El pipeline concreto es
+  `system/inference/pipeline.py`.
 - **Resultado de inferencia** — `system/inference/result.py`: los campos de
   `Detection` e `InferenceResult`, el reparto entre `detections`, `labels` y `metrics`,
   el vocabulario de `invalid_reason` y qué significa `is_valid`. Es el objeto que
@@ -172,8 +174,10 @@ Son punteros: el contrato vive en el archivo, no acá.
   que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
   está en `tools/image/undistort.py`.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
-  entre el pipeline y el promedio de confianza. Es donde entra lo calibrado por cámara, que
-  el modelo no puede aplicar porque es uno solo para todas las del pipeline.
+  entre el pipeline y el promedio de confianza. Corre **después** de devolver las
+  detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
+  absolutas. Lo que alcanza con el recorte del ROI ya lo puede hacer `_run()` del pipeline,
+  que también recibe la cámara.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.

@@ -19,16 +19,23 @@ Encadenar etapas es escribir `_run()`. Dos formas, y las dos salen del mismo con
     # Cascada: la segunda etapa recorta por lo que encontró la primera.
     model_slots = ("detector", "classifier")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         detections = self._run_stage("detector", frame_bgr)
         return self._run_stage("classifier", frame_bgr, detections)
 
     # Independientes: la segunda ignora lo que le llega y mira el frame completo.
     model_slots = ("detector_a", "detector_b")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         return self._run_stage("detector_a", frame_bgr) + \
                self._run_stage("detector_b", frame_bgr)
+
+`_run()` recibe además el `camera_slot` del frame. El pipeline es uno solo para todas
+las cámaras que tenga asignadas —los pesos se cargan una vez—, así que lo que dependa de
+la cámara se resuelve por frame y no se guarda en el objeto. El modelo no lo recibe a
+propósito: un modelo es un envoltorio de framework y se reusa entre proyectos, mientras
+que encadenar etapas ya es lógica del proceso, y lo calibrado por montaje es de esa
+lógica.
 
 Cada slot que aparezca en `model_slots` necesita su sección en `inference.models` del
 config.yaml; sin ella la fábrica devuelve un NullModel y esa etapa no detecta nada.
@@ -50,5 +57,5 @@ class Pipeline(AbstractPipeline):
 
     model_slots = ("model_1",)
 
-    def _run(self, frame_bgr: np.ndarray) -> list[Detection]:
+    def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         return self._run_stage("model_1", frame_bgr)

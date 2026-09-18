@@ -361,19 +361,24 @@ genérica la maquinaria y testeable lo del proyecto.
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
 | `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
-| `pipeline` | qué modelos corren y en qué orden | `pipeline.py` |
-| `classifier` | qué detecciones cuentan y con qué clase | del fork, con `process:` |
+| `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
+| `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | del fork, con `process:` |
 | `analyzer` | qué significan las detecciones | `metrics.py` |
 | `annotator` | qué se dibuja además del resultado | `annotations.py` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |
 
-El `classifier` corre entre el pipeline y el promedio de confianza, y es el único lugar
-donde entra lo que depende de la cámara: `predict()` no recibe el slot, porque el modelo es
-uno por pipeline y lo comparten todas sus cámaras. Ahí van la escala de píxel, el filtro de
-tamaño y la clase que sale de la medida. Lo que descarta no cuenta para `min_detections` ni
-para la confianza del resultado, y la clase que deja en `class_index` es la que después
-colorean el overlay y `analysis.count_by_class`. El analyzer no puede hacerlo: su contrato
-dice que no modifica el resultado.
+Lo que depende de la cámara entra en dos lugares, y la diferencia es dónde están las
+coordenadas. **`_run()` del pipeline** recibe el `camera_slot` y trabaja sobre el recorte
+del ROI: ahí va lo que corrige la salida de un modelo con un valor calibrado por montaje —un
+umbral de luz, un descarte por tamaño—. **El `classifier`** corre después de devolver las
+detecciones al frame completo, así que es donde va lo que necesita posiciones absolutas: una
+zona a ignorar, una regla por dónde cae la detección.
+
+`predict()` no recibe el slot en ninguno de los dos casos, y es a propósito: el modelo es uno
+por pipeline y lo comparten todas sus cámaras. Lo que el classifier descarta no cuenta para
+`min_detections` ni para la confianza del resultado, y la clase que deja en `class_index` es
+la que después colorean el overlay y `analysis.count_by_class`. El analyzer no puede hacer
+ninguna de las dos cosas: su contrato dice que no modifica el resultado.
 
 ## Los tres caminos que salen de un frame
 

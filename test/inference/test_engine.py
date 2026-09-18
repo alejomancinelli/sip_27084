@@ -77,7 +77,7 @@ class _FakePipeline(AbstractPipeline):
     def unload(self):
         self.unload_calls += 1
 
-    def _run(self, frame_bgr: np.ndarray) -> list[Detection]:
+    def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         self.frames.append(frame_bgr)
         for name, value in self._labels_to_set.items():
             self._set_label(name, value)
