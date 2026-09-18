@@ -46,7 +46,10 @@ class CamerasTab(AbstractConfigTab):
 
     TITLE_KEY = "tab_cameras"
 
-    open_roi_requested = Signal(str)     # slot de la cámara cuyo ROI hay que dibujar
+    # (slot de cámara, clave del config donde va el rectángulo, clave de idioma del título).
+    # La pestaña manda la clave porque es la dueña de su sección: quien abre el diálogo no
+    # tiene por qué saber dónde guarda sus cosas cada una.
+    open_roi_requested = Signal(str, str, str)
 
     def __init__(self, config_manager: ConfigManager, parent=None):
         super().__init__(config_manager, parent)
@@ -71,7 +74,7 @@ class CamerasTab(AbstractConfigTab):
         for form in self._forms.values():
             form.save()
 
-    def refresh_roi_fields(self, camera_slot: str):
+    def reload_roi(self, camera_slot: str):
         """Recarga los campos de ROI de una cámara tras guardar el diálogo interactivo."""
         form = self._forms.get(camera_slot)
         if form is not None:
@@ -81,7 +84,7 @@ class CamerasTab(AbstractConfigTab):
 class _CameraForm(QWidget):
     """Formulario de una sola cámara: conexión, adquisición, ROI y calibración."""
 
-    open_roi_requested = Signal(str)
+    open_roi_requested = Signal(str, str, str)
 
     def __init__(self, config_manager: ConfigManager, camera_slot: str, parent=None):
         super().__init__(parent)
@@ -154,7 +157,8 @@ class _CameraForm(QWidget):
             )
         roi_button = QPushButton(tr("cam_roi_tool"))
         roi_button.clicked.connect(
-            lambda: self.open_roi_requested.emit(self._camera_slot)
+            lambda: self.open_roi_requested.emit(
+                self._camera_slot, f"{self._prefix}.roi", "roi_title")
         )
         form.addRow("", roi_button)
         wire_enable_toggle(self._roi_check, list(self._roi_spins.values()) + [roi_button])

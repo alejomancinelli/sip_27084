@@ -14,7 +14,7 @@ Guarda las cuatro claves de geometría bajo el prefijo que se le dé —por defe
 `enabled` del ROI queda como está: prender el recorte es una decisión aparte de dibujarlo.
 
 **El prefijo es un parámetro** porque un proyecto puede tener más de un rectángulo por
-cámara: el que se analiza y, por ejemplo, el de la cinta contra el que se mide la carga.
+cámara: el que se analiza y el que algún proceso mida aparte.
 Los dos se dibujan igual y sobre el mismo frame en vivo, así que lo único que cambia es
 dónde se guardan y cómo se titula la ventana. Sin esto, el segundo rectángulo se escribiría
 a mano en el `config.yaml`, que es justo lo que este diálogo existe para evitar.

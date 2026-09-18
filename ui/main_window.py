@@ -142,8 +142,8 @@ class MainWindow(QMainWindow):
         """
         Inyecta el controlador de GPIO y, si lo hay, el hilo que informa las entradas.
 
-        Sin esto el botón de GPIO no aparece: es la mitad de UI de un subsistema que el
-        template todavía no tiene. Ver `ui/dialogs/gpio_dialog.py`.
+        Sin esto el botón de GPIO no aparece: un equipo sin entradas ni salidas digitales
+        no muestra un panel que no comanda nada. Ver `ui/dialogs/gpio_dialog.py`.
         """
         self._gpio_controller = gpio_controller
         self._gpio_thread = gpio_thread
@@ -479,17 +479,24 @@ class MainWindow(QMainWindow):
         self.set_status_message(tr("status_config_saved"))
         self.config_saved.emit()
 
-    def _on_open_roi_requested(self, camera_slot: str):
+    def _on_open_roi_requested(self, camera_slot: str, config_prefix: str,
+                               title_key: str):
         """
         Abre el diálogo de ROI alimentado con el frame en vivo de esa cámara.
 
-        El frame sale del panel que la vista de monitor tenga para ese slot: si el fork
-        no puso ninguno, el diálogo se abre igual y se dibuja sobre negro, que es mejor
-        que no abrirse.
+        **Qué rectángulo se dibuja lo dice quien lo pide.** La pestaña manda bajo qué clave
+        guardarlo y cómo titular la ventana, así que esta ventana no conoce ninguna sección
+        del config: sirve igual al ROI de análisis de una cámara que al rectángulo que un
+        proyecto mida aparte, sin enterarse de cuál es cuál.
+
+        El frame sale del panel que la vista de monitor tenga para ese slot: si el widget
+        del centro no expone uno, el diálogo se abre igual y se dibuja sobre negro, que es
+        mejor que no abrirse.
         """
         from ui.dialogs.roi_dialog import RoiDialog
 
-        dialog = RoiDialog(self._config, camera_slot, self)
+        dialog = RoiDialog(self._config, camera_slot, self,
+                           config_prefix=config_prefix, title_key=title_key)
         panel = self._get_camera_panel(camera_slot)
         if panel is not None:
             panel.frame_updated.connect(dialog.update_frame)
