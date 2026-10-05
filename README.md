@@ -159,8 +159,8 @@ trae:
    `python -m system.modbus.export_map` para regenerar la tabla del integrador.
 9. **`main.py`**: ya cablea todo. Se completan sus tres métodos marcados —
    `_build_monitor_content()`, `_build_analyzer()` y `_build_annotator()`—, que son los
-   que leen `process:` y le pasan al motor lo del proyecto. El preprocessor del lente sale
-   solo de la calibración del config.
+   que leen `process:` y le pasan al motor lo del proyecto. El preprocessor sale solo del
+   config: la calibración del lente y el `image_adjust` de cada cámara.
 10. **La vista de operador**, si la grilla de cámaras no alcanza: el widget propio se
     devuelve desde `_build_monitor_content()` de `main.py`. Los textos nuevos van a
     `ui/strings.py`, con su clave en inglés y una columna por idioma; el resto de la UI
@@ -360,7 +360,7 @@ genérica la maquinaria y testeable lo del proyecto.
 
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
-| `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
+| `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py` y `enhance.py`, desde el config de cada cámara, o del fork |
 | `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
 | `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | del fork, con `process:` |
 | `analyzer` | qué significan las detecciones | `metrics.py` |
@@ -386,14 +386,17 @@ No son el mismo frame, y confundirlos es el error caro:
 
 | Camino | Qué imagen | Quién la prepara |
 |---|---|---|
-| medición | la del `preprocessor`: corregida si el lente lo pide | `tools/image/undistort.py` |
-| dataset | la cruda de la cámara, para poder reentrenar | nadie la toca |
+| medición | la del `preprocessor`: corregida si el lente lo pide, ajustada si la cámara declara `image_adjust` | `tools/image/undistort.py`, `enhance.py` |
+| dataset | la misma de la medición —`source_bgr`—, que es con la que se reentrena | nadie más la toca |
 | visualización | ajustada para que se vea (gamma, contraste local) | `tools/image/enhance.py`, con `video.display` |
 
 La corrección geométrica cambia **dónde está** un píxel, así que tiene que ser la misma
 para el modelo y para el overlay: por eso va en el `preprocessor`, que define el frame de
-referencia. El brillo cambia **cómo se ve** y no mueve nada: por eso va sólo en el camino
-de visualización y no contamina el dataset.
+referencia. El brillo cambia **cómo se ve** y no mueve nada: por eso, salvo que la cámara
+diga otra cosa, va sólo en el camino de visualización y no contamina el dataset. Una cámara
+que declara `image_adjust` lo mete en la medición, y eso tiene consecuencias —el dataset
+guarda la imagen ajustada y `illumination_min` se compara después del ajuste— que están en
+`CLAUDE.md`.
 
 ## Cuando un ciclo son varias imágenes
 
