@@ -1,23 +1,29 @@
 """
-Ajuste de imagen para que la vea una persona: gamma y contraste local.
+Ajuste de imagen: gamma y contraste local.
 
 Librería portable: sin Qt, sin ConfigManager, sin I/O y sin nada del repo. Recibe un
 frame y devuelve uno nuevo.
 
-**Es del camino de visualización, no del de medición.** Va entre el frame y lo que mira
-un humano —los streams de video y la UI— y no entra ni al modelo ni al dataset:
+El mismo ajuste entra por dos caminos que no se mezclan, y cuál se elige es una decisión
+del proceso, no una preferencia de pantalla:
 
-    cámara ──► modelo        crudo, como se entrenó
-           ──► dataset       crudo, para poder reentrenar
-           ──► streams + UI  ajustado, para que se vea de noche
+    cámara ──► preprocessor ──► modelo + dataset   `build_image_adjust()`, por cámara
+           ──► streams + UI                         `build_display_adjust()`, para mirar
 
-Esa separación es la razón de que el ajuste no esté en el driver: el driver es el único
-que toca el frame de todos, y subirle el brillo ahí contaminaría el dataset. Si lo que se
-quiere es que el modelo vea la imagen ajustada, el lugar es el `preprocessor` del motor de
-inferencia, que sí cambia el frame de referencia.
+  - **Para mirar** (`video.display`) va entre el frame y lo que ve un humano y no toca
+    nada más: el modelo y el dataset siguen recibiendo el frame de la cámara.
+  - **Para medir** (`cameras.<slot>.image_adjust`) va en el `preprocessor` del motor, y lo
+    que devuelve es el frame de referencia. Es por cámara porque la luz lo es, y tiene
+    consecuencias que un ajuste de pantalla no tiene: el dataset guarda la imagen
+    ajustada —se reentrena con eso—, y el brillo medio del ROI que decide
+    `illumination_min` y que sale al PLC se mide después del ajuste.
 
-`build_display_adjust()` devuelve None cuando la configuración no cambia nada, así el
-llamador se saltea la llamada en vez de copiar el frame para dejarlo igual.
+Ninguno de los dos va en el driver: el driver es el único que toca el frame de todos, y
+subirle el brillo ahí lo cambiaría también para la vista cruda y para la nitidez de la
+óptica, que se miden sobre lo que entrega el sensor.
+
+Los dos builders devuelven None cuando la configuración no cambia nada, así el llamador se
+saltea la llamada en vez de copiar el frame para dejarlo igual.
 """
 
 from collections.abc import Callable
@@ -34,6 +40,8 @@ CLAHE_CLIP_MAX = 8.0
 _CLAHE_GRID = (8, 8)      # celdas en las que CLAHE ecualiza por separado
 _NEUTRAL_GAMMA = 1.0
 _LUT_SIZE = 256
+
+CameraAdjuster = Callable[[np.ndarray, str], np.ndarray]
 
 
 def build_display_adjust(*, gamma: float = _NEUTRAL_GAMMA,
@@ -66,6 +74,34 @@ def build_display_adjust(*, gamma: float = _NEUTRAL_GAMMA,
 
     adjust.__name__ = f"display_adjust(gamma={gamma}, clahe_clip={clahe_clip})"
     return adjust
+
+
+def build_image_adjust(adjust_by_camera: dict) -> CameraAdjuster | None:
+    """
+    Devuelve el preprocessor que ajusta cada cámara con sus parámetros, o None si ninguna
+    ajusta nada.
+
+    `adjust_by_camera` es `{camera_slot: {"gamma": ..., "clahe_clip": ...}}`, tal como sale
+    del config. Una cámara sin ajuste, o con uno neutro, pasa sin tocar y sin copiar, así
+    que la misma función sirve para un pipeline con cámaras ajustadas y sin ajustar. La
+    firma es la del `preprocessor` del motor, `(frame, camera_slot) -> frame`.
+    """
+    adjust_by_slot = {}
+    for camera_slot, params in (adjust_by_camera or {}).items():
+        params = params if isinstance(params, dict) else {}
+        adjust = build_display_adjust(gamma=params.get("gamma", _NEUTRAL_GAMMA),
+                                      clahe_clip=params.get("clahe_clip", 0.0))
+        if adjust is not None:
+            adjust_by_slot[camera_slot] = adjust
+    if not adjust_by_slot:
+        return None
+
+    def adjust_camera(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
+        adjust = adjust_by_slot.get(camera_slot)
+        return frame_bgr if adjust is None else adjust(frame_bgr)
+
+    adjust_camera.__name__ = f"image_adjust({', '.join(sorted(adjust_by_slot))})"
+    return adjust_camera
 
 
 def apply_gamma(frame_bgr: np.ndarray, gamma: float) -> np.ndarray:

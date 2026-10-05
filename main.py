@@ -52,7 +52,8 @@ Lo que **no** hace, y por qué:
 
 Los seis puntos de extensión del motor, y de dónde sale cada uno:
 
-    preprocessor    `tools/image/undistort.py`, si alguna cámara declara calibración
+    preprocessor    `tools/image/undistort.py` y `enhance.py`, si alguna cámara declara
+                    calibración o ajuste de imagen
     pipeline        `system/inference/pipeline.py`, que el fork reescribe
     classifier      qué detecciones cuentan y con qué clase, compuesto abajo con `process:`
     analyzer        `system/inference/metrics.py`, que el fork reescribe
@@ -112,7 +113,7 @@ from system.version import APP_VERSION
 from system.video.abstract_video_server import MODE_ANNOTATED
 from system.video.http_server import HttpVideoServer
 from system.video.rtsp_server import RtspVideoServer
-from tools.image.enhance import build_display_adjust
+from tools.image.enhance import build_display_adjust, build_image_adjust
 from tools.image.undistort import build_undistorter
 
 from ui import service_status
@@ -1448,20 +1449,32 @@ class Application(QObject):
 
     def _build_preprocessor(self):
         """
-        Corrector de lente, si alguna cámara declara calibración.
+        Corrector de lente y ajuste de imagen, si alguna cámara declara alguno de los dos.
 
         Lo que devuelve pasa a ser el frame de referencia del ciclo: el que ve el modelo,
-        el que queda en `source_bgr`, el espacio del ROI y el lienzo del overlay. Sin
-        calibración declarada devuelve None y el motor no gasta la pasada.
+        el que queda en `source_bgr` —y con él en el dataset—, el espacio del ROI y el
+        lienzo del overlay. Sin nada declarado devuelve None y el motor no gasta la pasada.
+
+        **Primero la geometría y después el brillo.** El gamma es por píxel y el orden no
+        le cambia nada, pero el contraste local ecualiza por celdas: corrido antes de
+        corregir el lente, las celdas quedarían deformadas sobre el frame que mide el
+        modelo.
         """
-        calibration_by_camera = {
+        camera_slots = tuple(self._config.get("cameras", {}) or {})
+        undistorter = build_undistorter({
             camera_slot: self._config.get(f"cameras.{camera_slot}.calibration", {}) or {}
-            for camera_slot in (self._config.get("cameras", {}) or {})
-        }
-        undistorter = build_undistorter(calibration_by_camera)
+            for camera_slot in camera_slots
+        })
         if undistorter is not None:
             logger.info("[Main] Corrección de lente activa: el frame de referencia va corregido.")
-        return undistorter
+        image_adjust = build_image_adjust({
+            camera_slot: self._config.get(f"cameras.{camera_slot}.image_adjust", {}) or {}
+            for camera_slot in camera_slots
+        })
+        if image_adjust is not None:
+            logger.info(f"[Main] Ajuste de imagen activo — {image_adjust.__name__}: el modelo "
+                        f"y el dataset reciben el frame ajustado.")
+        return _chain_preprocessors(undistorter, image_adjust)
 
     def _get_service_statuses(self) -> dict:
         """Estado de los seis canales de salida, cada uno preguntado a su dueño."""
@@ -1553,6 +1566,28 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true",
                         help="no abrir la ventana; también se puede con ui.enabled: false")
     return parser.parse_args(argv)
+
+
+def _chain_preprocessors(*preprocessors):
+    """
+    Junta varios preprocessors en uno, en orden. El motor recibe una sola función.
+
+    Los que vienen en None se descartan: sin ninguno devuelve None, y con uno solo lo
+    devuelve tal cual, así el motor no paga una llamada de más por frame.
+    """
+    selected = [preprocessor for preprocessor in preprocessors if preprocessor is not None]
+    if not selected:
+        return None
+    if len(selected) == 1:
+        return selected[0]
+
+    def preprocess(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
+        for preprocessor in selected:
+            frame_bgr = preprocessor(frame_bgr, camera_slot)
+        return frame_bgr
+
+    preprocess.__name__ = " + ".join(getattr(p, "__name__", repr(p)) for p in selected)
+    return preprocess
 
 
 def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:

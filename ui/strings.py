@@ -146,6 +146,9 @@ _TEXTS: dict[str, dict[str, str]] = {
     "cam_box_calibration":    {"es": "Calibración de lente",
                                "en": "Lens calibration",
                                "pt": "Calibração da lente"},
+    "cam_box_image_adjust":   {"es": "Ajuste de imagen para la medición",
+                               "en": "Image adjustment for measurement",
+                               "pt": "Ajuste de imagem para a medição"},
     "cam_enabled":            {"es": "Cámara habilitada",
                                "en": "Camera enabled",
                                "pt": "Câmera habilitada"},
@@ -177,6 +180,29 @@ _TEXTS: dict[str, dict[str, str]] = {
                                      "matrix and a list of coefficients.",
                                "pt": "Os intrínsecos da lente são editados no config.yaml: são "
                                      "uma matriz e uma lista de coeficientes."},
+    "cam_gamma":              {"es": "Gamma (menos de 1 aclara, 1 = sin cambio):",
+                               "en": "Gamma (below 1 brightens, 1 = no change):",
+                               "pt": "Gama (abaixo de 1 clareia, 1 = sem alteração):"},
+    "cam_clahe":              {"es": "Contraste local CLAHE (0 = apagado):",
+                               "en": "CLAHE local contrast (0 = off):",
+                               "pt": "Contraste local CLAHE (0 = desligado):"},
+    "cam_image_adjust_note":  {"es": "No es un ajuste de pantalla: cambia la imagen que mide el "
+                                     "modelo y la que guarda el dataset, y con ella el brillo "
+                                     "que se compara con la iluminación mínima. Revisar ese "
+                                     "umbral después de cambiarlo. Si la escena está oscura, "
+                                     "subir la ganancia es la primera opción. Se aplica al "
+                                     "reiniciar.",
+                               "en": "This is not a display setting: it changes the image the "
+                                     "model measures and the one the dataset stores, and with "
+                                     "it the brightness compared against the minimum "
+                                     "illumination. Review that threshold after changing it. "
+                                     "If the scene is dark, raising the gain comes first. "
+                                     "Applied on restart.",
+                               "pt": "Não é um ajuste de tela: muda a imagem que o modelo mede "
+                                     "e a que o dataset guarda, e com ela o brilho comparado "
+                                     "com a iluminação mínima. Revisar esse limiar depois de "
+                                     "alterá-lo. Se a cena estiver escura, aumentar o ganho é "
+                                     "a primeira opção. Aplicado ao reiniciar."},
     "cam_calibration_set":    {"es": "Corrección de lente configurada",
                                "en": "Lens correction configured",
                                "pt": "Correção de lente configurada"},
@@ -296,9 +322,9 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Contraste local CLAHE"},
     "video_display_note":     {"es": "Los dos ajustes van sólo al camino de visualización —la UI y "
                                      "los streams—: el modelo y el dataset siguen recibiendo el "
-                                     "frame crudo. El contraste local rescata una escena con una "
-                                     "zona quemada y otra en sombra, y cuesta bastante más que "
-                                     "el gamma.",
+                                     "frame de la cámara. El contraste local rescata una escena "
+                                     "con una zona quemada y otra en sombra, y cuesta bastante "
+                                     "más que el gamma.",
                                "en": "Both adjustments apply only to the display path —the UI and "
                                      "the streams—: the model and the dataset still get the raw "
                                      "frame. Local contrast rescues a scene with one blown-out "

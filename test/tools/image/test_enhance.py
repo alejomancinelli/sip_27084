@@ -1,5 +1,5 @@
-"""Tests del ajuste de visualización: qué aclara, qué no toca y cuándo no hay nada que
-ajustar.
+"""Tests del ajuste de imagen: qué aclara, qué no toca, cuándo no hay nada que ajustar y
+cómo se reparte por cámara cuando entra al preprocessor.
 
 Se verifica el efecto sobre los píxeles y que el frame de entrada nunca se modifique: el
 mismo array lo comparten la captura, el modelo y el dataset.
@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from tools.image.enhance import (CLAHE_CLIP_MAX, GAMMA_MAX, GAMMA_MIN, apply_clahe,
-                                 apply_gamma, build_display_adjust)
+                                 apply_gamma, build_display_adjust, build_image_adjust)
 
 
 def _frame(level: int = 60) -> np.ndarray:
@@ -113,3 +113,48 @@ class TestBuildDisplayAdjust:
     def test_it_names_itself_with_its_parameters(self):
         """El aviso de quien lo aplica tiene que decir con qué estaba configurado."""
         assert "0.5" in build_display_adjust(gamma=0.5).__name__
+
+
+class TestBuildImageAdjust:
+    """El ajuste por cámara, con la firma del `preprocessor` del motor."""
+
+    @pytest.mark.parametrize("adjust_by_camera", [
+        {},
+        None,
+        {"camera_1": {}},
+        {"camera_1": {"gamma": 1.0, "clahe_clip": 0.0}},
+        {"camera_1": "no es un dict"},
+    ])
+    def test_nothing_to_adjust_returns_none(self, adjust_by_camera):
+        """Sin ajuste el motor no gasta la pasada: el preprocessor no existe."""
+        assert build_image_adjust(adjust_by_camera) is None
+
+    def test_each_camera_gets_its_own_parameters(self):
+        """La luz es de cada montaje: una cámara oscura no arrastra a la de al lado."""
+        adjust = build_image_adjust({"camera_1": {"gamma": 0.5}, "camera_2": {"gamma": 2.0}})
+        assert adjust(_frame(60), "camera_1").mean() > 60
+        assert adjust(_frame(60), "camera_2").mean() < 60
+
+    def test_a_camera_without_adjustment_passes_the_same_array(self):
+        """Ni copia ni cambio: el frame de referencia de esa cámara sigue siendo el suyo."""
+        adjust = build_image_adjust({"camera_1": {"gamma": 0.5}})
+        frame = _frame(60)
+        assert adjust(frame, "camera_2") is frame
+
+    def test_it_adjusts_like_the_display_path_with_the_same_parameters(self):
+        """Un solo ajuste en dos caminos: el mismo gamma da la misma imagen."""
+        adjust = build_image_adjust({"camera_1": {"gamma": 0.5, "clahe_clip": 2.0}})
+        display = build_display_adjust(gamma=0.5, clahe_clip=2.0)
+        assert np.array_equal(adjust(_gradient(), "camera_1"), display(_gradient()))
+
+    def test_the_camera_frame_is_never_touched(self):
+        """El mismo array lo usan la vista cruda y la nitidez de la óptica."""
+        frame = _frame(60)
+        build_image_adjust({"camera_1": {"gamma": 0.5}})(frame, "camera_1")
+        assert np.array_equal(frame, _frame(60))
+
+    def test_it_names_the_cameras_it_adjusts(self):
+        """Es lo que dice el log de arranque: qué cámaras miden sobre un frame ajustado."""
+        adjust = build_image_adjust({"camera_2": {"gamma": 0.5}, "camera_1": {"clahe_clip": 2.0},
+                                     "camera_3": {}})
+        assert adjust.__name__ == "image_adjust(camera_1, camera_2)"
