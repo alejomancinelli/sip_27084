@@ -39,12 +39,14 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
+      gpio_control.py         entradas y salidas digitales sobre libgpiod; sin ella, simulado
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
         lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
+        gpio_status.py        las dos palabras de GPIO: entradas leídas y salidas comandadas
         system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
@@ -188,6 +190,13 @@ Son punteros: el contrato vive en el archivo, no acá.
   puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
   las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
   cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
+- **GPIO** — `system/gpio_control.py`: dueño único de las líneas del chip, canales
+  numerados desde 1 como en el borne, lecturas que son `1`, `0` o `READ_ERROR`, y el modo
+  simulado sin `gpiod`, que expone la misma API y lo declara en `hardware_available`. Las
+  salidas se informan como eco de lo comandado, no releyendo el hardware. Las dos palabras
+  que van al PLC son de `formats/gpio_status.py` y salen siempre, haya GPIO o no: sin
+  hardware llevan prendida su marca de «sin GPIO». El botón del header aparece sólo con
+  `gpio.enabled: true`, y al cerrar el polling se detiene antes de soltar las líneas.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -545,13 +554,15 @@ La tabla completa, archivo por archivo, está en `README.md`.
   `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
   están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
   que es lo que llena `cameras.<slot>.lens_health.reference`—.
-- **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
-  huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
-  `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
-  `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
-  espera, y el botón del header aparece sólo cuando se lo inyecta). Cómo se toca todo eso
-  está en `docs/ui.md`.
+- **El área central de la vista de monitor.** La UI está completa y andando —tres vistas,
+  ocho pestañas de configuración, cinco de diagnóstico— salvo un hueco a propósito: el
+  widget que va en el centro del monitor lo pone el fork con `set_content()`. Cómo se toca
+  eso está en `docs/ui.md`.
+- **Del GPIO no falta código: falta probarlo contra un chip de verdad.** El controlador,
+  sus dos palabras, el cableado, la sección `gpio:` y el diálogo están; la suite prueba el
+  camino con hardware contra un doble de `gpiod` y el equipo de desarrollo corre en
+  simulado. Lo que queda es de cada instalación: declarar en `gpio:` los offsets de su
+  placa y verlos conmutar en el borne.
 - El modelo del proyecto. El template trae el mock —detecciones sintéticas, sin
   framework— y el fork agrega el suyo en `system/inference/` registrándolo en la
   fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.
