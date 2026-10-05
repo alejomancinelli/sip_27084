@@ -355,18 +355,20 @@ cameras:
       camera_matrix: []         # 3x3; [] = sin corrección
       dist_coeffs: []           # 4, 5, 8, 12 o 14 coeficientes
     image_adjust:
-      # Gamma y contraste local de lo que MIDE esta cámara (tools/image/enhance.py). Entra
-      # por el mismo preprocessor que la corrección de lente, después de ella, así que no
-      # es un ajuste de pantalla —eso es `video.display`—: cambia el frame de referencia.
-      # Tres consecuencias, y las tres son la razón de que esto no sea un slider:
+      # Brillo y contraste local de lo que MIDE esta cámara (tools/image/enhance.py). Existe
+      # para REPRODUCIR un equipo o un modelo entrenado sobre imágenes ajustadas así; en una
+      # instalación nueva va en 1.0: la escena oscura se arregla con la ganancia y el modelo
+      # se entrena con la imagen del sensor, de la que se puede derivar cualquier ajuste y
+      # a la que un píxel saturado no vuelve.
+      #
+      # Entra por el mismo preprocessor que la corrección de lente, después de ella, así que
+      # no es un ajuste de pantalla —eso es `video.display`—: cambia el frame de referencia.
       #   - el dataset guarda la imagen ajustada, así que se reentrena con eso;
       #   - `illumination_min` y el brillo del ROI que sale al PLC se miden después del
-      #     ajuste: cambiar el gamma obliga a revisar ese umbral;
+      #     ajuste: cambiar el factor obliga a revisar ese umbral;
       #   - la vista cruda sigue mostrando lo que entrega el sensor, y la anotada el frame
       #     ajustado.
-      # La nitidez de la óptica no se ve afectada: se mide sobre el frame de la cámara.
-      # Si la escena está oscura, subir la ganancia arregla la causa y deja el dataset
-      # como dato del sensor; esto es lo que queda cuando hay que reproducir un equipo
-      # que ya medía así. Se aplica al reiniciar, como todo lo de la cámara.
-      gamma: 1.0                # 0.1–3.0; <1 aclara, >1 oscurece; 1.0 = sin cambio
+      # La nitidez de la óptica no se ve afectada: se mide sobre el frame de la cámara. Se
+      # aplica al reiniciar, como todo lo de la cámara.
+      brightness_factor: 1.0    # x0.1–x5.0, lineal y saturado en 255; 1.0 = sin cambio
       clahe_clip: 0.0           # contraste local 0–8; 0 = apagado

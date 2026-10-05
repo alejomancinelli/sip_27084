@@ -430,7 +430,7 @@ class TestPreprocessor:
         app = main.Application.__new__(main.Application)
         app._config = _MockConfig(**{
             "cameras": {"camera_1": {}, "camera_2": {}},
-            "cameras.camera_1.image_adjust": {"gamma": 0.5, "clahe_clip": 0.0},
+            "cameras.camera_1.image_adjust": {"brightness_factor": 2.0, "clahe_clip": 0.0},
         })
         preprocessor = app._build_preprocessor()
         frame = np.full((4, 4, 3), 60, np.uint8)
