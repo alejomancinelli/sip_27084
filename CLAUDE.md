@@ -65,6 +65,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         overlay.py            nivel 1 — dibujado del resultado; también lo lee la UI
         annotations.py        nivel 1 — dibujos propios de la planta; se reescribe en cada fork
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
+        rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
         metrics.py            nivel 1 — las métricas del proceso; se reescribe en cada fork
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
       license/                ata el equipo a la máquina para la que se emitió la licencia
@@ -180,6 +181,13 @@ Son punteros: el contrato vive en el archivo, no acá.
   detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
   absolutas. Lo que alcanza con el recorte del ROI ya lo puede hacer `_run()` del pipeline,
   que también recibe la cámara.
+- **Medias móviles** — `system/inference/rolling.py`: `RollingMean` recorta la ventana por
+  tiempo y no por cantidad, `tick()` va aparte de `add()` para que una inferencia caída
+  drene la ventana en vez de congelarla, y `fill_pct()` dice cuánto de la ventana se llegó
+  a medir, que es lo que valida la media. `has_composition()` decide si una muestra sin
+  detecciones entra a un promedio de reparto entre clases. Es librería, como
+  `analysis.py`: agrega en el tiempo lo que `summarize_metrics` agrega dentro de un ciclo,
+  la usa el analyzer del fork que publique tendencias, y en el template no la llama nadie.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
