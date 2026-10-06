@@ -7,7 +7,7 @@ que acá no hay config ni frames de cámara.
 
 import numpy as np
 
-from system.inference import metrics
+from system.inference import metrics, overlay
 from system.inference.annotations import (belt_roi_annotator, chain,
                                           composition_panel_annotator)
 from system.inference.result import InferenceResult
@@ -125,6 +125,28 @@ class TestCompositionPanel:
 
     def test_it_names_itself_with_its_classes(self):
         assert "pellet" in composition_panel_annotator(_CLASS_NAMES).__name__
+
+    def test_each_class_row_uses_the_mask_color_of_its_index(self, monkeypatch):
+        """El panel y las máscaras pintan cada clase igual: la paleta es la del overlay."""
+        palette = ((0, 0, 255), (0, 255, 0))
+        colors_bgr = _panel_colors(monkeypatch, composition_panel_annotator(
+            _CLASS_NAMES, class_colors_bgr=palette))
+        assert colors_bgr[1:3] == [overlay.get_class_color_bgr(0, palette),
+                                   overlay.get_class_color_bgr(1, palette)]
+
+    def test_without_a_palette_it_uses_the_overlay_default(self, monkeypatch):
+        colors_bgr = _panel_colors(monkeypatch, composition_panel_annotator(_CLASS_NAMES))
+        assert colors_bgr[1:3] == [overlay.get_class_color_bgr(0),
+                                   overlay.get_class_color_bgr(1)]
+
+
+def _panel_colors(monkeypatch, annotator) -> list:
+    """Colores por línea que el annotator le pide al panel, sin dibujarlo."""
+    captured = {}
+    monkeypatch.setattr(overlay, "draw_text_panel",
+                        lambda frame, lines, **kwargs: captured.update(kwargs))
+    annotator(_frame(), _measured())
+    return list(captured["line_colors_bgr"])
 
 
 # ── Composición de annotators ────────────────────────────────────────────────

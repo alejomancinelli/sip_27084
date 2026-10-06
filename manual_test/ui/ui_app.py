@@ -371,7 +371,9 @@ class _DemoApp(QObject):
                     annotations.belt_roi_annotator(
                         config.get("process.belt_roi_px", {}) or {}),
                     annotations.composition_panel_annotator(
-                        config.get("inference.models.segmenter.class_names", []) or [])),
+                        config.get("inference.models.segmenter.class_names", []) or [],
+                        class_colors_bgr=tuple(tuple(color) for color in (config.get(
+                            "inference.overlay.class_colors_bgr", []) or [])))),
                 annotate_gate=self._is_annotated_watched,
             )
             engine.result_ready.connect(self._on_result_ready)

@@ -789,14 +789,17 @@ class Application(QObject):
         Lee los mismos valores que el analyzer y en el mismo lugar, que es la razón de que
         se lean acá y no adentro de cada factory: el rectángulo que ve el operador y el que
         se usó para calcular el porcentaje que salió al PLC son el mismo, y no pueden
-        discrepar.
+        discrepar. La paleta es la misma con la que el motor pinta las máscaras, por igual
+        razón.
         """
+        colors = self._config.get("inference.overlay.class_colors_bgr", []) or []
         return annotations.chain(
             annotations.belt_roi_annotator(
                 self._config.get("process.belt_roi_px", {}) or {}),
             annotations.composition_panel_annotator(
                 self._config.get(f"inference.models.{_SEGMENTER_SLOT}.class_names", [])
                 or [],
+                class_colors_bgr=tuple(tuple(color) for color in colors),
                 font_scale=float(self._config.get("inference.overlay.font_scale", 0) or 0)),
         )
 

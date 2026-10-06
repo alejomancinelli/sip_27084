@@ -42,12 +42,7 @@ Annotator = Callable[[np.ndarray, InferenceResult], None]
 _BELT_ROI_BGR = (0, 220, 220)   # cian: no se confunde con ninguna clase de la cinta
 _BELT_ROI_THICKNESS = 2
 
-# Colores del panel de composición, los mismos con los que las clases se pintan sobre la
-# cinta: dos referencias del mismo dato que no coinciden de color obligan a leer el nombre
-# para saber qué es cuál. Se buscan por nombre de clase, que es dato de configuración; una
-# clase que no figure sale en el color neutro.
-_PANEL_NEUTRAL_BGR = (210, 210, 210)
-_CLASS_BGR = {"pellet": (46, 204, 113), "desmenuzado": (60, 76, 231)}
+_PANEL_NEUTRAL_BGR = (210, 210, 210)   # encabezado y carga: no son de ninguna clase
 
 
 def chain(*annotators: Annotator) -> Annotator:
@@ -97,7 +92,8 @@ def belt_roi_annotator(roi_px_by_camera: dict[str, dict]) -> Annotator:
     return draw
 
 
-def composition_panel_annotator(class_names: list, font_scale: float = 0.0) -> Annotator:
+def composition_panel_annotator(class_names: list, class_colors_bgr: tuple = (),
+                                font_scale: float = 0.0) -> Annotator:
     """
     Panel con la composición normalizada y la carga de la cinta.
 
@@ -110,6 +106,11 @@ def composition_panel_annotator(class_names: list, font_scale: float = 0.0) -> A
     orden y con qué etiqueta. Un resultado sin métricas —una medición no confiable— no
     dibuja nada.
 
+    `class_colors_bgr` es la paleta de `inference.overlay`, y cada fila sale del color que
+    `overlay` le da a la clase por su índice —vacía, la paleta por defecto de `overlay`—: el
+    panel y las máscaras pintan cada clase igual, y si no coincidieran el operador tendría
+    que leer el nombre para saber qué es cuál.
+
     `font_scale` es el mismo de `inference.overlay` y llega leído, como todo lo demás. Sin
     pasarlo, el panel usaba el default del módulo de dibujado —pensado para un recorte— y
     quedaba ilegible sobre el frame completo de una cámara de varios megapíxeles.
@@ -118,18 +119,19 @@ def composition_panel_annotator(class_names: list, font_scale: float = 0.0) -> A
     options = overlay.OverlayOptions(font_scale=font_scale)
     labels = [name.capitalize() for name in names]
     label_width = max((len(label) for label in labels), default=0) + 2
+    class_colors = [overlay.get_class_color_bgr(i, class_colors_bgr) for i in range(len(names))]
 
     def draw(frame_bgr: np.ndarray, result: InferenceResult):
         if frame_bgr is None or frame_bgr.size == 0 or not result.metrics:
             return
         lines = ["Composicion:"]
         colors_bgr = [_PANEL_NEUTRAL_BGR]
-        for class_name, label in zip(names, labels):
+        for class_name, label, color_bgr in zip(names, labels, class_colors):
             value_pct = result.metrics.get(f"pct_{class_name}_norm")
             if value_pct is None:
                 continue
             lines.append(f"  {(label + ':'):<{label_width}} {float(value_pct):5.1f}%")
-            colors_bgr.append(_CLASS_BGR.get(class_name, _PANEL_NEUTRAL_BGR))
+            colors_bgr.append(color_bgr)
         load_pct = result.metrics.get(metrics.LOAD_KEY)
         if load_pct is not None:
             lines.append(f"Carga cinta: {float(load_pct):5.1f}%")

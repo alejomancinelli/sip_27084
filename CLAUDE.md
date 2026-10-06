@@ -306,10 +306,18 @@ siguen vienen del template.
   registro 51 pasó del enum 0-5 al bitfield del template —que es lo que transporta el bit de
   lente sucio— y se agregaron 97-99 sobre direcciones que estaban libres.
 - **El nombre de una clase es dato de configuración y decide el nombre de su métrica.** De
-  `inference.models.segmenter.class_names` salen `pct_pellet`, `pct_pellet_norm` y el color
-  con el que la clase se dibuja; invertir ese orden invierte en silencio todos los
-  porcentajes. Se declara una sola vez, ahí: el analyzer y el annotator lo reciben leído por
-  `main.py`, y el refinamiento de fondo oscuro lo nombra desde `process:`.
+  `inference.models.segmenter.class_names` salen `pct_pellet` y `pct_pellet_norm`; invertir
+  ese orden invierte en silencio todos los porcentajes. El orden está confirmado contra el
+  `.engine`: 0 = desmenuzado, 1 = pellet. Se declara una sola vez, ahí: el analyzer y el
+  annotator lo reciben leído por `main.py`, y el refinamiento de fondo oscuro lo nombra
+  desde `process:`.
+- **El color de una clase va por índice y tiene un solo dueño:
+  `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo. Con
+  esa paleta el motor pinta las máscaras y el panel de composición pinta sus filas —`main.py`
+  se la pasa al annotator—, así que una clase se ve del mismo color en los dos lados. Un
+  color por nombre en el annotator era una segunda fuente que ya no coincidía con la de las
+  máscaras, y que con un orden de clases invertido habría pintado la misma clase de dos
+  colores.
 
 - Las claves de `config.yaml` van en inglés y la jerarquía espeja los módulos, no
   las pantallas de la UI.
@@ -693,10 +701,6 @@ La tabla completa, archivo por archivo, está en `README.md`.
   viene trabajando sobre una imagen amplificada por software y ahora recibe el frame crudo,
   así que hay que subir `exposure_time_us` hasta que el nivel coincida y recalibrar
   `process.dark_background_threshold` contra esa imagen. Se decide mirando la cinta.
-- **El orden de las clases hay que confirmarlo contra el `.engine`.** El código de la
-  versión anterior decía clase 0 = desmenuzado y su propio docstring decía lo contrario;
-  `config.yaml` quedó con el orden del código. Invertirlo invierte todos los porcentajes sin
-  que nada falle.
 - **La referencia de óptica se recalibra** una vez fijada la exposición nueva: la que está
   (`variance: 50.7`) se midió con las condiciones viejas y deja de valer si cambia.
 - **El widget del área central del monitor.** Hoy es la grilla de cámaras genérica. La

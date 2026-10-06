@@ -93,15 +93,16 @@ def main(argv: list | None = None) -> int:
     # carga el modelo sin umbrales. Es lo que separa «el umbral se está comiendo la clase»
     # de «el modelo no la detecta», que desde el resultado final se ven igual.
     diagnose = _Diagnosis(thresholds) if thresholds else None
-    annotate = annotations.chain(
-        annotations.belt_roi_annotator(config.get("process.belt_roi_px", {}) or {}),
-        annotations.composition_panel_annotator(
-            config.get(f"inference.models.{args.model}.class_names", []) or []),
-    )
     overlay_options = overlay.OverlayOptions(
         class_colors_bgr=tuple(tuple(color) for color in
                                (config.get("inference.overlay.class_colors_bgr", []) or [])),
         draw_boxes=False, draw_labels=False,
+    )
+    annotate = annotations.chain(
+        annotations.belt_roi_annotator(config.get("process.belt_roi_px", {}) or {}),
+        annotations.composition_panel_annotator(
+            config.get(f"inference.models.{args.model}.class_names", []) or [],
+            class_colors_bgr=overlay_options.class_colors_bgr),
     )
 
     measurements = []
