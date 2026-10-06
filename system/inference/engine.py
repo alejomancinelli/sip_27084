@@ -63,6 +63,7 @@ el overlay y `analysis.count_by_class`.
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -471,28 +472,39 @@ class InferenceThread(QThread):
         `respect_gate` en False lo saltea: lo usa `annotate()`, que dibuja una vez por
         medición y no una vez por frame. Lo que apaga el config no se saltea nunca.
 
-        Primero el anotado estándar y después el annotator del proyecto, que dibuja encima
-        sus referencias. Un annotator que falla no se lleva puesto el frame: queda lo que
-        haya alcanzado a dibujar más todo lo estándar.
+        Primero el anotado estándar, después el annotator del proyecto, que dibuja encima
+        sus referencias, y al final el timestamp. El timestamp va último porque es lo único
+        que no puede quedar tapado: una referencia que cruza el borde del frame —el
+        rectángulo de una cinta, un límite de carga— le pasaría por encima. Un annotator que
+        falla no se lleva puesto el frame: queda lo que haya alcanzado a dibujar más todo lo
+        estándar.
         """
         if not self._config.get("inference.overlay.enabled", True):
             return None
         if (respect_gate and self._annotate_gate is not None
                 and not self._annotate_gate(result.camera_slot)):
             return None
+        options = self._read_overlay_options()
         try:
-            annotated = overlay.annotate(result, self._read_overlay_options(),
+            annotated = overlay.annotate(result, replace(options, draw_timestamp=False),
                                          canvas_adjust=self._canvas_adjust)
         except Exception as e:
             self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
             return None
+        if annotated is None:
+            return None
 
-        if annotated is not None and self._annotator is not None:
+        if self._annotator is not None:
             name = getattr(self._annotator, "__name__", repr(self._annotator))
             try:
                 self._annotator(annotated, result)
             except Exception as e:
                 self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
+        if options.draw_timestamp:
+            try:
+                overlay.draw_timestamp(annotated, result.timestamp_s, options=options)
+            except Exception as e:
+                self._warn_throttled("timestamp", f"No se pudo dibujar la hora: {e}.")
         return annotated
 
     # ── Lectura de config ────────────────────────────────────────────────────

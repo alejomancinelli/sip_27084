@@ -37,6 +37,7 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -277,10 +278,12 @@ def _report_summary(measurements: list):
 
 
 def _show(result: InferenceResult, annotate, overlay_options: overlay.OverlayOptions):
-    annotated = overlay.annotate(result, overlay_options)
+    # El mismo orden que el motor: el timestamp va último para que nada lo tape.
+    annotated = overlay.annotate(result, replace(overlay_options, draw_timestamp=False))
     if annotated is None:
         annotated = result.source_bgr.copy()
     annotate(annotated, result)
+    overlay.draw_timestamp(annotated, result.timestamp_s, options=overlay_options)
     height_px, width_px = annotated.shape[:2]
     if width_px > _MAX_WINDOW_WIDTH_PX:
         ratio = _MAX_WINDOW_WIDTH_PX / width_px

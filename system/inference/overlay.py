@@ -67,7 +67,9 @@ MASK_STYLES = (MASK_STYLE_FILL, MASK_STYLE_OUTLINE, MASK_STYLE_BOTH)
 _MASK_ALPHA = 0.45        # peso del color de la máscara sobre el frame
 _MARGIN_PX = 10           # aire entre el panel y el borde del frame
 _INNER_PAD_PX = 8
-_LINE_PAD_PX = 6
+_LINE_PAD_PX = 6          # aire mínimo entre dos líneas del panel
+_LINE_PAD_RATIO = 0.4     # ídem, en fracción del alto del texto: crece con la escala
+_COLUMN_GAP = "  "        # aire entre la etiqueta y el valor, medido con la fuente del panel
 _TIMESTAMP_RATIO = 0.8    # el timestamp va más chico que el panel: es referencia, no dato
 _LABEL_SCALE = 0.55       # etiqueta de una referencia dibujada con draw_line()
 
@@ -285,7 +287,7 @@ def text_thickness(font_scale: float) -> int:
     return max(1, int(round(font_scale / _TEXT_THICKNESS_STEP)))
 
 
-def draw_text_panel(frame_bgr: np.ndarray, lines: list[str], *,
+def draw_text_panel(frame_bgr: np.ndarray, lines: list, *,
                     options: OverlayOptions | None = None,
                     text_bgr: tuple[int, int, int] = _PANEL_TEXT_BGR,
                     line_colors_bgr: tuple = ()):
@@ -295,6 +297,12 @@ def draw_text_panel(frame_bgr: np.ndarray, lines: list[str], *,
     El fondo opaco no es estética: sobre un frame claro el texto sin fondo no se lee, y
     el operador mira esto para decidir.
 
+    Cada línea es un texto o un par `(etiqueta, valor)`. Los pares se dibujan en dos
+    columnas, con los valores alineados a la derecha: la fuente es proporcional, así que
+    rellenar con espacios no alinea nada, y una columna de números desalineada se lee mal.
+    Con todos los valores en el mismo formato —`33.4%`, `100.0%`— el punto decimal cae en
+    el mismo lugar.
+
     `line_colors_bgr` pinta línea por línea, en el mismo orden que `lines`; lo que sobra,
     falta o venga en `None` cae en `text_bgr`. Es lo que deja que un panel que enumera
     clases use el color con el que están dibujadas: dos referencias del mismo dato que no
@@ -303,25 +311,45 @@ def draw_text_panel(frame_bgr: np.ndarray, lines: list[str], *,
     if frame_bgr is None or frame_bgr.size == 0 or not lines:
         return
     opts = options or OverlayOptions()
+    rows = [(str(line[0]), str(line[1])) if isinstance(line, tuple) else (str(line), None)
+            for line in lines]
 
-    font_scale = resolve_font_scale(frame_bgr, lines, opts)
+    font_scale = resolve_font_scale(
+        frame_bgr, [label if value is None else label + _COLUMN_GAP + value
+                    for label, value in rows], opts)
     thickness = text_thickness(font_scale)
-    sizes = [cv2.getTextSize(line, _FONT, font_scale, thickness)[0] for line in lines]
-    text_width_px = max(width for width, _ in sizes)
-    line_height_px = max(height for _, height in sizes)
+
+    def measure(text: str) -> tuple[int, int]:
+        return cv2.getTextSize(text, _FONT, font_scale, thickness)[0]
+
+    pairs = [(label, value) for label, value in rows if value is not None]
+    widths_px = [measure(label)[0] for label, value in rows if value is None]
+    columns_width_px = 0
+    if pairs:
+        columns_width_px = (max(measure(label)[0] for label, _ in pairs)
+                            + measure(_COLUMN_GAP)[0]
+                            + max(measure(value)[0] for _, value in pairs))
+        widths_px.append(columns_width_px)
+    text_width_px = max(widths_px)
+    value_right_px = _MARGIN_PX + _INNER_PAD_PX + columns_width_px
+    line_height_px = max(measure(text)[1] for row in rows for text in row if text is not None)
+    line_pad_px = max(_LINE_PAD_PX, int(round(line_height_px * _LINE_PAD_RATIO)))
 
     panel_width_px = text_width_px + 2 * _INNER_PAD_PX
-    panel_height_px = (len(lines) * line_height_px + (len(lines) - 1) * _LINE_PAD_PX
+    panel_height_px = (len(rows) * line_height_px + (len(rows) - 1) * line_pad_px
                        + 2 * _INNER_PAD_PX)
     cv2.rectangle(frame_bgr, (_MARGIN_PX, _MARGIN_PX),
                   (_MARGIN_PX + panel_width_px, _MARGIN_PX + panel_height_px),
                   _PANEL_BG_BGR, cv2.FILLED)
 
-    for i, line in enumerate(lines):
-        y_px = _MARGIN_PX + _INNER_PAD_PX + (i + 1) * line_height_px + i * _LINE_PAD_PX
-        color = line_colors_bgr[i] if i < len(line_colors_bgr) else None
-        cv2.putText(frame_bgr, line, (_MARGIN_PX + _INNER_PAD_PX, y_px),
-                    _FONT, font_scale, color or text_bgr, thickness, cv2.LINE_AA)
+    for i, (label, value) in enumerate(rows):
+        y_px = _MARGIN_PX + _INNER_PAD_PX + (i + 1) * line_height_px + i * line_pad_px
+        color = (line_colors_bgr[i] if i < len(line_colors_bgr) else None) or text_bgr
+        cv2.putText(frame_bgr, label, (_MARGIN_PX + _INNER_PAD_PX, y_px),
+                    _FONT, font_scale, color, thickness, cv2.LINE_AA)
+        if value is not None:
+            cv2.putText(frame_bgr, value, (value_right_px - measure(value)[0], y_px),
+                        _FONT, font_scale, color, thickness, cv2.LINE_AA)
 
 
 def draw_timestamp(frame_bgr: np.ndarray, timestamp_s: float, *,

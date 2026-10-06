@@ -39,7 +39,7 @@ from .result import InferenceResult
 
 Annotator = Callable[[np.ndarray, InferenceResult], None]
 
-_BELT_ROI_BGR = (0, 220, 220)   # cian: no se confunde con ninguna clase de la cinta
+_BELT_ROI_BGR = (0, 220, 220)   # amarillo: no se confunde con ninguna clase de la cinta
 _BELT_ROI_THICKNESS = 2
 
 _PANEL_NEUTRAL_BGR = (210, 210, 210)   # encabezado y carga: no son de ninguna clase
@@ -117,8 +117,7 @@ def composition_panel_annotator(class_names: list, class_colors_bgr: tuple = (),
     """
     names = [str(name) for name in (class_names or [])]
     options = overlay.OverlayOptions(font_scale=font_scale)
-    labels = [name.capitalize() for name in names]
-    label_width = max((len(label) for label in labels), default=0) + 2
+    labels = [f"  {name.capitalize()}:" for name in names]
     class_colors = [overlay.get_class_color_bgr(i, class_colors_bgr) for i in range(len(names))]
 
     def draw(frame_bgr: np.ndarray, result: InferenceResult):
@@ -130,11 +129,11 @@ def composition_panel_annotator(class_names: list, class_colors_bgr: tuple = (),
             value_pct = result.metrics.get(f"pct_{class_name}_norm")
             if value_pct is None:
                 continue
-            lines.append(f"  {(label + ':'):<{label_width}} {float(value_pct):5.1f}%")
+            lines.append((label, f"{float(value_pct):.1f}%"))
             colors_bgr.append(color_bgr)
         load_pct = result.metrics.get(metrics.LOAD_KEY)
         if load_pct is not None:
-            lines.append(f"Carga cinta: {float(load_pct):5.1f}%")
+            lines.append(("Carga cinta:", f"{float(load_pct):.1f}%"))
             colors_bgr.append(_PANEL_NEUTRAL_BGR)
         if len(lines) == 1:
             return
