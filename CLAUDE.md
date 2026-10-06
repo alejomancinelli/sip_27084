@@ -39,12 +39,14 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
+      gpio_control.py         entradas y salidas digitales sobre libgpiod; sin ella, simulado
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
         lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
+        gpio_status.py        las dos palabras de GPIO: entradas leídas y salidas comandadas
         system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
@@ -63,6 +65,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         overlay.py            nivel 1 — dibujado del resultado; también lo lee la UI
         annotations.py        nivel 1 — dibujos propios de la planta; se reescribe en cada fork
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
+        rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
         metrics.py            nivel 1 — las métricas del proceso; se reescribe en cada fork
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
       license/                ata el equipo a la máquina para la que se emitió la licencia
@@ -179,6 +182,13 @@ Son punteros: el contrato vive en el archivo, no acá.
   detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
   absolutas. Lo que alcanza con el recorte del ROI ya lo puede hacer `_run()` del pipeline,
   que también recibe la cámara.
+- **Medias móviles** — `system/inference/rolling.py`: `RollingMean` recorta la ventana por
+  tiempo y no por cantidad, `tick()` va aparte de `add()` para que una inferencia caída
+  drene la ventana en vez de congelarla, y `fill_pct()` dice cuánto de la ventana se llegó
+  a medir, que es lo que valida la media. `has_composition()` decide si una muestra sin
+  detecciones entra a un promedio de reparto entre clases. Es librería, como
+  `analysis.py`: agrega en el tiempo lo que `summarize_metrics` agrega dentro de un ciclo,
+  la usa el analyzer del fork que publique tendencias, y en el template no la llama nadie.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
@@ -189,6 +199,13 @@ Son punteros: el contrato vive en el archivo, no acá.
   puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
   las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
   cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
+- **GPIO** — `system/gpio_control.py`: dueño único de las líneas del chip, canales
+  numerados desde 1 como en el borne, lecturas que son `1`, `0` o `READ_ERROR`, y el modo
+  simulado sin `gpiod`, que expone la misma API y lo declara en `hardware_available`. Las
+  salidas se informan como eco de lo comandado, no releyendo el hardware. Las dos palabras
+  que van al PLC son de `formats/gpio_status.py` y salen siempre, haya GPIO o no: sin
+  hardware llevan prendida su marca de «sin GPIO». El botón del header aparece sólo con
+  `gpio.enabled: true`, y al cerrar el polling se detiene antes de soltar las líneas.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -569,13 +586,15 @@ La tabla completa, archivo por archivo, está en `README.md`.
   `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
   están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
   que es lo que llena `cameras.<slot>.lens_health.reference`—.
-- **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
-  huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
-  `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
-  `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
-  espera, y el botón del header aparece sólo cuando se lo inyecta). Cómo se toca todo eso
-  está en `docs/ui.md`.
+- **El área central de la vista de monitor.** La UI está completa y andando —tres vistas,
+  ocho pestañas de configuración, cinco de diagnóstico— salvo un hueco a propósito: el
+  widget que va en el centro del monitor lo pone el fork con `set_content()`. Cómo se toca
+  eso está en `docs/ui.md`.
+- **Del GPIO no falta código: falta probarlo contra un chip de verdad.** El controlador,
+  sus dos palabras, el cableado, la sección `gpio:` y el diálogo están; la suite prueba el
+  camino con hardware contra un doble de `gpiod` y el equipo de desarrollo corre en
+  simulado. Lo que queda es de cada instalación: declarar en `gpio:` los offsets de su
+  placa y verlos conmutar en el borne.
 - El modelo del proyecto. El template trae el mock —detecciones sintéticas, sin
   framework— y el fork agrega el suyo en `system/inference/` registrándolo en la
   fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.

@@ -285,6 +285,25 @@ modbus:
     parity: N                   # N | E | O
     stop_bits: 1
 
+gpio:
+  # Entradas y salidas digitales del equipo (system/gpio_control.py), sobre libgpiod v2:
+  # es de Linux, y en un equipo sin `gpiod`, sin permisos sobre el chip o sin chip el
+  # módulo degrada a modo simulado y la app arranca igual. Lo avisan el log, el diálogo de
+  # GPIO del header y la marca de «sin GPIO» de las dos palabras que lee el PLC, que salen
+  # siempre. Con `enabled: false` tampoco hay botón en el header.
+  enabled: false
+  chip: gpiochip0               # gpiochip0 o /dev/gpiochip0; `gpioinfo` lista los del equipo
+  # Canal -> offset de la línea dentro del chip. La clave es el nombre del borne —`DO1` o
+  # `1`, se lee el número final— y el canal se numera desde 1, como en la bornera. Entran
+  # hasta cuatro de cada lado en las palabras del PLC.
+  outputs: {}                   # p. ej. {DO1: 51, DO2: 52}
+  inputs: {}                    # p. ej. {DI1: 105, DI2: 106}
+  polling_interval_ms: 200      # cada cuánto se releen las entradas; con piso de 20 ms
+  # Estado de cada salida al abrir el chip. Lo que no se declara arranca en reposo, y eso
+  # no siempre es la posición segura: un relé de habilitación cableado en lógica negada
+  # tiene que arrancar comandado. Al cerrar la app las salidas vuelven todas a reposo.
+  initial_outputs: {}           # p. ej. {DO1: 1}
+
 lens_health:
   # Detección de lente sucio (system/camera/lens_health.py). Mide la nitidez del ROI de
   # cada cámara —la varianza del Laplaciano, que el polvo sobre el vidrio hace caer— y
