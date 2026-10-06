@@ -68,7 +68,7 @@ cd <mi-proyecto>
 git remote add template https://github.com/alejomancinelli/cv_projects_template.git
 git fetch template
 git merge template/main --allow-unrelated-histories -m "engancho la historia del template"
-git push
+git push -u origin main
 ```
 
 **El injerto va antes de escribir una línea del proyecto.** En ese momento los archivos son
@@ -77,6 +77,16 @@ commit que deja tiene dos padres, y con eso `git merge-base main template/main` 
 un ancestro de verdad: de ahí en adelante, traer maquinaria nueva es el merge normal de
 «Traer maquinaria nueva al proyecto». Hecho más tarde, el mismo comando conflictúa en todo
 lo que el fork ya reescribió.
+
+**El repo del proyecto ya tiene que existir en GitHub cuando arranca el injerto**, y el
+`git clone` de la primera línea es lo que crea `origin`. Un repo creado local —«Create a new
+repository» de GitHub Desktop no lo publica hasta apretar *Publish repository*— deja a
+`template` como único remoto, y ahí un `git push` a secas empuja al único que hay: el commit
+inicial del proyecto nuevo termina en el main del template, y sacarlo de ahí es un
+force-push. Por eso el push del injerto lleva destino explícito —sin `origin` falla con un
+error en vez de aterrizar en el lugar equivocado—. Y por la misma razón, mientras el
+proyecto no tenga `origin`, GitHub Desktop lo muestra con el nombre del template: el nombre
+sale del remoto, no de la carpeta.
 
 **Copia espejo** es la otra forma, y sirve cuando interesa tener la historia del template
 adentro del repo del proyecto: `git log` y `git blame` sobre un archivo de maquinaria

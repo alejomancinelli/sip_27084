@@ -91,15 +91,8 @@ def _flags(out_dir: str) -> list:
     flags = [
         "--standalone",
         "--enable-plugin=pyside6",
-        # Sin esto Nuitka intercepta el import de un módulo excluido y levanta su propio
-        # error, en vez de dejar que la importación normal encuentre la copia suelta si
-        # el fork la copia a mano en `make_release.py` (ver `_LOOSE_PACKAGES` ahí).
+        "--python-flag=no_docstrings",
         "--no-deployment-flag=excluded-module-usage",
-        # El subsistema del `.exe` es un bit del encabezado PE y se fija al enlazar, así
-        # que un solo binario no puede ser con ventana y con consola a la vez. `attach` es
-        # el que sirve a los dos usos: la app no arrastra una consola detrás, y una
-        # herramienta de línea de comandos que comparta el mismo ejecutable —un
-        # subcomando de calibración, por ejemplo— se engancha a la del `cmd` que la lanzó.
         "--windows-console-mode=attach",
         f"--windows-icon-from-ico={_ICON}",
         f"--company-name={_COMPANY}",
