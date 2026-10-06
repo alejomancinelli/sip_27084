@@ -107,7 +107,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
       image/                  operaciones sobre un frame; no saben de dónde salió
-        enhance.py            gamma y contraste local para el camino de visualización
+        enhance.py            gamma para mirar; factor de brillo lineal por cámara para medir
         undistort.py          corrección de lente; va en el preprocessor del motor
 
     ui/                       nivel 4 — presentación; no la importa nadie de system/ ni tools/
@@ -174,8 +174,9 @@ Son punteros: el contrato vive en el archivo, no acá.
   el frame ya anotado y el resultado, y dibuja in-place sus referencias. Se compone con
   `chain()` y entra por el constructor del motor.
 - **Preprocessor** — `system/inference/engine.py`: `(frame, camera_slot) -> frame`, y lo
-  que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
-  está en `tools/image/undistort.py`.
+  que devuelve es el frame de referencia del ciclo. Lo cumplen el corrector de lente
+  (`tools/image/undistort.py`) y el ajuste de imagen por cámara (`tools/image/enhance.py`),
+  que `main.py` encadena en ese orden.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
   entre el pipeline y el promedio de confianza. Corre **después** de devolver las
   detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
@@ -321,17 +322,40 @@ Lo que no se deduce leyendo un archivo suelto:
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
-- **Corregir la geometría y ajustar el brillo son cosas distintas y van en caminos
-  distintos.** La corrección de lente cambia *dónde está* un píxel, así que entra por el
-  `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
+- **La geometría se corrige siempre en el frame de referencia; el brillo, sólo si la
+  cámara lo declara.** La corrección de lente cambia *dónde está* un píxel, así que entra
+  por el `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
   modelo, el que queda en `source_bgr`, el espacio del ROI y el lienzo del overlay. Un solo
   espacio de coordenadas y nada que mapear de vuelta. El brillo cambia *cómo se ve* un
-  píxel y no mueve nada, así que va sólo en el camino de visualización
-  (`video.display`, `tools/image/enhance.py`): el modelo y el dataset siguen recibiendo el
-  frame crudo, porque el dataset es con lo que se reentrena. Un modelo entrenado con
-  imágenes crudas que necesite mostrarse corregido tiene dos salidas honestas —reentrenar
-  con el dataset corregido, o corregir después de anotar y aceptar que las etiquetas se
-  deformen con la imagen—; lo que no se hace es medir en un espacio y dibujar en otro.
+  píxel y no mueve nada, y por eso tiene dos lugares que no se mezclan:
+  `video.display` lo ajusta sólo para mirar —streams y UI— con un gamma, que levanta las
+  sombras sin saturar los claros, y el modelo y el dataset siguen recibiendo el frame de la
+  cámara; `cameras.<slot>.image_adjust` lo mete en el `preprocessor`, después de la
+  corrección de lente, y ahí sí cambia lo que se mide. Va por cámara porque la luz es de
+  cada montaje, y es una decisión del proceso y no un slider, por tres consecuencias: el
+  dataset pasa a guardar la imagen ajustada —y se reentrena con eso—; el brillo del ROI que
+  se compara con `illumination_min` y que sale al PLC se mide después del ajuste, así que
+  ese umbral se revisa al cambiarlo; y la vista cruda sigue mostrando lo que entrega el
+  sensor mientras la anotada muestra el frame ajustado. La nitidez de la óptica no se
+  entera —se mide sobre el frame de la cámara—, y por eso `image_adjust` no está entre las
+  condiciones de su referencia.
+  Un modelo entrenado con imágenes crudas que necesite mostrarse corregido tiene
+  dos salidas honestas —reentrenar con el dataset corregido, o corregir después de anotar
+  y aceptar que las etiquetas se deformen con la imagen—; lo que no se hace es medir en un
+  espacio y dibujar en otro.
+- **El ajuste de medición existe para reproducir, no para afinar.** Su brillo es un factor
+  lineal —cada píxel por x0.1 a x5.0, saturado en 255— y no un gamma, porque su caso es un
+  equipo o un modelo entrenado sobre imágenes multiplicadas así: otra curva le daría al
+  modelo imágenes que no vio al entrenar, y satura a propósito porque el equipo que se
+  reproduce también saturaba. **En una instalación nueva va en x1.0.** Una escena
+  oscura se arregla con la iluminación, la exposición o la ganancia, que amplifica antes de
+  cuantizar y no tira los claros; la tolerancia a la luz se entrena con aumentación de
+  brillo, y el modelo aprende sobre lo que entrega el sensor. La razón es que el dataset
+  es lo único que no se puede regenerar: desde la imagen cruda se deriva después cualquier
+  ajuste, y un píxel saturado no vuelve. Un ajuste fijo ata además el modelo a ese número:
+  cambiarlo no da un error, da un equipo que mide peor sin que nada lo diga. Vive en el
+  template y no en cada fork porque el preprocessor se arma en maquinaria, y migrar un
+  equipo existente va a volver a pasar.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
   instante en que se midió, no con el de la escritura. El hilo drena la cola de continuo,
   así que el ritmo no lo limita la cola —medido: 50 puntos/s sin descartar—: lo que se

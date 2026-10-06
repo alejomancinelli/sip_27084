@@ -376,6 +376,68 @@ class TestLensCalibration:
             "camera_2", now_s=0.0)["reference_variance"] == 900.0
 
 
+# ── Preprocessor ─────────────────────────────────────────────────────────────────
+
+class TestPreprocessor:
+    """
+    La cadena que arma el frame de referencia: corrección de lente y ajuste de imagen.
+
+    Los dos builders se reemplazan por dobles que dejan rastro: lo que se prueba es la
+    composición —qué entra, en qué orden y cuándo no hay nada—, no la corrección ni el
+    gamma, que tienen sus propios tests.
+    """
+
+    def _application(self, monkeypatch, *, with_undistort: bool, with_adjust: bool):
+        calls: list = []
+
+        def undistort(frame, camera_slot):
+            calls.append(("undistort", camera_slot))
+            return frame + 1
+
+        def adjust(frame, camera_slot):
+            calls.append(("adjust", camera_slot))
+            return frame * 2
+
+        monkeypatch.setattr(main, "build_undistorter",
+                            lambda calibration: undistort if with_undistort else None)
+        monkeypatch.setattr(main, "build_image_adjust",
+                            lambda adjust_by_camera: adjust if with_adjust else None)
+        app = main.Application.__new__(main.Application)
+        app._config = _MockConfig(cameras={"camera_1": {}})
+        return app, calls
+
+    def test_with_both_the_geometry_goes_first(self, monkeypatch):
+        """El contraste local ecualiza por celdas: tiene que correr sobre el frame corregido."""
+        app, calls = self._application(monkeypatch, with_undistort=True, with_adjust=True)
+        frame = app._build_preprocessor()(np.zeros((2, 2), np.int32), "camera_1")
+        assert calls == [("undistort", "camera_1"), ("adjust", "camera_1")]
+        assert (frame == 2).all()
+
+    def test_with_only_the_lens_it_is_the_undistorter_itself(self, monkeypatch):
+        """Con uno solo no se envuelve: el motor no paga una llamada de más por frame."""
+        app, _ = self._application(monkeypatch, with_undistort=True, with_adjust=False)
+        assert app._build_preprocessor().__name__ == "undistort"
+
+    def test_with_only_the_adjustment_it_is_the_adjustment_itself(self, monkeypatch):
+        app, _ = self._application(monkeypatch, with_undistort=False, with_adjust=True)
+        assert app._build_preprocessor().__name__ == "adjust"
+
+    def test_with_neither_there_is_no_preprocessor(self, monkeypatch):
+        """Sin nada declarado el motor mide el frame de la cámara y no gasta la pasada."""
+        app, _ = self._application(monkeypatch, with_undistort=False, with_adjust=False)
+        assert app._build_preprocessor() is None
+
+    def test_the_adjustment_is_read_from_each_camera(self):
+        """Sin dobles: la clave del config llega al builder y ajusta sólo esa cámara."""
+        app = main.Application.__new__(main.Application)
+        app._config = _MockConfig(**{
+            "cameras": {"camera_1": {}, "camera_2": {}},
+            "cameras.camera_1.image_adjust": {"brightness_factor": 2.0, "clahe_clip": 0.0},
+        })
+        preprocessor = app._build_preprocessor()
+        frame = np.full((4, 4, 3), 60, np.uint8)
+        assert preprocessor(frame, "camera_1").mean() > 60
+        assert preprocessor(frame, "camera_2") is frame
 # ── GPIO ─────────────────────────────────────────────────────────────────────────
 
 def _build_gpio_application(monkeypatch, **overrides):

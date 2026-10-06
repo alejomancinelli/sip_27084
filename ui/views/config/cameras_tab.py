@@ -8,6 +8,9 @@ reinicio, porque la topología del sistema no es una preferencia de la UI.
 Los intrínsecos del lente se muestran pero no se editan: una matriz 3x3 y hasta 14
 coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las
 coordenadas del proyecto. Se editan en el config.yaml y acá se ve si están puestos.
+
+El ajuste de imagen sí se edita, con una nota que dice qué cambia: es lo que mide la
+cámara y lo que guarda el dataset, no cómo se ve en pantalla.
 """
 
 from PySide6.QtCore import Signal
@@ -15,6 +18,7 @@ from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 from tools.camera.camera_catalog import CAMERA_CATALOG
+from tools.image.enhance import BRIGHTNESS_FACTOR_MAX, BRIGHTNESS_FACTOR_MIN, CLAHE_CLIP_MAX
 
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
@@ -39,6 +43,7 @@ _MAX_FRAME_SIDE_PX = 8192      # tope de los spin de ROI; cubre cualquier sensor
 _MAX_EXPOSURE_US = 1000000
 _MAX_GAIN = 48.0
 _MAX_FPS = 240
+_FACTOR_PREFIX = "x"          # el factor se lee como multiplicador: x0.1, x1.0, x4.6
 
 
 class CamerasTab(AbstractConfigTab):
@@ -82,7 +87,7 @@ class CamerasTab(AbstractConfigTab):
 
 
 class _CameraForm(QWidget):
-    """Formulario de una sola cámara: conexión, adquisición, ROI y calibración."""
+    """Formulario de una sola cámara: conexión, adquisición, ROI, ajuste y calibración."""
 
     open_roi_requested = Signal(str, str, str)
 
@@ -97,6 +102,7 @@ class _CameraForm(QWidget):
         layout.addWidget(self._build_connection_box())
         layout.addWidget(self._build_acquisition_box())
         layout.addWidget(self._build_roi_box())
+        layout.addWidget(self._build_image_adjust_box())
         layout.addWidget(self._build_calibration_box())
         layout.addStretch()
 
@@ -164,6 +170,21 @@ class _CameraForm(QWidget):
         wire_enable_toggle(self._roi_check, list(self._roi_spins.values()) + [roi_button])
         return box
 
+    def _build_image_adjust_box(self) -> QWidget:
+        box, form = build_group_box(tr("cam_box_image_adjust"))
+        self._brightness_spin = add_form_row(
+            form, tr("cam_brightness_factor"),
+            build_double_spin_box(BRIGHTNESS_FACTOR_MIN, BRIGHTNESS_FACTOR_MAX, 1.0,
+                                  decimals=1, step=0.1),
+        )
+        self._brightness_spin.setPrefix(_FACTOR_PREFIX)
+        self._clahe_spin = add_form_row(
+            form, tr("cam_clahe"),
+            build_double_spin_box(0.0, CLAHE_CLIP_MAX, 0.0, decimals=1, step=0.5),
+        )
+        add_hint_row(form, tr("cam_image_adjust_note"))
+        return box
+
     def _build_calibration_box(self) -> QWidget:
         box, form = build_group_box(tr("cam_box_calibration"))
         self._calibration_field = add_form_row(
@@ -194,6 +215,10 @@ class _CameraForm(QWidget):
         self._illumination_spin.setValue(
             int(self._config.get(f"{self._prefix}.illumination_min", 50))
         )
+
+        image_adjust = self._config.get(f"{self._prefix}.image_adjust", {}) or {}
+        self._brightness_spin.setValue(float(image_adjust.get("brightness_factor", 1.0) or 1.0))
+        self._clahe_spin.setValue(float(image_adjust.get("clahe_clip", 0.0) or 0.0))
 
         # La casilla se lee acá y no en `load_roi()`: son dos llamadores que quieren
         # cosas distintas. Esto es la carga completa desde el archivo; `load_roi()` es el
@@ -245,6 +270,9 @@ class _CameraForm(QWidget):
                          self._exposure_spin.value())
         self._config.set(f"{self._prefix}.acquisition.gain", self._gain_spin.value())
         self._config.set(f"{self._prefix}.illumination_min", self._illumination_spin.value())
+        self._config.set(f"{self._prefix}.image_adjust.brightness_factor",
+                         self._brightness_spin.value())
+        self._config.set(f"{self._prefix}.image_adjust.clahe_clip", self._clahe_spin.value())
 
         self._config.set(f"{self._prefix}.roi.enabled", self._roi_check.isChecked())
         for key, spin in self._roi_spins.items():
