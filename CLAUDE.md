@@ -48,15 +48,15 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       logger.py               nivel 0 — logger único; nadie crea otro
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
-      gpio_control.py         entradas y salidas digitales; degrada a simulado
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
+      gpio_control.py         entradas y salidas digitales sobre libgpiod; sin ella, simulado
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
         lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
-        gpio_status.py        las dos palabras de GPIO: estado, falla, ausencia
+        gpio_status.py        las dos palabras de GPIO: entradas leídas y salidas comandadas
         system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
@@ -76,7 +76,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         overlay.py            nivel 1 — dibujado del resultado; también lo lee la UI
         annotations.py        DEL PROYECTO — el rectángulo de cinta y el panel
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
-        rolling.py            nivel 1 — media móvil por ventana; las tendencias de 1 h
+        rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
         metrics.py            DEL PROYECTO — composición y carga por conteo de píxeles
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
       license/                ata el equipo a la máquina para la que se emitió la licencia
@@ -118,7 +118,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
       image/                  operaciones sobre un frame; no saben de dónde salió
-        enhance.py            gamma y contraste local para el camino de visualización
+        enhance.py            gamma para mirar; factor de brillo lineal por cámara para medir
         undistort.py          corrección de lente; va en el preprocessor del motor
 
     ui/                       nivel 4 — presentación; no la importa nadie de system/ ni tools/
@@ -177,8 +177,8 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
   etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. `_run()`
   recibe `(frame_bgr, camera_slot)`: el pipeline **sí** sabe de qué cámara viene el frame y
-  el modelo no, que es lo que deja poner acá lo calibrado por montaje. El pipeline concreto
-  es `system/inference/pipeline.py`.
+  el modelo no, así que lo calibrado por montaje entra ahí. El pipeline concreto es
+  `system/inference/pipeline.py`.
 - **Resultado de inferencia** — `system/inference/result.py`: los campos de
   `Detection` e `InferenceResult`, el reparto entre `detections`, `labels` y `metrics`,
   el vocabulario de `invalid_reason` y qué significa `is_valid`. Es el objeto que
@@ -187,32 +187,39 @@ Son punteros: el contrato vive en el archivo, no acá.
   el frame ya anotado y el resultado, y dibuja in-place sus referencias. Se compone con
   `chain()` y entra por el constructor del motor.
 - **Preprocessor** — `system/inference/engine.py`: `(frame, camera_slot) -> frame`, y lo
-  que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
-  está en `tools/image/undistort.py`.
+  que devuelve es el frame de referencia del ciclo. Lo cumplen el corrector de lente
+  (`tools/image/undistort.py`) y el ajuste de imagen por cámara (`tools/image/enhance.py`),
+  que `main.py` encadena en ese orden.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
   entre el pipeline y el promedio de confianza. Corre **después** de devolver las
   detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
   absolutas —una zona a ignorar, una regla por dónde cae la detección—. Lo que alcanza con
   el recorte del ROI ya lo puede hacer el pipeline, que también recibe la cámara. Este
   proyecto no lo usa.
+- **Medias móviles** — `system/inference/rolling.py`: `RollingMean` recorta la ventana por
+  tiempo y no por cantidad, `tick()` va aparte de `add()` para que una inferencia caída
+  drene la ventana en vez de congelarla, y `fill_pct()` dice cuánto de la ventana se llegó
+  a medir, que es lo que valida la media. `has_composition()` decide si una muestra sin
+  detecciones entra a un promedio de reparto entre clases. Es librería, como
+  `analysis.py`: agrega en el tiempo lo que `summarize_metrics` agrega dentro de un ciclo,
+  la usa el analyzer del fork que publique tendencias, y en el template no la llama nadie.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
 - **Bitfields** — `system/formats/*.py`: cada archivo es el dueño de su palabra y
   documenta qué significa cada bit. Nadie corre bits afuera.
-- **GPIO** — `system/gpio_control.py`: el ciclo de vida de las líneas, qué devuelve una
-  lectura que falló y qué significa `hardware_available`. Las dos palabras que van al PLC
-  son de `system/formats/gpio_status.py`; el controlador entrega estados por canal y no
-  arma bits. La mitad de interfaz es `ui/dialogs/gpio_dialog.py`.
-- **Medias móviles** — `system/inference/rolling.py`: la ventana evicciona por tiempo y
-  `tick()` va separado de `add()`, para que una inferencia caída drene la ventana en vez de
-  congelarla. Cuánto de la ventana se midió lo dice `fill_pct()`, que es lo que valida la
-  media.
 - **Salud de la óptica** — `system/camera/lens_health.py`: el vocabulario `STATE_*`, qué
   necesita calibrarse y cuándo la ventana habilita a afirmar que el vidrio está sucio. La
   puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
   las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
   cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
+- **GPIO** — `system/gpio_control.py`: dueño único de las líneas del chip, canales
+  numerados desde 1 como en el borne, lecturas que son `1`, `0` o `READ_ERROR`, y el modo
+  simulado sin `gpiod`, que expone la misma API y lo declara en `hardware_available`. Las
+  salidas se informan como eco de lo comandado, no releyendo el hardware. Las dos palabras
+  que van al PLC son de `formats/gpio_status.py` y salen siempre, haya GPIO o no: sin
+  hardware llevan prendida su marca de «sin GPIO». El botón del header aparece sólo con
+  `gpio.enabled: true`, y al cerrar el polling se detiene antes de soltar las líneas.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -403,17 +410,40 @@ siguen vienen del template.
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
-- **Corregir la geometría y ajustar el brillo son cosas distintas y van en caminos
-  distintos.** La corrección de lente cambia *dónde está* un píxel, así que entra por el
-  `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
+- **La geometría se corrige siempre en el frame de referencia; el brillo, sólo si la
+  cámara lo declara.** La corrección de lente cambia *dónde está* un píxel, así que entra
+  por el `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
   modelo, el que queda en `source_bgr`, el espacio del ROI y el lienzo del overlay. Un solo
   espacio de coordenadas y nada que mapear de vuelta. El brillo cambia *cómo se ve* un
-  píxel y no mueve nada, así que va sólo en el camino de visualización
-  (`video.display`, `tools/image/enhance.py`): el modelo y el dataset siguen recibiendo el
-  frame crudo, porque el dataset es con lo que se reentrena. Un modelo entrenado con
-  imágenes crudas que necesite mostrarse corregido tiene dos salidas honestas —reentrenar
-  con el dataset corregido, o corregir después de anotar y aceptar que las etiquetas se
-  deformen con la imagen—; lo que no se hace es medir en un espacio y dibujar en otro.
+  píxel y no mueve nada, y por eso tiene dos lugares que no se mezclan:
+  `video.display` lo ajusta sólo para mirar —streams y UI— con un gamma, que levanta las
+  sombras sin saturar los claros, y el modelo y el dataset siguen recibiendo el frame de la
+  cámara; `cameras.<slot>.image_adjust` lo mete en el `preprocessor`, después de la
+  corrección de lente, y ahí sí cambia lo que se mide. Va por cámara porque la luz es de
+  cada montaje, y es una decisión del proceso y no un slider, por tres consecuencias: el
+  dataset pasa a guardar la imagen ajustada —y se reentrena con eso—; el brillo del ROI que
+  se compara con `illumination_min` y que sale al PLC se mide después del ajuste, así que
+  ese umbral se revisa al cambiarlo; y la vista cruda sigue mostrando lo que entrega el
+  sensor mientras la anotada muestra el frame ajustado. La nitidez de la óptica no se
+  entera —se mide sobre el frame de la cámara—, y por eso `image_adjust` no está entre las
+  condiciones de su referencia.
+  Un modelo entrenado con imágenes crudas que necesite mostrarse corregido tiene
+  dos salidas honestas —reentrenar con el dataset corregido, o corregir después de anotar
+  y aceptar que las etiquetas se deformen con la imagen—; lo que no se hace es medir en un
+  espacio y dibujar en otro.
+- **El ajuste de medición existe para reproducir, no para afinar.** Su brillo es un factor
+  lineal —cada píxel por x0.1 a x5.0, saturado en 255— y no un gamma, porque su caso es un
+  equipo o un modelo entrenado sobre imágenes multiplicadas así: otra curva le daría al
+  modelo imágenes que no vio al entrenar, y satura a propósito porque el equipo que se
+  reproduce también saturaba. **En una instalación nueva va en x1.0.** Una escena
+  oscura se arregla con la iluminación, la exposición o la ganancia, que amplifica antes de
+  cuantizar y no tira los claros; la tolerancia a la luz se entrena con aumentación de
+  brillo, y el modelo aprende sobre lo que entrega el sensor. La razón es que el dataset
+  es lo único que no se puede regenerar: desde la imagen cruda se deriva después cualquier
+  ajuste, y un píxel saturado no vuelve. Un ajuste fijo ata además el modelo a ese número:
+  cambiarlo no da un error, da un equipo que mide peor sin que nada lo diga. Vive en el
+  template y no en cada fork porque el preprocessor se arma en maquinaria, y migrar un
+  equipo existente va a volver a pasar.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
   instante en que se midió, no con el de la escritura. El hilo drena la cola de continuo,
   así que el ritmo no lo limita la cola —medido: 50 puntos/s sin descartar—: lo que se
@@ -615,16 +645,16 @@ describe qué se mide en esta cinta, es de este proyecto.**
   incluida), `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
   `system/inference/metrics.py`, `system/inference/annotations.py`,
   `system/inference/models/yolo_seg_model.py`, este archivo y el `README.md`.
-- **Agregados que el template no tenía**: `system/gpio_control.py` y
-  `system/formats/gpio_status.py` —el subsistema de GPIO, que el template declaraba
-  pendiente—, y `system/inference/rolling.py`, que es la media móvil por ventana de tiempo.
-  Los tres son genéricos y **valen para devolver al template**.
+- **Lo que este proyecto agregó de genérico ya volvió al template**: el subsistema de GPIO
+  (`system/gpio_control.py`, `system/formats/gpio_status.py` y su cableado en `main.py`),
+  `system/inference/rolling.py` y los arreglos de maquinaria de la sección B de
+  `docs/template_divergences.md`. Ahora son maquinaria y se cross-portean como el resto.
 - **De `main.py` se completó el bloque marcado**: el analyzer, los annotators, el contexto
   del dataset y el widget del monitor —que es la grilla de cámaras, sin widget propio—.
 - **`main.py` diverge además fuera de ese bloque**, y es lo que hay que mirar al
   cross-portear: el bloque de measurements de telemetría, `_build_inference_fields()`,
   `_build_optics_fields()` y `_build_system_fields()` usan los nombres viejos del dashboard;
-  y el cableado del GPIO y de las medias móviles no existe en el template.
+  y el cableado de las medias móviles de la hora no existe en el template.
 - **Todo lo demás es maquinaria** y se cross-portea sin editar. Si hay que tocarla para que
   algo de la cinta funcione, el límite está mal puesto: lo que falta es un punto de
   extensión, no un parche.

@@ -798,17 +798,17 @@ class TestStreamNames:
 
     def test_the_route_uses_the_public_name(self, monkeypatch):
         server = self._server(monkeypatch,
-                              **{"video.http.stream_names": {"camera_1": "cinta"}})
+                              **{"video.http.stream_names": {"camera_1": "entrada"}})
         try:
-            assert server._server.slot_by_name == {"cinta": "camera_1"}
+            assert server._server.slot_by_name == {"entrada": "camera_1"}
         finally:
             server.stop()
 
     def test_the_urls_use_the_public_name(self, monkeypatch):
         server = self._server(monkeypatch,
-                              **{"video.http.stream_names": {"camera_1": "cinta"}})
+                              **{"video.http.stream_names": {"camera_1": "entrada"}})
         try:
-            assert all("/cinta/" in url for url in server.get_stream_urls())
+            assert all("/entrada/" in url for url in server.get_stream_urls())
         finally:
             server.stop()
 

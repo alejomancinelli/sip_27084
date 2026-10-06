@@ -32,7 +32,7 @@ hacer `main.py`, con los mismos métodos públicos. Ver `docs/ui.md`.
     el logger real                 puenteado al log de la barra lateral
 
 Lo único sintético son los frames, que salen del `mock` driver, y el controlador de
-GPIO, porque ese módulo todavía no existe en el repo. El servidor RTSP es el único que no
+GPIO, porque el de verdad sin `gpiod` deja las entradas quietas. El servidor RTSP es el único que no
 se levanta —necesita GStreamer—: su chip dice `disabled` si el config lo apaga.
 
 Qué mirar:
@@ -100,9 +100,9 @@ Qué mirar:
   - **Herramienta de ROI**: pestaña Cámaras → Cinta entrada → «Herramienta interactiva de
     ROI». Se dibuja con el mouse sobre el frame en vivo; al guardar, el recuadro azul
     aparece en el panel de la grilla, que lee el ROI del config.
-  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble
-    —el módulo de GPIO todavía no existe en el repo—. Las salidas conmutan y las
-    entradas se mueven solas cada dos segundos.
+  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble:
+    el de verdad, sin `gpiod`, queda en simulado y con las entradas quietas. Las salidas
+    conmutan y las entradas se mueven solas cada dos segundos.
   - **Sin licencia instalada, el equipo abre igual.** Correr con `--simulate-no-license`
     para verlo: al abrir la ventana aparece un cartel, y el footer muestra un chip rojo
     «SIN LICENCIA» todo el tiempo que dure el estado. Sin el flag, corriendo desde
@@ -241,8 +241,8 @@ class _FakeGpioController:
     """
     Controlador de GPIO de mentira, con la interfaz que espera `ui/dialogs/gpio_dialog.py`.
 
-    Está acá y no en el repo porque el módulo de GPIO todavía no existe: cuando exista,
-    esta clase se borra y se cablea el de verdad.
+    Es un doble y no `system/gpio_control.py` porque el de verdad, sin `gpiod`, queda en
+    simulado con las entradas quietas, y esta prueba las quiere ver moverse.
     """
 
     hardware_available = False

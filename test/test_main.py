@@ -12,6 +12,8 @@ import main
 from system.camera.lens_health import (
     CONDITION_KEYS, LensHealthMonitor, Measurement, Region,
 )
+from system import gpio_control
+from system.formats import gpio_status
 from system.inference.result import InferenceResult
 from system.modbus import registers
 from system.modbus.server import STATUS_DISABLED, STATUS_ERROR
@@ -497,3 +499,160 @@ class TestLegacyFieldTypes:
                 "sharpness_pct": None, "luma": None}
         assert set(main._build_optics_fields(lens)) == {
             "estado", "nitidez_max_pct", "muestras", "referencia"}
+
+
+# ── Preprocessor ─────────────────────────────────────────────────────────────────
+
+class TestPreprocessor:
+    """
+    La cadena que arma el frame de referencia: corrección de lente y ajuste de imagen.
+
+    Los dos builders se reemplazan por dobles que dejan rastro: lo que se prueba es la
+    composición —qué entra, en qué orden y cuándo no hay nada—, no la corrección ni el
+    gamma, que tienen sus propios tests.
+    """
+
+    def _application(self, monkeypatch, *, with_undistort: bool, with_adjust: bool):
+        calls: list = []
+
+        def undistort(frame, camera_slot):
+            calls.append(("undistort", camera_slot))
+            return frame + 1
+
+        def adjust(frame, camera_slot):
+            calls.append(("adjust", camera_slot))
+            return frame * 2
+
+        monkeypatch.setattr(main, "build_undistorter",
+                            lambda calibration: undistort if with_undistort else None)
+        monkeypatch.setattr(main, "build_image_adjust",
+                            lambda adjust_by_camera: adjust if with_adjust else None)
+        app = main.Application.__new__(main.Application)
+        app._config = _MockConfig(cameras={"camera_1": {}})
+        return app, calls
+
+    def test_with_both_the_geometry_goes_first(self, monkeypatch):
+        """El contraste local ecualiza por celdas: tiene que correr sobre el frame corregido."""
+        app, calls = self._application(monkeypatch, with_undistort=True, with_adjust=True)
+        frame = app._build_preprocessor()(np.zeros((2, 2), np.int32), "camera_1")
+        assert calls == [("undistort", "camera_1"), ("adjust", "camera_1")]
+        assert (frame == 2).all()
+
+    def test_with_only_the_lens_it_is_the_undistorter_itself(self, monkeypatch):
+        """Con uno solo no se envuelve: el motor no paga una llamada de más por frame."""
+        app, _ = self._application(monkeypatch, with_undistort=True, with_adjust=False)
+        assert app._build_preprocessor().__name__ == "undistort"
+
+    def test_with_only_the_adjustment_it_is_the_adjustment_itself(self, monkeypatch):
+        app, _ = self._application(monkeypatch, with_undistort=False, with_adjust=True)
+        assert app._build_preprocessor().__name__ == "adjust"
+
+    def test_with_neither_there_is_no_preprocessor(self, monkeypatch):
+        """Sin nada declarado el motor mide el frame de la cámara y no gasta la pasada."""
+        app, _ = self._application(monkeypatch, with_undistort=False, with_adjust=False)
+        assert app._build_preprocessor() is None
+
+    def test_the_adjustment_is_read_from_each_camera(self):
+        """Sin dobles: la clave del config llega al builder y ajusta sólo esa cámara."""
+        app = main.Application.__new__(main.Application)
+        app._config = _MockConfig(**{
+            "cameras": {"camera_1": {}, "camera_2": {}},
+            "cameras.camera_1.image_adjust": {"brightness_factor": 2.0, "clahe_clip": 0.0},
+        })
+        preprocessor = app._build_preprocessor()
+        frame = np.full((4, 4, 3), 60, np.uint8)
+        assert preprocessor(frame, "camera_1").mean() > 60
+        assert preprocessor(frame, "camera_2") is frame
+
+
+# ── GPIO ─────────────────────────────────────────────────────────────────────────
+
+def _build_gpio_application(monkeypatch, **overrides):
+    """
+    `Application` sin `__init__`, con un `GpioController` de verdad en modo simulado.
+
+    Sin `gpiod` el controlador degrada adentro, que es el camino de cualquier equipo de
+    desarrollo y el que tiene que seguir publicando: lo que se prueba es que el cableado
+    no pregunte y deje la marca de «sin GPIO» en las dos palabras.
+    """
+    monkeypatch.setattr(gpio_control, "_GPIOD_AVAILABLE", False)
+    config = _MockConfig(**{
+        "gpio.enabled": True,
+        "gpio.outputs": {"DO1": 51, "DO2": 52},
+        "gpio.inputs": {"DI1": 105, "DI2": 106},
+        **overrides,
+    })
+    app = main.Application.__new__(main.Application)
+    app._gpio = gpio_control.GpioController(config)
+    app._gpio_inputs = {}
+    return app
+
+
+class TestGpioRegisters:
+    def test_both_words_say_there_is_no_gpio_without_the_library(self, monkeypatch):
+        """Una entrada en cero y un equipo sin de dónde leerla no pueden verse igual."""
+        registers = _build_gpio_application(monkeypatch)._build_gpio_registers()
+        unavailable = 1 << gpio_status.BIT_UNAVAILABLE
+        assert registers["gpio_inputs_bitfield"] & unavailable
+        assert registers["gpio_outputs_bitfield"] & unavailable
+
+    def test_the_inputs_word_carries_the_last_polled_reading(self, monkeypatch):
+        app = _build_gpio_application(monkeypatch)
+        app._on_gpio_inputs_updated({1: 0, 2: 1})
+        word = app._build_gpio_registers()["gpio_inputs_bitfield"]
+        assert word == gpio_status.pack_inputs({2: 1}, hardware_available=False)
+
+    def test_the_outputs_word_echoes_what_was_commanded(self, monkeypatch):
+        app = _build_gpio_application(monkeypatch)
+        app._gpio.set_output(2, 1)
+        word = app._build_gpio_registers()["gpio_outputs_bitfield"]
+        assert word == gpio_status.pack_outputs({2: 1}, hardware_available=False)
+
+    def test_both_words_have_a_row_in_the_map(self, monkeypatch):
+        """Sin fila, `_mapped_only` las descarta en silencio y el PLC nunca las ve."""
+        names = set(_build_gpio_application(monkeypatch)._build_gpio_registers())
+        assert names <= main._REGISTER_NAMES
+
+    def test_an_analyzer_metric_cannot_overwrite_them(self, monkeypatch):
+        names = set(_build_gpio_application(monkeypatch)._build_gpio_registers())
+        assert names <= main._HEALTH_REGISTER_NAMES
+
+
+class _StopRecorder:
+    """Cualquier subsistema que `stop()` toque: anota cada llamada en un log compartido."""
+
+    def __init__(self, name: str, calls: list):
+        self._name = name
+        self._calls = calls
+
+    def __getattr__(self, method: str):
+        def record(*args, **kwargs):
+            self._calls.append((self._name, method))
+            return True
+        return record
+
+
+class TestGpioShutdown:
+    def test_the_polling_stops_before_the_lines_are_released(self):
+        """Cerrar las líneas con el hilo leyéndolas lo deja leyendo una línea liberada."""
+        calls: list = []
+        app = main.Application.__new__(main.Application)
+        for name in ("_ui", "_scheduler", "_metrics_poller", "_telemetry", "_gpio_thread",
+                     "_gpio", "_collector", "_http_video", "_rtsp_video", "_modbus",
+                     "_modbus_thread"):
+            setattr(app, name, _StopRecorder(name, calls))
+        app._timers = []
+        app._capture_threads = {}
+        app._engines = []
+
+        app.stop()
+
+        assert calls.index(("_gpio_thread", "wait")) < calls.index(("_gpio", "close"))
+
+
+class TestHeadlessUi:
+    def test_it_answers_everything_the_window_answers(self):
+        """El cableado no pregunta si hay ventana: un método que falte es un crash en headless."""
+        window_methods = {name for name in vars(main._QtUi)
+                          if callable(getattr(main._QtUi, name)) and not name.startswith("_")}
+        assert window_methods <= set(dir(main._HeadlessUi))

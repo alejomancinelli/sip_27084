@@ -52,7 +52,8 @@ Lo que **no** hace, y por qué:
 
 Los seis puntos de extensión del motor, y de dónde sale cada uno:
 
-    preprocessor    `tools/image/undistort.py`, si alguna cámara declara calibración
+    preprocessor    `tools/image/undistort.py` y `enhance.py`, si alguna cámara declara
+                    calibración o ajuste de imagen
     pipeline        `system/inference/pipeline.py`, que el fork reescribe
     classifier      qué detecciones cuentan y con qué clase, compuesto abajo con `process:`
     analyzer        `system/inference/metrics.py`, que el fork reescribe
@@ -64,7 +65,7 @@ el operador, qué detecciones cuentan, qué se dibuja además del resultado, y c
 parámetros se cuenta. El resto es cableado genérico y se cross-portea sin editar.
 
 Cómo llegan los números al PLC: se publican los registros de salud —heartbeat, hardware,
-estado por cámara, palabras de estado— y, de las métricas del analyzer, **las que tengan
+estado por cámara, palabras de estado y de GPIO— y, de las métricas del analyzer, **las que tengan
 una fila con su mismo nombre en `register_map.yaml`**. Una métrica sin fila no se publica y
 se avisa una vez: el nombre de la métrica es el contrato con el integrador.
 """
@@ -109,12 +110,10 @@ from system.modbus.server import SharedModbusServer
 from system.system_monitor import SystemMonitor
 from system.telemetry.persistence import PersistenceThread
 from system.version import APP_VERSION
-from system.video.abstract_video_server import (
-    MODE_ANNOTATED, MODES, STATUS_ACTIVE,
-)
+from system.video.abstract_video_server import MODE_ANNOTATED
 from system.video.http_server import HttpVideoServer
 from system.video.rtsp_server import RtspVideoServer
-from tools.image.enhance import build_display_adjust
+from tools.image.enhance import build_display_adjust, build_image_adjust
 from tools.image.undistort import build_undistorter
 
 from ui import service_status
@@ -239,6 +238,7 @@ _HEALTH_REGISTER_NAMES = frozenset({
     "heartbeat", "system_status_bitfield", "com_status_bitfield",
     "cpu_usage_pct", "gpu_usage_pct", "ram_used_mb", "ram_total_mb",
     "disk_free_gb", "cpu_temp_c", "gpu_temp_c", "power_w",
+    "gpio_inputs_bitfield", "gpio_outputs_bitfield",
 })
 
 # Todos los nombres del mapa cargado. `SCHEMA.encode_batch()` levanta KeyError con un
@@ -360,8 +360,8 @@ class _HeadlessUi:
     def refresh_lens_reference(self, camera_slot: str):
         pass
 
-    def set_gpio(self, gpio_controller: object, gpio_thread: object = None):
-        pass
+    def set_gpio(self, gpio_controller: object, gpio_thread: object):
+        """Sin pantalla no hay botón: las palabras de GPIO salen igual al PLC."""
 
 
 class _QtUi:
@@ -441,8 +441,7 @@ class _QtUi:
     def refresh_lens_reference(self, camera_slot: str):
         self._window.refresh_lens_reference(camera_slot)
 
-    def set_gpio(self, gpio_controller: object, gpio_thread: object = None):
-        """Habilita el botón de GPIO del header y le pasa con qué alimentarlo."""
+    def set_gpio(self, gpio_controller: object, gpio_thread: object):
         self._window.set_gpio(gpio_controller, gpio_thread)
 
 
@@ -664,12 +663,16 @@ class Application(QObject):
         self._rolling = {name: rolling.RollingMean(window_s)
                          for name in _ROLLING_METRIC_NAMES}
 
+
         # ── GPIO ─────────────────────────────────────────────────────────────
+        # Sin `gpiod`, sin permisos o sin chip el controlador degrada a simulado adentro y
+        # el cableado no pregunta: las dos palabras salen igual, con la marca de «sin GPIO».
         self._gpio = GpioController(config)
         self._gpio_thread = GpioPollingThread(self._gpio, config)
-        self._gpio_thread.inputs_updated.connect(self._on_gpio_inputs)
+        self._gpio_thread.inputs_updated.connect(self._on_gpio_inputs_updated)
+        # Última lectura de las entradas, para el tick de registros. Se toca sólo desde el
+        # hilo de la GUI: el slot llega en cola.
         self._gpio_inputs: dict[int, int] = {}
-        self._ui.set_gpio(self._gpio, self._gpio_thread)
 
         # ── Hardware y timers ────────────────────────────────────────────────
         self._monitor = SystemMonitor(config)
@@ -700,6 +703,11 @@ class Application(QObject):
                                           self._on_license_install_requested)
         self._ui.connect_lens_calibration(self._on_lens_calibration_requested)
         self._ui.update_license(self._license.get_status())
+        # Con `gpio.enabled: false` no hay nada del otro lado que comandar, así que no hay
+        # botón. Habilitado y sin hardware sí lo hay: el diálogo es el que avisa que las
+        # salidas no llegan a ningún borne.
+        if self._gpio.get_status()["status"] != "disabled":
+            self._ui.set_gpio(self._gpio, self._gpio_thread)
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
@@ -800,12 +808,12 @@ class Application(QObject):
         self._telemetry.start()
         self._collector.start()
         self._metrics_poller.start()
+        self._gpio_thread.start()
         for engine in self._engines:
             engine.start()
         for thread in self._capture_threads.values():
             thread.start()
         self._scheduler.start()
-        self._gpio_thread.start()
 
         self._ui.show()
         logger.info(
@@ -834,11 +842,11 @@ class Application(QObject):
         for thread in qt_threads:
             if not thread.wait(_THREAD_STOP_TIMEOUT_MS):
                 logger.warning(f"[Main] Un hilo no cerró en {_THREAD_STOP_TIMEOUT_MS} ms.")
+        # Después del polling y no antes: cerrar las líneas con el hilo leyéndolas lo deja
+        # leyendo una línea liberada. `close()` también deja las salidas en reposo.
+        self._gpio.close()
 
         self._collector.stop()
-        # Después del hilo de polling: cerrar las líneas mientras alguien las lee deja al
-        # polling leyendo una línea liberada.
-        self._gpio.close()
         self._http_video.stop()
         self._rtsp_video.stop()
         self._modbus.stop()
@@ -1017,7 +1025,7 @@ class Application(QObject):
         self._last_inference_s = now_s
         composition_pct = {name: averaged[name] for name in _ROLLING_METRIC_NAMES
                            if name.endswith(_NORMALIZED_SUFFIX) and name in averaged}
-        has_material = rolling.has_material(composition_pct)
+        has_material = rolling.has_composition(composition_pct)
         for name, window in self._rolling.items():
             value = averaged.get(name)
             if value is None:
@@ -1093,15 +1101,15 @@ class Application(QObject):
     # ── Timers ───────────────────────────────────────────────────────────────
 
     @Slot(object)
-    def _on_gpio_inputs(self, states_by_channel: dict):
-        """Última lectura de las entradas. La palabra la arma el tick de registros."""
-        self._gpio_inputs = states_by_channel
-
-    @Slot(object)
     def _on_metrics_ready(self, metrics: dict):
         """Slot de `_MetricsPoller`: llega ya medido, desde el hilo del poller."""
         self._last_metrics = metrics
         self._ui.update_hardware_metrics(metrics)
+
+    @Slot(object)
+    def _on_gpio_inputs_updated(self, states: dict):
+        """Slot de `GpioPollingThread`: la última lectura de las entradas."""
+        self._gpio_inputs = dict(states)
 
     def _on_registers_tick(self):
         """
@@ -1156,13 +1164,7 @@ class Application(QObject):
             })
         values.update(self._build_camera_registers())
         values.update(self._build_rolling_registers())
-        values.update({
-            "gpio_inputs_bitfield": gpio_status.pack_inputs(
-                self._gpio_inputs, hardware_available=self._gpio.hardware_available),
-            "gpio_outputs_bitfield": gpio_status.pack_outputs(
-                self._gpio.get_all_outputs(),
-                hardware_available=self._gpio.hardware_available),
-        })
+        values.update(self._build_gpio_registers())
         # Con la política `degrade` las mediciones no se publican, pero el canal sigue
         # sirviendo: el latido, la salud del equipo y las palabras de estado salen igual.
         # Bajar el Modbus dejaría al PLC viendo un enlace muerto, indistinguible de un
@@ -1598,6 +1600,23 @@ class Application(QObject):
             "clock_epoch_s_low": epoch_s & 0xFFFF,
         }
 
+    def _build_gpio_registers(self) -> dict:
+        """
+        Las dos palabras de GPIO: entradas leídas y salidas comandadas.
+
+        Las entradas salen de la última lectura del hilo de polling y no de leer el bus
+        acá, que bloquearía el hilo de la GUI; las salidas, del eco de lo comandado. Que no
+        haya hardware detrás lo lleva la palabra en su marca de «sin GPIO»: el PLC tiene que
+        poder distinguir una entrada en cero de un equipo que no tiene de dónde leerla.
+        """
+        hardware_available = self._gpio.hardware_available
+        return {
+            "gpio_inputs_bitfield": gpio_status.pack_inputs(
+                self._gpio_inputs, hardware_available=hardware_available),
+            "gpio_outputs_bitfield": gpio_status.pack_outputs(
+                self._gpio.get_all_outputs(), hardware_available=hardware_available),
+        }
+
     def _license_days_remaining(self) -> int:
         """
         Días de licencia que se publican al PLC.
@@ -1689,20 +1708,32 @@ class Application(QObject):
 
     def _build_preprocessor(self):
         """
-        Corrector de lente, si alguna cámara declara calibración.
+        Corrector de lente y ajuste de imagen, si alguna cámara declara alguno de los dos.
 
         Lo que devuelve pasa a ser el frame de referencia del ciclo: el que ve el modelo,
-        el que queda en `source_bgr`, el espacio del ROI y el lienzo del overlay. Sin
-        calibración declarada devuelve None y el motor no gasta la pasada.
+        el que queda en `source_bgr` —y con él en el dataset—, el espacio del ROI y el
+        lienzo del overlay. Sin nada declarado devuelve None y el motor no gasta la pasada.
+
+        **Primero la geometría y después el brillo.** El gamma es por píxel y el orden no
+        le cambia nada, pero el contraste local ecualiza por celdas: corrido antes de
+        corregir el lente, las celdas quedarían deformadas sobre el frame que mide el
+        modelo.
         """
-        calibration_by_camera = {
+        camera_slots = tuple(self._config.get("cameras", {}) or {})
+        undistorter = build_undistorter({
             camera_slot: self._config.get(f"cameras.{camera_slot}.calibration", {}) or {}
-            for camera_slot in (self._config.get("cameras", {}) or {})
-        }
-        undistorter = build_undistorter(calibration_by_camera)
+            for camera_slot in camera_slots
+        })
         if undistorter is not None:
             logger.info("[Main] Corrección de lente activa: el frame de referencia va corregido.")
-        return undistorter
+        image_adjust = build_image_adjust({
+            camera_slot: self._config.get(f"cameras.{camera_slot}.image_adjust", {}) or {}
+            for camera_slot in camera_slots
+        })
+        if image_adjust is not None:
+            logger.info(f"[Main] Ajuste de imagen activo — {image_adjust.__name__}: el modelo "
+                        f"y el dataset reciben el frame ajustado.")
+        return _chain_preprocessors(undistorter, image_adjust)
 
     def _get_service_statuses(self) -> dict:
         """Estado de los seis canales de salida, cada uno preguntado a su dueño."""
@@ -1794,6 +1825,28 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true",
                         help="no abrir la ventana; también se puede con ui.enabled: false")
     return parser.parse_args(argv)
+
+
+def _chain_preprocessors(*preprocessors):
+    """
+    Junta varios preprocessors en uno, en orden. El motor recibe una sola función.
+
+    Los que vienen en None se descartan: sin ninguno devuelve None, y con uno solo lo
+    devuelve tal cual, así el motor no paga una llamada de más por frame.
+    """
+    selected = [preprocessor for preprocessor in preprocessors if preprocessor is not None]
+    if not selected:
+        return None
+    if len(selected) == 1:
+        return selected[0]
+
+    def preprocess(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
+        for preprocessor in selected:
+            frame_bgr = preprocessor(frame_bgr, camera_slot)
+        return frame_bgr
+
+    preprocess.__name__ = " + ".join(getattr(p, "__name__", repr(p)) for p in selected)
+    return preprocess
 
 
 def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:

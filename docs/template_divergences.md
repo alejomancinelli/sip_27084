@@ -70,8 +70,8 @@ ruta**: en los registros, en la telemetría y en el resto del sistema la cámara
 **Cómo revertir:** borrar la clave. Las URLs pasan a ser `/camera_1/...`, que es lo natural.
 Hacerlo cuando no quede nadie apuntando a `/cinta/`.
 
-El mecanismo que la lee (`_read_stream_names()`) **no** es deuda: es genérico y está en la
-sección B.
+El mecanismo que la lee (`_read_stream_names()`) **no** es deuda: es genérico y ya volvió
+al template (sección B).
 
 ### A3. Mapa de registros Modbus
 
@@ -96,19 +96,20 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
-| `tools/camera/st_driver.py` | `connect()` deja vivo el hilo de captura cuando se le acaba la espera, y la espera corta si alguien desconecta | Una GigE que tarda más que el timeout **no conectaba nunca**: cada reintento re-enumeraba desde cero con el mismo presupuesto. Es un bug, no una preferencia |
-| `system/inference/overlay.py` | El relleno de las máscaras se pinta por unión de la clase y no una vez por instancia | Con instancias superpuestas el color se saturaba de más y dejaba de coincidir con lo que mide `metrics`, que cuenta cada píxel una vez |
-| `system/inference/overlay.py` + `engine.py` | `annotate()` acepta `canvas_adjust`, y el motor lo recibe por constructor | El anotado es lo único que mira una persona y que se dibuja en el motor: sin esto sale sin el ajuste de visualización que sí tiene el stream crudo |
-| `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` | `_read_stream_names()`, `CONFIG_KEY`, y `get_stream_urls()` en el servidor HTTP | Renombrar la ruta es una necesidad de cualquier instalación con URLs ya publicadas. Y las URLs del HTTP las armaba `main.py`, con el formato en dos lugares —su propio docstring lo admitía— |
-| `ui/dialogs/roi_dialog.py` | `config_prefix` y `title_key` como parámetros | Un proyecto puede tener más de un rectángulo por cámara; el diálogo es el mismo |
-| `system/gpio_control.py`, `system/formats/gpio_status.py` | Módulos nuevos | El template declaraba el subsistema como pendiente y `ui/dialogs/gpio_dialog.py` ya documentaba la interfaz que esperaba |
-| `system/inference/rolling.py` | Módulo nuevo | Media móvil por ventana de tiempo, con su cobertura. No hay nada de esta planta adentro |
-| `system/inference/abstract_pipeline.py` + `engine.py` | `_run()` recibe `(frame_bgr, camera_slot)` | El pipeline era ciego a la cámara y el `classifier` existía sólo para tapar eso. Con el slot, lo calibrado por montaje entra donde está la lógica del proceso |
-| `system/modbus/schema.py` + `export_map.py` + las dos pestañas de Modbus | `to_plc_address()` y las pantallas mostrando `40001` además del registro base-1 | Quien mira esas pantallas tiene el PLC al lado, donde el registro 1 es el 40001. La conversión tenía un solo uso y ahora tiene tres: vive en el módulo dueño del protocolo, no en cada vista |
-| `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS` | Va en el bloque del fork, que es su punto de extensión. Deja de hacer falta si el template incorpora el subsistema de GPIO |
+| `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS`, sólo si `gpiod` está instalado | `gpio_control.py` importa `gpiod` dentro de un try/except y `gpiod.line` dentro de un método, que es lo que el análisis estático de Nuitka puede no seguir: el binario arranca igual, en simulado, y el equipo se queda sin entradas ni salidas sin que nada falle. El template ya trae el subsistema de GPIO pero no el flag, así que cualquier fork con GPIO lo necesita. Va en el bloque del fork, que es su punto de extensión |
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
+
+### Lo que ya volvió
+
+Entró al template y ahora es maquinaria: el arreglo de conexión lenta de `st_driver.py`, el
+relleno de máscaras por unión y el `canvas_adjust` de `overlay.py` / `engine.py`, los
+nombres de stream de los servidores de video, los parámetros del diálogo de ROI, el
+subsistema de GPIO —módulos y cableado en `main.py`—, `rolling.py` (con `has_material()`
+renombrada `has_composition()`), el `camera_slot` en `_run()` del pipeline y
+`to_plc_address()` en las pantallas de Modbus. Se trajeron con el merge del template del
+2026-10-06 y desde ahí son idénticos a los del template.
 
 ---
 
@@ -151,7 +152,7 @@ etapa posterior a la segmentación, corre antes del analyzer y del overlay, y ah
 qué cámara viene el frame. El umbral volvió a `process.dark_background_threshold`, por
 cámara y por clase.
 
-Es un cambio de maquinaria y **va a la sección B**: `engine.py` le pasa el slot,
+Es un cambio de maquinaria y **ya volvió al template** (sección B): `engine.py` le pasa el slot,
 `abstract_pipeline.py` lo declara, y al modelo se le sigue sin pasar a propósito. Lo que
 queda para el `classifier` es lo que necesite coordenadas del frame completo, porque corre
 después de `offset_detections`.
@@ -164,8 +165,6 @@ después de `offset_detections`.
 marcado. Acá se tocó además:
 
 - El bloque de telemetría entero (A1).
-- El cableado del subsistema de GPIO: construcción, arranque, parada y las dos palabras a
-  los registros. Deja de ser divergencia el día que el template traiga el subsistema (B).
 - Las medias móviles: `_update_rolling()`, `_build_rolling_registers()`, `_publish_rolling()`
   y `_inference_age_s()`. Viven acá y no en el analyzer porque hay que envejecer la ventana
   en cada tick, haya medición o no, y el analyzer sólo corre cuando hay resultado.

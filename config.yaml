@@ -75,10 +75,11 @@ video:
   display:
     # Ajuste de imagen para que la vea una persona (tools/image/enhance.py). Va sólo en el
     # camino de visualización —los dos streams y la UI—: el modelo y el dataset siguen
-    # recibiendo el frame crudo, porque el dataset es con lo que se reentrena.
+    # recibiendo el frame de la cámara. Si lo que se busca es que el modelo vea la imagen
+    # ajustada, eso es `cameras.<slot>.image_adjust`, que es otra decisión.
     #
-    # Acá estaba el brillo del proyecto anterior, que además entraba a la inferencia. Eso
-    # ahora se resuelve en la cámara —exposición y ganancia—, que es donde corresponde: ver
+    # Acá estaba el brillo del proyecto anterior, que además entraba a la inferencia. Este
+    # equipo lo resuelve en la cámara —exposición y ganancia—, que es donde corresponde: ver
     # la nota de `acquisition` de camera_1.
     gamma: 1.0                  # <1 levanta las sombras, >1 las hunde; 1.0 = sin cambio
     clahe_clip: 0.0             # contraste local 0–8; 0 = apagado, cuesta bastante más que gamma
@@ -247,14 +248,23 @@ modbus:
     stop_bits: 1
 
 gpio:
-  # Entradas y salidas digitales de la Jetson (system/gpio_control.py), por libgpiod.
-  # Los números son líneas del chip, no pines del conector. Sin libgpiod el módulo
-  # degrada a no-op y lo dice en su status; nadie pregunta si está disponible.
+  # Entradas y salidas digitales del equipo (system/gpio_control.py), sobre libgpiod v2:
+  # es de Linux, y en un equipo sin `gpiod`, sin permisos sobre el chip o sin chip el
+  # módulo degrada a modo simulado y la app arranca igual. Lo avisan el log, el diálogo de
+  # GPIO del header y la marca de «sin GPIO» de las dos palabras que lee el PLC, que salen
+  # siempre. Con `enabled: false` tampoco hay botón en el header.
   enabled: true
-  chip: /dev/gpiochip0
-  polling_interval_ms: 200      # cada cuánto se releen las entradas
+  chip: /dev/gpiochip0          # gpiochip0 o /dev/gpiochip0; `gpioinfo` lista los del equipo
+  # Canal -> offset de la línea dentro del chip. La clave es el nombre del borne —`DO1` o
+  # `1`, se lee el número final— y el canal se numera desde 1, como en la bornera. Entran
+  # hasta cuatro de cada lado en las palabras del PLC. Son líneas del chip de la Jetson, no
+  # pines del conector.
   outputs: {DO1: 51, DO2: 52, DO3: 53, DO4: 50}
   inputs: {DI1: 105, DI2: 144, DI3: 106, DI4: 43}
+  polling_interval_ms: 200      # cada cuánto se releen las entradas; con piso de 20 ms
+  # Estado de cada salida al abrir el chip. Lo que no se declara arranca en reposo, y eso
+  # no siempre es la posición segura: un relé de habilitación cableado en lógica negada
+  # tiene que arrancar comandado. Al cerrar la app las salidas vuelven todas a reposo.
   initial_outputs: {DO1: 1, DO2: 1, DO3: 1, DO4: 1}
 
 lens_health:
@@ -318,3 +328,21 @@ cameras:
       # a ser el frame de referencia. Sin calibrar: sin corrección.
       camera_matrix: []         # 3x3; [] = sin corrección
       dist_coeffs: []           # 4, 5, 8, 12 o 14 coeficientes
+    image_adjust:
+      # Brillo y contraste local de lo que MIDE esta cámara (tools/image/enhance.py). Existe
+      # para REPRODUCIR un equipo o un modelo entrenado sobre imágenes ajustadas así; en una
+      # instalación nueva va en 1.0: la escena oscura se arregla con la ganancia y el modelo
+      # se entrena con la imagen del sensor, de la que se puede derivar cualquier ajuste y
+      # a la que un píxel saturado no vuelve.
+      #
+      # Entra por el mismo preprocessor que la corrección de lente, después de ella, así que
+      # no es un ajuste de pantalla —eso es `video.display`—: cambia el frame de referencia.
+      #   - el dataset guarda la imagen ajustada, así que se reentrena con eso;
+      #   - `illumination_min` y el brillo del ROI que sale al PLC se miden después del
+      #     ajuste: cambiar el factor obliga a revisar ese umbral;
+      #   - la vista cruda sigue mostrando lo que entrega el sensor, y la anotada el frame
+      #     ajustado.
+      # La nitidez de la óptica no se ve afectada: se mide sobre el frame de la cámara. Se
+      # aplica al reiniciar, como todo lo de la cámara.
+      brightness_factor: 1.0    # x0.1–x5.0, lineal y saturado en 255; 1.0 = sin cambio
+      clahe_clip: 0.0           # contraste local 0–8; 0 = apagado

@@ -5,7 +5,7 @@ Módulo puro: el reloj entra por parámetro, así que una ventana de una hora se
 esperar una hora.
 """
 
-from system.inference.rolling import RollingMean, has_material, ratio_pct
+from system.inference.rolling import RollingMean, has_composition, ratio_pct
 
 _WINDOW_S = 60.0
 
@@ -73,15 +73,15 @@ class TestFillPct:
         assert RollingMean(10.0).fill_pct(expected_hz=0.0) == 0
 
 
-class TestHasMaterial:
-    def test_an_empty_belt_has_no_composition(self):
-        assert has_material({"pellet": 0.0, "desmenuzado": 0.0}) is False
+class TestHasComposition:
+    def test_nothing_detected_is_not_a_composition(self):
+        assert has_composition({"class_a": 0.0, "class_b": 0.0}) is False
 
-    def test_any_detected_class_counts_as_material(self):
-        assert has_material({"pellet": 0.0, "desmenuzado": 0.4}) is True
+    def test_any_detected_class_makes_one(self):
+        assert has_composition({"class_a": 0.0, "class_b": 0.4}) is True
 
-    def test_without_classes_there_is_no_material(self):
-        assert has_material({}) is False
+    def test_without_classes_there_is_none(self):
+        assert has_composition({}) is False
 
 
 class TestRatioPct:

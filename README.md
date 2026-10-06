@@ -113,20 +113,15 @@ proyecto.**
 | `system/inference/metrics.py` | composición y carga, por conteo de píxeles por unión |
 | `system/inference/annotations.py` | el rectángulo de cinta y el panel de composición |
 | `system/version.py` | la versión del equipo; se sube en cada release |
-| `main.py` | el bloque «Lo que cambia en cada fork», **más** la divergencia de telemetría y el cableado de GPIO y medias móviles |
+| `main.py` | el bloque «Lo que cambia en cada fork», **más** la divergencia de telemetría y el cableado de las medias móviles |
 | `CLAUDE.md`, `README.md` | el mapa, las decisiones y esta guía |
 
-### Agregados que valen para el template
+### Lo que ya volvió al template
 
-Genéricos, no tienen nada de esta planta y conviene devolverlos —ver «Cómo devolver una
-mejora al template» más abajo—:
-
-| Archivo | Qué es |
-|---|---|
-| `system/gpio_control.py` | entradas y salidas digitales por libgpiod; el template lo declaraba pendiente |
-| `system/formats/gpio_status.py` | las dos palabras de GPIO que van al PLC |
-| `system/inference/rolling.py` | media móvil por ventana de tiempo, con su cobertura |
-| `ui/dialogs/roi_dialog.py` | **una línea**: el prefijo de config pasó a ser parámetro, para poder dibujar más de un rectángulo por cámara |
+El GPIO, la media móvil por ventana de tiempo, el diálogo de ROI con el prefijo como
+parámetro y los demás arreglos genéricos que nacieron acá ya están en el template, así que
+son maquinaria como el resto. Lo que todavía diverge, y qué hacer con cada parte en un
+merge, está en [`docs/template_divergences.md`](docs/template_divergences.md).
 
 ### Se agregan, sin editar lo que ya está
 
@@ -151,8 +146,9 @@ lo que falta es un punto de extensión, no un parche.
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
 | captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
-| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` (`gpio_status.py` es de acá) |
+| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `rolling.py`, `engine.py` |
+| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py`, `gpio_status.py` |
+| GPIO | `system/gpio_control.py` |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
@@ -285,11 +281,10 @@ local silencioso es justo donde esa suposición muerde.
 
 `ui/` viene armada y andando: tres vistas —monitor, configuración, diagnóstico—, ocho
 pestañas que cubren todas las secciones genéricas del `config.yaml`, cuatro de
-diagnóstico, dos temas y los widgets reutilizables. Los tres huecos son a propósito: el
-área central del monitor la llena el fork, la pestaña de proceso llega vacía porque sus
-campos cambian en cada instalación, y el diálogo de GPIO espera un
-`system/gpio_control.py`, que este proyecto sí trae: el botón aparece cuando `main.py`
-le inyecta el controlador.
+diagnóstico, dos temas y los widgets reutilizables. Los dos huecos son a propósito: el
+área central del monitor la llena el fork, y la pestaña de proceso llega vacía porque sus
+campos cambian en cada instalación. El botón de GPIO del header aparece cuando
+`gpio.enabled` está prendido.
 
 Cómo se toca cada atributo —dónde vive un color, un texto, una medida; cómo se agrega
 una pestaña o un widget; qué cosas la UI **no** hace— está en [docs/ui.md](docs/ui.md).
@@ -301,20 +296,25 @@ genérica la maquinaria y testeable lo del proyecto.
 
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
-| `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py`, o del fork |
+| `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py` y `enhance.py`, desde el config de cada cámara, o del fork |
 | `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
 | `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | **sin usar acá**: lo calibrado por cámara lo resuelve el pipeline |
 | `analyzer` | qué significan las detecciones | `metrics.py`, con `process:` |
 | `annotator` | qué se dibuja además del resultado | `annotations.py`, con `process:` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |
 
-El `classifier` corre entre el pipeline y el promedio de confianza, y es el único lugar
-donde entra lo que depende de la cámara: `predict()` no recibe el slot, porque el modelo es
-uno por pipeline y lo comparten todas sus cámaras. Ahí van la escala de píxel, el filtro de
-tamaño y la clase que sale de la medida. Lo que descarta no cuenta para `min_detections` ni
-para la confianza del resultado, y la clase que deja en `class_index` es la que después
-colorean el overlay y `analysis.count_by_class`. El analyzer no puede hacerlo: su contrato
-dice que no modifica el resultado.
+Lo que depende de la cámara entra en dos lugares, y la diferencia es dónde están las
+coordenadas. **`_run()` del pipeline** recibe el `camera_slot` y trabaja sobre el recorte
+del ROI: ahí va lo que corrige la salida de un modelo con un valor calibrado por montaje —un
+umbral de luz, un descarte por tamaño—. **El `classifier`** corre después de devolver las
+detecciones al frame completo, así que es donde va lo que necesita posiciones absolutas: una
+zona a ignorar, una regla por dónde cae la detección.
+
+`predict()` no recibe el slot en ninguno de los dos casos, y es a propósito: el modelo es uno
+por pipeline y lo comparten todas sus cámaras. Lo que el classifier descarta no cuenta para
+`min_detections` ni para la confianza del resultado, y la clase que deja en `class_index` es
+la que después colorean el overlay y `analysis.count_by_class`. El analyzer no puede hacer
+ninguna de las dos cosas: su contrato dice que no modifica el resultado.
 
 ## Los tres caminos que salen de un frame
 
@@ -322,14 +322,17 @@ No son el mismo frame, y confundirlos es el error caro:
 
 | Camino | Qué imagen | Quién la prepara |
 |---|---|---|
-| medición | la del `preprocessor`: corregida si el lente lo pide | `tools/image/undistort.py` |
-| dataset | la cruda de la cámara, para poder reentrenar | nadie la toca |
+| medición | la del `preprocessor`: corregida si el lente lo pide, ajustada si la cámara declara `image_adjust` | `tools/image/undistort.py`, `enhance.py` |
+| dataset | la misma de la medición —`source_bgr`—, que es con la que se reentrena | nadie más la toca |
 | visualización | ajustada para que se vea (gamma, contraste local) | `tools/image/enhance.py`, con `video.display` |
 
 La corrección geométrica cambia **dónde está** un píxel, así que tiene que ser la misma
 para el modelo y para el overlay: por eso va en el `preprocessor`, que define el frame de
-referencia. El brillo cambia **cómo se ve** y no mueve nada: por eso va sólo en el camino
-de visualización y no contamina el dataset.
+referencia. El brillo cambia **cómo se ve** y no mueve nada: por eso, salvo que la cámara
+diga otra cosa, va sólo en el camino de visualización y no contamina el dataset. Una cámara
+que declara `image_adjust` lo mete en la medición, y eso tiene consecuencias —el dataset
+guarda la imagen ajustada y `illumination_min` se compara después del ajuste— que están en
+`CLAUDE.md`.
 
 ## Cuando un ciclo son varias imágenes
 

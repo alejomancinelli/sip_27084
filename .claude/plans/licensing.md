@@ -420,10 +420,13 @@ puerta abierta aunque el código sea el correcto:
    a ser una constante limpia y el ejercicio no sirvió de nada. Lo mismo vale para
    `system/inference/models/_model_key.py`, que ya funcionaba así.
 
-2. **Compilar sin docstrings:** `--python-flag=no_docstrings`. Los docstrings de este repo
-   son largos y explican el diseño completo —es su virtud en el código fuente y su
-   problema adentro del binario—: un volcado de strings del ejecutable entregado no tiene
-   por qué ser el mapa de cómo saltear la licencia.
+2. **Compilar sin docstrings:** `--python-flag=no_docstrings`, ya puesto en
+   `build/build.py`. Los docstrings de este repo son largos y explican el diseño completo
+   —es su virtud en el código fuente y su problema adentro del binario—: un volcado de
+   strings del ejecutable entregado no tiene por qué ser el mapa de cómo saltear la
+   licencia. Saca la prosa y nada más: los nombres de módulos, clases y funciones quedan,
+   y los literales que son datos vivos —el magic del contenedor de pesos, la etiqueta de
+   la derivación, los fragmentos de clave— también.
 
 3. **Verificar la entrega:** que no haya quedado `_public_key.py` ni `_model_key.py` en el
    árbol, y que el ejecutable no contenga ninguna frase canaria de los docstrings de
