@@ -255,13 +255,14 @@ siguen vienen del template.
   mismo, cambiando en silencio todos los porcentajes publicados. Como está en `process:`, lo
   lee `main.py` una sola vez y se lo pasa al analyzer y al annotator: el rectángulo que ve
   el operador y el que se usó para el número que salió al PLC son el mismo.
-- **El brillo ya no entra a la inferencia.** La versión anterior infería sobre el frame con
-  un ajuste de software de ×4.6 y calibraba los umbrales contra esa imagen. Acá el nivel lo
-  fija la **exposición de la cámara**, que es donde corresponde: el brillo cambia cómo se ve
-  un píxel y no dónde está, así que va sólo en el camino de visualización y el modelo y el
-  dataset siguen viendo el frame crudo. El umbral de fondo oscuro hay que recalibrarlo con
-  la exposición definitiva: 60 sobre una imagen amplificada no significa lo mismo que 60
-  sobre el frame crudo.
+- **El brillo de la versión anterior se reproduce en la medición.** Aquella infería sobre
+  el frame con un ajuste de software de ×4.6 (`brillo: 90`) a 800 µs, y calibraba el umbral
+  de fondo oscuro —60, sólo para desmenuzado— contra esa imagen. Acá se conservan los tres
+  números: la exposición en la cámara y el ×4.6 en `cameras.camera_1.image_adjust`, que es
+  el caso para el que existe ese ajuste. Por eso el dataset guarda la imagen ajustada, y
+  cambiar el factor o la exposición obliga a recalibrar el umbral: 60 sobre una imagen
+  amplificada no significa lo mismo que 60 sobre el frame crudo. La referencia de óptica
+  sigue valiendo, porque se mide sobre el frame de la cámara y sus condiciones no cambiaron.
 - **Las medias de la hora se alimentan una vez por tick, no una por frame.** La ventana se
   compara contra el ritmo de publicación para saber cuánto de la hora se llegó a medir, y
   metiendo los quince frames de cada segundo esa cobertura daría siempre llena aunque la
@@ -697,12 +698,6 @@ La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
 
-- **La calibración de la exposición.** Es lo que bloquea la puesta en marcha: el modelo
-  viene trabajando sobre una imagen amplificada por software y ahora recibe el frame crudo,
-  así que hay que subir `exposure_time_us` hasta que el nivel coincida y recalibrar
-  `process.dark_background_threshold` contra esa imagen. Se decide mirando la cinta.
-- **La referencia de óptica se recalibra** una vez fijada la exposición nueva: la que está
-  (`variance: 50.7`) se midió con las condiciones viejas y deja de valer si cambia.
 - **El widget del área central del monitor.** Hoy es la grilla de cámaras genérica. La
   versión anterior tenía un gráfico de áreas apiladas con la composición; si se lo quiere de
   vuelta, entra por `_build_monitor_content()` sin tocar nada más.

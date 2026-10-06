@@ -7,8 +7,8 @@ project:
   project_id: 27084
 
 system:
-  app_name: SIP Smart Belt Monitor
-  device_id: jetson-cinta-1
+  app_name: Detección de calidad de pellet
+  device_id: jetson-1
   log_level: INFO               # DEBUG | INFO | WARNING | ERROR
   hard_exit: false
   # Termina el proceso al salir sin desarmar el intérprete. Hace falta sólo cuando el
@@ -78,10 +78,9 @@ video:
     # recibiendo el frame de la cámara. Si lo que se busca es que el modelo vea la imagen
     # ajustada, eso es `cameras.<slot>.image_adjust`, que es otra decisión.
     #
-    # Acá estaba el brillo del proyecto anterior, que además entraba a la inferencia. Este
-    # equipo lo resuelve en la cámara —exposición y ganancia—, que es donde corresponde: ver
-    # la nota de `acquisition` de camera_1.
-    gamma: 1.0                  # <1 levanta las sombras, >1 las hunde; 1.0 = sin cambio
+    # El brillo del proyecto anterior NO va acá: entraba a la inferencia, y lo reproduce
+    # `cameras.camera_1.image_adjust`.
+    gamma: 1.0                 # <1 levanta las sombras, >1 las hunde; 1.0 = sin cambio
     clahe_clip: 0.0             # contraste local 0–8; 0 = apagado, cuesta bastante más que gamma
 
 process:
@@ -107,10 +106,11 @@ process:
     # montaje. Lo aplica `pipeline.py` sobre las máscaras, antes del analyzer y del overlay,
     # así que lo que se mide y lo que se dibuja son lo mismo.
     #
-    # El 60 heredado se calibró sobre la imagen amplificada por software de la versión
-    # anterior; sobre el frame crudo se come la clase entera. Recalibrar con la exposición
-    # definitiva, mirando los percentiles de luma que imprime manual_test/belt.
-    camera_1: {desmenuzado: 0}
+    # Se compara contra el frame ya ajustado por `image_adjust`: el 60 es el de la versión
+    # anterior, que lo medía sobre la misma imagen ×4.6. Sobre el frame crudo se comería la
+    # clase entera, así que cambiar el factor obliga a recalibrarlo, mirando los percentiles
+    # de luma que imprime manual_test/belt.
+    camera_1: {desmenuzado: 60, pellet: 0}
   rolling_window_s: 3600        # ventana de las medias móviles que van a los registros 6-10
 
 inference:
@@ -294,10 +294,9 @@ cameras:
     address: 192.168.1.101      # sólo informativo: StApi toma el primer dispositivo que encuentra
     rotation: null              # null | 90cw | 90ccw | 180
     acquisition:
-      # La exposición es lo que fija el nivel del frame CRUDO, que es el que ve el modelo.
-      # El proyecto anterior dejaba 800 µs y compensaba con un brillo de software que
-      # además entraba a la inferencia; acá el ajuste va en la cámara y hay que subirlo
-      # hasta que el frame crudo tenga el nivel con el que el modelo viene trabajando.
+      # Los mismos 800 µs del proyecto anterior: el nivel con el que el modelo viene
+      # trabajando lo completa `image_adjust`, igual que allá. Cambiar la exposición obliga
+      # a revisar ese factor y a recalibrar la referencia de `lens_health`.
       fps_limit: 15
       exposure_time_us: 800
       gain: 1.0
@@ -344,5 +343,8 @@ cameras:
       #     ajustado.
       # La nitidez de la óptica no se ve afectada: se mide sobre el frame de la cámara. Se
       # aplica al reiniciar, como todo lo de la cámara.
-      brightness_factor: 1.0    # x0.1–x5.0, lineal y saturado en 255; 1.0 = sin cambio
+      #
+      # El ×4.6 es el `brillo: 90` del proyecto anterior (1 + 90/100 × 4): el modelo se
+      # viene infiriendo sobre esa imagen y `dark_background_threshold` se calibró contra ella.
+      brightness_factor: 4.6    # x0.1–x5.0, lineal y saturado en 255; 1.0 = sin cambio
       clahe_clip: 0.0           # contraste local 0–8; 0 = apagado
