@@ -10,9 +10,9 @@ Tres cosas que no son obvias:
   - **ConfigView se arma la primera vez que se navega a ella.** Son ocho pestañas con
     cientos de campos y el arranque de la aplicación no las necesita; hasta entonces su
     lugar en el stack lo ocupa un cartel.
-  - **El botón de GPIO aparece sólo si hay controlador.** El template no trae el módulo
-    de GPIO, así que `set_gpio()` es lo que lo habilita: sin eso el botón no está, en
-    vez de estar y no hacer nada.
+  - **El botón de GPIO aparece sólo si hay controlador.** `set_gpio()` es lo que lo
+    habilita: un equipo que no lo inyecta no tiene botón, en vez de tener uno que no hace
+    nada.
   - **Sin licencia válida, el footer lo dice todo el tiempo y lo dice una sola vez al
     abrir.** `update_license()` pinta toda la barra de rojo mientras el estado lo
     amerite —el mismo criterio que el bit que va al PLC—, y no un chip: en una barra de
@@ -316,8 +316,8 @@ class MainWindow(QMainWindow):
         Reloj del header, con su aire a la izquierda dentro de su propio grupo.
 
         El hueco es del reloj y no de lo que tenga al lado: así mide lo mismo con el
-        grupo de GPIO presente y sin él, que es el caso de cualquier instalación que
-        todavía no tenga el módulo de GPIO.
+        grupo de GPIO presente y sin él, que es el caso de cualquier equipo con el GPIO
+        apagado.
         """
         self._clock_label = QLabel()
         self._clock_label.setObjectName("headerClock")

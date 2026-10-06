@@ -64,7 +64,7 @@ el operador, qué detecciones cuentan, qué se dibuja además del resultado, y c
 parámetros se cuenta. El resto es cableado genérico y se cross-portea sin editar.
 
 Cómo llegan los números al PLC: se publican los registros de salud —heartbeat, hardware,
-estado por cámara, palabras de estado— y, de las métricas del analyzer, **las que tengan
+estado por cámara, palabras de estado y de GPIO— y, de las métricas del analyzer, **las que tengan
 una fila con su mismo nombre en `register_map.yaml`**. Una métrica sin fila no se publica y
 se avisa una vez: el nombre de la métrica es el contrato con el integrador.
 """
@@ -92,7 +92,8 @@ from system.camera import lens_health
 from system.camera.lens_health import LensHealthMonitor
 from system.config_manager import ConfigManager
 from system.env import load_env_file
-from system.formats import camera_health, com_status, system_status
+from system.formats import camera_health, com_status, gpio_status, system_status
+from system.gpio_control import GpioController, GpioPollingThread
 from system.image_collector.collector import ImageCollector
 from system.inference import analysis, annotations
 from system.inference.engine import InferenceThread
@@ -188,6 +189,7 @@ _HEALTH_REGISTER_NAMES = frozenset({
     "heartbeat", "system_status_bitfield", "com_status_bitfield",
     "cpu_usage_pct", "gpu_usage_pct", "ram_used_mb", "ram_total_mb",
     "disk_free_gb", "cpu_temp_c", "gpu_temp_c", "power_w",
+    "gpio_inputs_bitfield", "gpio_outputs_bitfield",
 })
 
 # Todos los nombres del mapa cargado. `SCHEMA.encode_batch()` levanta KeyError con un
@@ -309,6 +311,9 @@ class _HeadlessUi:
     def refresh_lens_reference(self, camera_slot: str):
         pass
 
+    def set_gpio(self, gpio_controller: object, gpio_thread: object):
+        """Sin pantalla no hay botón: las palabras de GPIO salen igual al PLC."""
+
 
 class _QtUi:
     """
@@ -386,6 +391,9 @@ class _QtUi:
 
     def refresh_lens_reference(self, camera_slot: str):
         self._window.refresh_lens_reference(camera_slot)
+
+    def set_gpio(self, gpio_controller: object, gpio_thread: object):
+        self._window.set_gpio(gpio_controller, gpio_thread)
 
 
 def create_ui(config: ConfigManager, *, headless: bool):
@@ -587,6 +595,16 @@ class Application(QObject):
         # Cámaras calibrando ahora: slot -> (varianzas, lumas). Vacío casi siempre.
         self._lens_calibrations: dict[str, tuple[list, list]] = {}
 
+        # ── GPIO ─────────────────────────────────────────────────────────────
+        # Sin `gpiod`, sin permisos o sin chip el controlador degrada a simulado adentro y
+        # el cableado no pregunta: las dos palabras salen igual, con la marca de «sin GPIO».
+        self._gpio = GpioController(config)
+        self._gpio_thread = GpioPollingThread(self._gpio, config)
+        self._gpio_thread.inputs_updated.connect(self._on_gpio_inputs_updated)
+        # Última lectura de las entradas, para el tick de registros. Se toca sólo desde el
+        # hilo de la GUI: el slot llega en cola.
+        self._gpio_inputs: dict[int, int] = {}
+
         # ── Hardware y timers ────────────────────────────────────────────────
         self._monitor = SystemMonitor(config)
         self._metrics_poller = _MetricsPoller(self._monitor, _METRICS_INTERVAL_S)
@@ -607,6 +625,11 @@ class Application(QObject):
                                           self._on_license_install_requested)
         self._ui.connect_lens_calibration(self._on_lens_calibration_requested)
         self._ui.update_license(self._license.get_status())
+        # Con `gpio.enabled: false` no hay nada del otro lado que comandar, así que no hay
+        # botón. Habilitado y sin hardware sí lo hay: el diálogo es el que avisa que las
+        # salidas no llegan a ningún borne.
+        if self._gpio.get_status()["status"] != "disabled":
+            self._ui.set_gpio(self._gpio, self._gpio_thread)
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
@@ -698,6 +721,7 @@ class Application(QObject):
         self._telemetry.start()
         self._collector.start()
         self._metrics_poller.start()
+        self._gpio_thread.start()
         for engine in self._engines:
             engine.start()
         for thread in self._capture_threads.values():
@@ -725,12 +749,15 @@ class Application(QObject):
         self._scheduler.stop()
         # Primero la captura: sin frames nuevos, la inferencia drena lo que tenga.
         qt_threads = (list(self._capture_threads.values()) + self._engines
-                      + [self._metrics_poller, self._telemetry])
+                      + [self._metrics_poller, self._telemetry, self._gpio_thread])
         for thread in qt_threads:
             thread.requestInterruption()
         for thread in qt_threads:
             if not thread.wait(_THREAD_STOP_TIMEOUT_MS):
                 logger.warning(f"[Main] Un hilo no cerró en {_THREAD_STOP_TIMEOUT_MS} ms.")
+        # Después del polling y no antes: cerrar las líneas con el hilo leyéndolas lo deja
+        # leyendo una línea liberada. `close()` también deja las salidas en reposo.
+        self._gpio.close()
 
         self._collector.stop()
         self._http_video.stop()
@@ -927,6 +954,11 @@ class Application(QObject):
         self._last_metrics = metrics
         self._ui.update_hardware_metrics(metrics)
 
+    @Slot(object)
+    def _on_gpio_inputs_updated(self, states: dict):
+        """Slot de `GpioPollingThread`: la última lectura de las entradas."""
+        self._gpio_inputs = dict(states)
+
     def _on_registers_tick(self):
         """
         Escribe el datastore del Modbus y refresca la tabla de la UI.
@@ -979,6 +1011,7 @@ class Application(QObject):
                 "power_w": metrics["power_w"],
             })
         values.update(self._build_camera_registers())
+        values.update(self._build_gpio_registers())
         # Con la política `degrade` las mediciones no se publican, pero el canal sigue
         # sirviendo: el latido, la salud del equipo y las palabras de estado salen igual.
         # Bajar el Modbus dejaría al PLC viendo un enlace muerto, indistinguible de un
@@ -1355,6 +1388,23 @@ class Application(QObject):
         return {
             "clock_epoch_s_high": (epoch_s >> 16) & 0xFFFF,
             "clock_epoch_s_low": epoch_s & 0xFFFF,
+        }
+
+    def _build_gpio_registers(self) -> dict:
+        """
+        Las dos palabras de GPIO: entradas leídas y salidas comandadas.
+
+        Las entradas salen de la última lectura del hilo de polling y no de leer el bus
+        acá, que bloquearía el hilo de la GUI; las salidas, del eco de lo comandado. Que no
+        haya hardware detrás lo lleva la palabra en su marca de «sin GPIO»: el PLC tiene que
+        poder distinguir una entrada en cero de un equipo que no tiene de dónde leerla.
+        """
+        hardware_available = self._gpio.hardware_available
+        return {
+            "gpio_inputs_bitfield": gpio_status.pack_inputs(
+                self._gpio_inputs, hardware_available=hardware_available),
+            "gpio_outputs_bitfield": gpio_status.pack_outputs(
+                self._gpio.get_all_outputs(), hardware_available=hardware_available),
         }
 
     def _license_days_remaining(self) -> int:

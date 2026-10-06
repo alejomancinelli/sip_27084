@@ -211,8 +211,9 @@ lo que falta es un punto de extensión, no un parche.
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
 | captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/models/*` (menos el del fork), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `engine.py` |
-| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py` |
+| inferencia | `system/inference/models/*` (menos el del fork), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `rolling.py`, `engine.py` |
+| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py`, `gpio_status.py` |
+| GPIO | `system/gpio_control.py` |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
@@ -345,10 +346,10 @@ local silencioso es justo donde esa suposición muerde.
 
 `ui/` viene armada y andando: tres vistas —monitor, configuración, diagnóstico—, ocho
 pestañas que cubren todas las secciones genéricas del `config.yaml`, cuatro de
-diagnóstico, dos temas y los widgets reutilizables. Los tres huecos son a propósito: el
-área central del monitor la llena el fork, la pestaña de proceso llega vacía porque sus
-campos cambian en cada instalación, y el diálogo de GPIO espera un
-`system/gpio_control.py` que todavía no existe.
+diagnóstico, dos temas y los widgets reutilizables. Los dos huecos son a propósito: el
+área central del monitor la llena el fork, y la pestaña de proceso llega vacía porque sus
+campos cambian en cada instalación. El botón de GPIO del header aparece cuando
+`gpio.enabled` está prendido.
 
 Cómo se toca cada atributo —dónde vive un color, un texto, una medida; cómo se agrega
 una pestaña o un widget; qué cosas la UI **no** hace— está en [docs/ui.md](docs/ui.md).

@@ -12,6 +12,8 @@ import main
 from system.camera.lens_health import (
     CONDITION_KEYS, LensHealthMonitor, Measurement, Region,
 )
+from system import gpio_control
+from system.formats import gpio_status
 from system.inference.result import InferenceResult
 from system.modbus import registers
 from system.modbus.server import STATUS_DISABLED, STATUS_ERROR
@@ -372,3 +374,96 @@ class TestLensCalibration:
         app._collect_lens_calibration("camera_1", self._measurement(400.0))
         assert app._lens_monitor.get_status(
             "camera_2", now_s=0.0)["reference_variance"] == 900.0
+
+
+# ── GPIO ─────────────────────────────────────────────────────────────────────────
+
+def _build_gpio_application(monkeypatch, **overrides):
+    """
+    `Application` sin `__init__`, con un `GpioController` de verdad en modo simulado.
+
+    Sin `gpiod` el controlador degrada adentro, que es el camino de cualquier equipo de
+    desarrollo y el que tiene que seguir publicando: lo que se prueba es que el cableado
+    no pregunte y deje la marca de «sin GPIO» en las dos palabras.
+    """
+    monkeypatch.setattr(gpio_control, "_GPIOD_AVAILABLE", False)
+    config = _MockConfig(**{
+        "gpio.enabled": True,
+        "gpio.outputs": {"DO1": 51, "DO2": 52},
+        "gpio.inputs": {"DI1": 105, "DI2": 106},
+        **overrides,
+    })
+    app = main.Application.__new__(main.Application)
+    app._gpio = gpio_control.GpioController(config)
+    app._gpio_inputs = {}
+    return app
+
+
+class TestGpioRegisters:
+    def test_both_words_say_there_is_no_gpio_without_the_library(self, monkeypatch):
+        """Una entrada en cero y un equipo sin de dónde leerla no pueden verse igual."""
+        registers = _build_gpio_application(monkeypatch)._build_gpio_registers()
+        unavailable = 1 << gpio_status.BIT_UNAVAILABLE
+        assert registers["gpio_inputs_bitfield"] & unavailable
+        assert registers["gpio_outputs_bitfield"] & unavailable
+
+    def test_the_inputs_word_carries_the_last_polled_reading(self, monkeypatch):
+        app = _build_gpio_application(monkeypatch)
+        app._on_gpio_inputs_updated({1: 0, 2: 1})
+        word = app._build_gpio_registers()["gpio_inputs_bitfield"]
+        assert word == gpio_status.pack_inputs({2: 1}, hardware_available=False)
+
+    def test_the_outputs_word_echoes_what_was_commanded(self, monkeypatch):
+        app = _build_gpio_application(monkeypatch)
+        app._gpio.set_output(2, 1)
+        word = app._build_gpio_registers()["gpio_outputs_bitfield"]
+        assert word == gpio_status.pack_outputs({2: 1}, hardware_available=False)
+
+    def test_both_words_have_a_row_in_the_map(self, monkeypatch):
+        """Sin fila, `_mapped_only` las descarta en silencio y el PLC nunca las ve."""
+        names = set(_build_gpio_application(monkeypatch)._build_gpio_registers())
+        assert names <= main._REGISTER_NAMES
+
+    def test_an_analyzer_metric_cannot_overwrite_them(self, monkeypatch):
+        names = set(_build_gpio_application(monkeypatch)._build_gpio_registers())
+        assert names <= main._HEALTH_REGISTER_NAMES
+
+
+class _StopRecorder:
+    """Cualquier subsistema que `stop()` toque: anota cada llamada en un log compartido."""
+
+    def __init__(self, name: str, calls: list):
+        self._name = name
+        self._calls = calls
+
+    def __getattr__(self, method: str):
+        def record(*args, **kwargs):
+            self._calls.append((self._name, method))
+            return True
+        return record
+
+
+class TestGpioShutdown:
+    def test_the_polling_stops_before_the_lines_are_released(self):
+        """Cerrar las líneas con el hilo leyéndolas lo deja leyendo una línea liberada."""
+        calls: list = []
+        app = main.Application.__new__(main.Application)
+        for name in ("_ui", "_scheduler", "_metrics_poller", "_telemetry", "_gpio_thread",
+                     "_gpio", "_collector", "_http_video", "_rtsp_video", "_modbus",
+                     "_modbus_thread"):
+            setattr(app, name, _StopRecorder(name, calls))
+        app._timers = []
+        app._capture_threads = {}
+        app._engines = []
+
+        app.stop()
+
+        assert calls.index(("_gpio_thread", "wait")) < calls.index(("_gpio", "close"))
+
+
+class TestHeadlessUi:
+    def test_it_answers_everything_the_window_answers(self):
+        """El cableado no pregunta si hay ventana: un método que falte es un crash en headless."""
+        window_methods = {name for name in vars(main._QtUi)
+                          if callable(getattr(main._QtUi, name)) and not name.startswith("_")}
+        assert window_methods <= set(dir(main._HeadlessUi))

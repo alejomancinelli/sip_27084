@@ -138,6 +138,21 @@
   unit: W
   scale: 10
 
+# ── GPIO (90-91) ─────────────────────────────────────────────────────────────
+# Una palabra para las entradas leídas y otra para las salidas comandadas; qué significa
+# cada bit lo documenta `system/formats/gpio_status.py`. Salen siempre, haya GPIO o no:
+# sin hardware llevan prendida la marca de «sin GPIO», para que el PLC no tome por una
+# entrada en cero lo que es un equipo sin de dónde leerla.
+- addr: 90
+  name: gpio_inputs_bitfield
+  desc: Entradas digitales (bitfield)
+  producer: health
+
+- addr: 91
+  name: gpio_outputs_bitfield
+  desc: Salidas digitales comandadas (bitfield)
+  producer: health
+
 # ── Reloj del equipo (97-98) ─────────────────────────────────────────────────
 # El reloj del equipo como **segundos desde 1970-01-01 00:00 UTC**, en dos registros.
 #

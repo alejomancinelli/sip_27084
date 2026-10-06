@@ -384,9 +384,6 @@ lo que el operador eligió en el selector.
 
 - **`main.py`**: no existe todavía. Hasta que exista, quien construye esta ventana es
   `manual_test/ui/ui_app.py`, que hace de cableado.
-- **El módulo de GPIO.** `ui/dialogs/gpio_dialog.py` es la mitad de UI de un subsistema
-  que el template no tiene: espera un controlador con la interfaz que documenta su
-  docstring, y el botón del header aparece sólo cuando se lo inyecta.
 - **Los intrínsecos del lente** se muestran pero no se editan: una matriz 3x3 y hasta 14
   coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las
   coordenadas del proyecto. Se editan en el `config.yaml`.
