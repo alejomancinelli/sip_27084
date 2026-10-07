@@ -5,6 +5,10 @@ Compila el ejecutable con Nuitka, con las opciones de este proyecto.
     .venv\\Scripts\\python.exe build\\build.py --dry-run          sólo muestra el comando
     .venv\\Scripts\\python.exe build\\build.py -- --lto=yes       agrega flags al final
 
+En la Jetson es el mismo comando con `.venv/bin/python`. **Se compila en la plataforma
+donde va a correr**: Nuitka no compila cruzado, así que el entregable de la Jetson se arma
+en una Jetson con el mismo JetPack que la de la planta.
+
 **Por qué es un script y no un comando en el README.** Dos motivos, y el primero es que
 una de las opciones no es una constante: el `.exe` lleva la versión en sus propiedades, y
 ese número tiene un solo dueño, `system/version.py`. Escrito a mano en un comando que se
@@ -100,6 +104,27 @@ _EXTRA_FLAGS: tuple = (
 # Datos que viajan con el programa: los lee `paths.app_file()`, no `DATA_DIR`.
 _DATA_DIRS = ("ui/styles", "ui/icons")
 
+# Nuitka no compila para otra plataforma: el binario es de la máquina donde corre esto.
+_IS_WINDOWS = sys.platform == "win32"
+
+
+def _windows_flags() -> list:
+    """
+    Consola, icono y propiedades del `.exe`: recursos de un binario PE.
+
+    Un ELF no tiene dónde guardarlos, así que en Linux no se pasan. El icono de la Jetson
+    lo pone el `.desktop` que arma `make_release.py`, a partir del mismo `_ICON`.
+    """
+    return [
+        "--windows-console-mode=attach",
+        f"--windows-icon-from-ico={_ICON}",
+        f"--company-name={_COMPANY}",
+        f"--product-name={_PRODUCT}",
+        f"--file-description={_DESCRIPTION}",
+        f"--file-version={APP_VERSION}",
+        f"--product-version={APP_VERSION}",
+    ]
+
 
 def _flags(out_dir: str) -> list:
     """Las opciones de Nuitka, en el orden en que se leen."""
@@ -108,13 +133,7 @@ def _flags(out_dir: str) -> list:
         "--enable-plugin=pyside6",
         "--python-flag=no_docstrings",
         "--no-deployment-flag=excluded-module-usage",
-        "--windows-console-mode=attach",
-        f"--windows-icon-from-ico={_ICON}",
-        f"--company-name={_COMPANY}",
-        f"--product-name={_PRODUCT}",
-        f"--file-description={_DESCRIPTION}",
-        f"--file-version={APP_VERSION}",
-        f"--product-version={APP_VERSION}",
+        *(_windows_flags() if _IS_WINDOWS else ()),
         "--assume-yes-for-downloads",
         f"--output-dir={out_dir}",
     ]
@@ -179,7 +198,7 @@ def main() -> int:
 
     print(f"\n  {_size_mb(dist):.0f} MB en {_count(dist)} archivos, {elapsed / 60:.1f} min")
     print(f"\n  Ahora el entregable:")
-    print(f"    .venv\\Scripts\\python.exe build\\make_release.py --dist {args.out}/main.dist")
+    print(f"    {_shown([sys.executable, 'build/make_release.py', '--dist', f'{args.out}/main.dist'])}")
     return 0
 
 

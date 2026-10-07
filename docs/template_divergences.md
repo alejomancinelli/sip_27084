@@ -97,6 +97,8 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
 | `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS`, sólo si `gpiod` está instalado | `gpio_control.py` importa `gpiod` dentro de un try/except y `gpiod.line` dentro de un método, que es lo que el análisis estático de Nuitka puede no seguir: el binario arranca igual, en simulado, y el equipo se queda sin entradas ni salidas sin que nada falle. El template ya trae el subsistema de GPIO pero no el flag, así que cualquier fork con GPIO lo necesita. Va en el bloque del fork, que es su punto de extensión |
+| `build/build.py` | Las opciones del `.exe` —icono, consola, propiedades— sólo en Windows (`_windows_flags()`), y el comando sugerido para el entregable sale del intérprete que compila | La familia corre en Jetson y el template sólo sabía compilar para Windows: un ELF no tiene dónde guardar esos recursos |
+| `build/make_release.py` | Entregable de Linux: `main.bin`, lanzadores `.sh`, `_entorno.sh`, accesos `.desktop`, verificador de cámara con `ldd`, `site-packages` del venv de Linux y el `.tar.gz` | Lo mismo: sin esto, ningún fork en Jetson puede armar un entregable. Es maquinaria pura, no nombra nada de esta planta |
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
