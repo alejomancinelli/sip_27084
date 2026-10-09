@@ -94,27 +94,12 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-| Archivo | Qué se cambió | Por qué es genérico |
-|---|---|---|
-| `build/build.py` | `--include-package=gpiod` en `_EXTRA_FLAGS`, sólo si `gpiod` está instalado | `gpio_control.py` importa `gpiod` dentro de un try/except y `gpiod.line` dentro de un método, que es lo que el análisis estático de Nuitka puede no seguir: el binario arranca igual, en simulado, y el equipo se queda sin entradas ni salidas sin que nada falle. El template ya trae el subsistema de GPIO pero no el flag, así que cualquier fork con GPIO lo necesita. Va en el bloque del fork, que es su punto de extensión |
-| `build/build.py` | Las opciones del `.exe` —icono, consola, propiedades— sólo en Windows (`_windows_flags()`), y el comando sugerido para el entregable sale del intérprete que compila | La familia corre en Jetson y el template sólo sabía compilar para Windows: un ELF no tiene dónde guardar esos recursos |
-| `build/make_release.py` | Entregable de Linux: `main.bin`, lanzadores `.sh`, `_entorno.sh`, accesos `.desktop`, verificador de cámara con `ldd`, `site-packages` del venv de Linux y el `.tar.gz` | Lo mismo: sin esto, ningún fork en Jetson puede armar un entregable. Es maquinaria pura, no nombra nada de esta planta |
-| `setup/jetson/setup-jetson.sh` (nuevo) | Lo de sistema de una Jetson con JetPack 6: hold de L4T, apt (Python 3.10 y headers, patchelf, GStreamer + RTSP + `gi`, librerías xcb de Qt 6, OpenBLAS), TensorRT de Python, permisos de GPIO y serie, red GigE. Las líneas de GPIO las lee del `config.yaml` | La familia corre en Jetson y el template no traía cómo prepararla. No nombra nada de esta planta: la interfaz de la cámara entra por argumento |
-| `setup/jetson/{constraints,requirements,requirements-nodeps}.txt` (nuevos) | El framework de inferencia de la Jetson, con sus versiones fijadas. **El mecanismo es maquinaria y el contenido es del fork**: el template los trae con las líneas del framework vacías | Torch para la Jetson no está en PyPI y el de PyPI no ve la GPU; ultralytics pide `opencv-python` y pisa el headless. Cualquier fork con framework en Jetson tiene el mismo problema |
-| `setup/venv-setup/venv-setup.sh` | El venv ya no usa `--system-site-packages`: los módulos nativos que vienen de apt (`gi`; en la Jetson, `tensorrt`) se enlazan al venv uno por uno, y un venv viejo con el flag se rechaza hasta recrearlo con `--force`. En una Jetson instala primero las ruedas de `packages/` sin dependencias, después todo con `-c setup/jetson/constraints.txt`, y `requirements-nodeps.txt` con `--no-deps` | Con el flag, el matplotlib 3.5 de JetPack satisfacía el requisito, pip no instalaba el suyo y su backend de Qt mataba el hilo de inferencia contra PySide6 6.8. El flag también expone `~/.local`. El orden de instalación es el que evita que el torch de NVIDIA se reemplace por el de PyPI |
-| `setup/venv-setup/verify_env.py` | Reescrito: sin TensorFlow/stardist/csbdeep; agrega `cryptography`, ABI de numpy, variante de OpenCV, gpiod v2 y permisos del chip, el codec RTSP, los archivos de modelo, la GPU, y marca un módulo que carga desde fuera del venv. Lo de Jetson es requisito en la Jetson y aviso en la PC. El framework va en un bloque del fork | El del template verificaba el framework de otro fork y daba «INCOMPLETE» en todo equipo que no lo usara. Un paquete en `~/.local` pasaba la verificación y faltaba en el entregable |
-| `system/video/rtsp_server.py` | `probe_codec(codec)`, pública: arma el pipeline del codec como lo arma el servidor y devuelve el motivo si no se puede. Y los codecs `_hw` pasan por `nvvidconv` a memoria NVMM antes del encoder | `probe_codec` lo usa `verify_env.py` para no repetir qué elementos pide cada codec. Sin `nvvidconv`, `h264_hw` y `h265_hw` no negociaban en ninguna Jetson: el encoder sólo acepta NVMM. Probado en un Orin NX |
-| `requirements.txt` | OpenCV por plataforma (GUI en Windows, headless en Linux), `gpiod>=2.1,<3` en Linux, el framework de inferencia fuera de este archivo, y `PySide6==6.8.0.2` exacto | El wheel de OpenCV con GUI trae Qt 5 en Linux; el `gpiod` de apt es la API v1. La línea de ultralytics que se sacó era del fork. PySide6 6.8.0.2 es el último con wheel aarch64 para el glibc de JetPack 6: sin el pin, la PC corría 6.11 y la Jetson 6.8, y la interfaz se probaba en una versión y corría en otra |
-| `build/build.py` | Borra `_public_key.py` y `_model_key.py` al terminar, compile o no, y avisa antes de compilar si falta la pública | `build/README.md` ya decía que se borran después del build y nada lo hacía: el que quedó de un build cambiaba lo que la suite encontraba al importar y hacía fallar `test_public_key` |
-| `test/license/test_public_key.py` | `TestWithoutGeneratedModule` saca el módulo generado él mismo | La clase simula un checkout sin build y dependía de que no hubiera quedado ninguno en el disco |
-| `setup/jetson/setup-jetson.sh` (segunda pasada) | `apt-get install --no-upgrade`; cada archivo de sysctl se carga solo con `-p`; baja `ip_unprivileged_port_start` al puerto más bajo que el config habilita (502 de Modbus TCP); `grep -q` fuera de los pipes | Medido en un Orin NX: apt subía python3.10 y GStreamer como efecto colateral, `--system` imprimía errores de otros paquetes, el servidor TCP no podía abrir el 502 y `grep -q` con `pipefail` daba falsos «no encontrado» |
-| `manual_test/ui/ui_app.py` | Filtra los valores contra los nombres del mapa antes de `SCHEMA.encode_batch()`, como ya hace `main.py` con `_mapped_only()` | Un mapa que no declara una fila que el script publica —acá `ram_total_mb`— hacía caer el ciclo de registros con `KeyError` en cada tick. En el template no se ve porque su mapa trae todas |
-| `setup/venv-setup/venv-setup.ps1` | El mensaje del paso 3 ya no menciona TensorFlow | Resto del template de origen |
+**Hoy no hay ninguna pendiente.** Todo lo que estaba en esta tabla volvió con el PR #35;
+ver «Lo que ya volvió». Una mejora genérica nueva que nazca acá se anota en una tabla
+con tres columnas —archivo, qué se cambió, por qué es genérico— hasta que vuelva.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
-
-Todo lo de esta tabla, más el timestamp del overlay y el STC-MCS312POE del catálogo, está en el [PR #35 del template](https://github.com/alejomancinelli/cv_projects_template/pull/35). Los archivos de maquinaria quedaron idénticos acá y allá, así que el merge de vuelta sólo choca en lo que es del fork: `setup/jetson/*.txt`, el bloque del fork de `verify_env.py`, `CLAUDE.md`, `README.md` y `system/version.py`.
 
 ### Lo que ya volvió
 
@@ -125,6 +110,13 @@ subsistema de GPIO —módulos y cableado en `main.py`—, `rolling.py` (con `ha
 renombrada `has_composition()`), el `camera_slot` en `_run()` del pipeline y
 `to_plc_address()` en las pantallas de Modbus. Se trajeron con el merge del template del
 2026-10-06 y desde ahí son idénticos a los del template.
+
+Con el [PR #35](https://github.com/alejomancinelli/cv_projects_template/pull/35), traído
+en el merge del 2026-10-09, volvió además todo lo de la Jetson: `setup/jetson/`, el venv
+aislado, `verify_env.py` —salvo su bloque del fork—, el build y el entregable de Linux,
+el borrado de las claves del build, `probe_codec()` y el `nvvidconv` de los codecs `_hw`,
+el filtro de registros de `ui_app.py`, el timestamp del overlay y el STC-MCS312POE del
+catálogo.
 
 ---
 

@@ -115,6 +115,8 @@ proyecto.**
 | `system/inference/metrics.py` | composición y carga, por conteo de píxeles por unión |
 | `system/inference/annotations.py` | el rectángulo de cinta y el panel de composición |
 | `system/version.py` | la versión del equipo; se sube en cada release |
+| `setup/jetson/*.txt` | el framework del segmentador en la Jetson: torch y torchvision de NVIDIA, ultralytics 8.4.90 y sus dependencias, con las versiones fijadas |
+| `setup/venv-setup/verify_env.py` | sólo el bloque del fork: los módulos del framework y la prueba de CUDA y del NMS de torchvision |
 | `main.py` | el bloque «Lo que cambia en cada fork», **más** la divergencia de telemetría y el cableado de las medias móviles |
 | `CLAUDE.md`, `README.md` | el mapa, las decisiones y esta guía |
 
@@ -154,6 +156,7 @@ lo que falta es un punto de extensión, no un parche.
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
 | video | `system/video/abstract_video_server.py`, `http_server.py`, `rtsp_server.py` |
+| instalación | `setup/cameras/*`, `setup/jetson/setup-jetson.sh`, `setup/venv-setup/*` salvo el bloque del fork de `verify_env.py` |
 | dataset | `system/image_collector/collector.py`, `conditions.py` |
 | licencia | `system/license/*` entero. La clave pública no se edita en ningún fork: la genera el repositorio de firma al compilar, en un `_public_key.py` que no se versiona |
 | interfaz | `ui/` entero salvo lo de arriba: `strings.py`, `theme.py`, `service_status.py`, `main_window.py`, las tres vistas, `views/config/*`, `views/diagnostics/*`, `widgets/*`, `dialogs/*`, `styles/*` |

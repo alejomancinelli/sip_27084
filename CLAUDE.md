@@ -36,7 +36,8 @@ dentro del propio archivo de test.
 
 Lo que sí necesita hardware —o una pantalla, como la prueba de la interfaz— vive en
 `manual_test/<tema>/`, cada uno con su `config.yaml` al lado. La instalación de los
-SDK de cámara está en `setup/cameras/{windows,linux}/`.
+SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
+`setup/jetson/`, y el venv lo arma y lo verifica `setup/venv-setup/`.
 
 ## Mapa
 
@@ -662,8 +663,10 @@ describe qué se mide en esta cinta, es de este proyecto.**
   de `setup/venv-setup/verify_env.py`, este archivo y el `README.md`.
 - **Lo que este proyecto agregó de genérico ya volvió al template**: el subsistema de GPIO
   (`system/gpio_control.py`, `system/formats/gpio_status.py` y su cableado en `main.py`),
-  `system/inference/rolling.py` y los arreglos de maquinaria de la sección B de
-  `docs/template_divergences.md`. Ahora son maquinaria y se cross-portean como el resto.
+  `system/inference/rolling.py`, la instalación y el build para la Jetson (`setup/jetson/`,
+  `setup/venv-setup/`, `build/`) y los arreglos de maquinaria que nacieron acá. Ahora son
+  maquinaria y se cross-portean como el resto; la lista está en «Lo que ya volvió» de
+  `docs/template_divergences.md`.
 - **De `main.py` se completó el bloque marcado**: el analyzer, los annotators, el contexto
   del dataset y el widget del monitor —que es la grilla de cámaras, sin widget propio—.
 - **`main.py` diverge además fuera de ese bloque**, y es lo que hay que mirar al
