@@ -616,6 +616,23 @@ class TestAnnotation:
         assert seen == [((240, 320, 3), _SLOT)]
         assert tuple(result.annotated_bgr[0, 0]) == (0, 0, 255)
 
+    def test_the_timestamp_is_drawn_over_the_annotator(self):
+        """Va abajo a la derecha, con fondo opaco: una referencia del proyecto no lo tapa."""
+        def paint_everything(frame_bgr, result):
+            frame_bgr[:] = (0, 0, 255)
+
+        result = _process_one(_engine(_FakePipeline(), annotator=paint_everything), _frame())
+        assert tuple(int(c) for c in result.annotated_bgr[-1, -1]) == (0, 0, 0)
+
+    def test_without_a_timestamp_the_annotator_has_the_last_word(self):
+        def paint_everything(frame_bgr, result):
+            frame_bgr[:] = (0, 0, 255)
+
+        config = _MockConfig(**{"inference.overlay.draw_timestamp": False})
+        result = _process_one(_engine(_FakePipeline(), config, annotator=paint_everything),
+                              _frame())
+        assert tuple(int(c) for c in result.annotated_bgr[-1, -1]) == (0, 0, 255)
+
     def test_the_annotator_does_not_run_when_nothing_is_drawn(self):
         """Sin frame anotado no hay dónde dibujar, y el gate ya dijo que nadie mira."""
         calls = []

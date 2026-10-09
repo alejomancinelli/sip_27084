@@ -1,0 +1,22 @@
+# Version pins for the Jetson. venv-setup.sh passes this file with -c to every install
+# it runs on a Jetson, so nothing installed later can quietly swap one of these.
+#
+# FORK FILE: the mechanism is the template's, the pins are each fork's. The template
+# ships only what every fork shares; a fork adds the framework its model runs on.
+#
+# To add a package by hand on the Jetson, keep the pins:
+#     .venv/bin/python -m pip install -c setup/jetson/constraints.txt <package>
+
+# NVIDIA's torch for Jetson, and most compiled wheels next to it, are built against the
+# numpy 1.x ABI.
+numpy>=1.24,<2.0
+
+# A fork on NVIDIA's torch for JetPack 6 pins it by its public version: PyPI has no
+# 2.5.0a0, so only the wheel in packages/ can satisfy it, whatever local label its file
+# carries, and a PyPI torch on aarch64 does not see the GPU. torchvision has to be the
+# one built against that torch, and ultralytics the version the .engine was exported
+# with (the engine carries ultralytics' metadata header):
+#
+#     torch==2.5.0a0
+#     torchvision==0.20.0
+#     ultralytics==8.4.90

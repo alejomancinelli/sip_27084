@@ -98,7 +98,10 @@ _SCALE_CAPS_NAME = "scale_caps"
 # pay0 en todos: es el nombre con el que gst-rtsp-server encuentra la salida.
 #
 # Los pipelines `_hw` son de Jetson (nvv4l2*) y no existen en un x86; los `_sw`
-# codifican por CPU y andan en cualquier equipo con los plugins instalados.
+# codifican por CPU y andan en cualquier equipo con los plugins instalados. El encoder
+# de la Jetson sólo acepta buffers en memoria NVMM, y el frame llega en memoria de
+# sistema: `nvvidconv` lo pasa, por el VIC. Sin él, el pipeline no negocia con el primer
+# cliente. El Orin Nano no tiene encoder de hardware: ahí sólo andan los `_sw`.
 _CODEC_PIPELINES: dict[str, str] = {
     "h264_sw": (
         "! videoconvert ! video/x-raw,format=I420 "
@@ -107,6 +110,7 @@ _CODEC_PIPELINES: dict[str, str] = {
     ),
     "h264_hw": (
         "! videoconvert ! video/x-raw,format=I420 "
+        "! nvvidconv ! video/x-raw(memory:NVMM),format=I420 "
         "! nvv4l2h264enc "
         "! rtph264pay config-interval=1 name=pay0 pt=96"
     ),
@@ -117,6 +121,7 @@ _CODEC_PIPELINES: dict[str, str] = {
     ),
     "h265_hw": (
         "! videoconvert ! video/x-raw,format=NV12 "
+        "! nvvidconv ! video/x-raw(memory:NVMM),format=NV12 "
         "! nvv4l2h265enc "
         "! rtph265pay config-interval=1 name=pay0 pt=96"
     ),
@@ -156,6 +161,29 @@ def _build_launch_string(codec: str) -> str:
         f"! videoscale ! capsfilter name={_SCALE_CAPS_NAME} "
         f"{codec_segment}"
     )
+
+
+def probe_codec(codec: str) -> str:
+    """
+    Si el pipeline de `codec` se puede armar en este equipo: '' si sí, el motivo si no.
+
+    Arma el mismo pipeline que arma el servidor cuando llega un cliente y lo descarta,
+    así que lo que falte —un plugin, un encoder de hardware que este módulo no tiene— se
+    ve en la instalación y no con el primer reproductor. No negocia caps ni codifica:
+    contesta si los elementos existen, no si el stream va a andar. Un codec desconocido
+    es un motivo, no el default.
+    """
+    if not _GSTREAMER_AVAILABLE:
+        return f"GStreamer no disponible: {_IMPORT_ERROR}"
+    if codec not in _CODEC_PIPELINES:
+        return f"codec '{codec}' desconocido; opciones: {', '.join(_CODEC_PIPELINES)}"
+    Gst.init(None)
+    try:
+        pipeline = Gst.parse_launch(_build_launch_string(codec))
+    except GLib.Error as e:
+        return str(e)
+    pipeline.set_state(Gst.State.NULL)
+    return ""
 
 
 def _compute_scaled_size(width_px: int, height_px: int,

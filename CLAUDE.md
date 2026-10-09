@@ -26,7 +26,8 @@ dentro del propio archivo de test.
 
 Lo que sí necesita hardware —o una pantalla, como la prueba de la interfaz— vive en
 `manual_test/<tema>/`, cada uno con su `config.yaml` al lado. La instalación de los
-SDK de cámara está en `setup/cameras/{windows,linux}/`.
+SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
+`setup/jetson/`, y el venv lo arma y lo verifica `setup/venv-setup/`.
 
 ## Mapa
 
@@ -131,7 +132,11 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       ui/                     levanta la app entera con cámaras mock; hace de main.py
       license/                emite la solicitud y simula el binario para probar la licencia
       model_protection/       cifra unos pesos y los abre en memoria; mide el costo
-    setup/                    instalación de SDK de cámara (en inglés, ver skill)
+    setup/                    instalación (en inglés, ver skill)
+      cameras/                SDK de cámara, por fabricante y sistema
+      venv-setup/             el venv, y verify_env.py que lo verifica en este equipo
+      jetson/                 lo de sistema de la Jetson; el framework de inferencia y
+                              sus versiones fijadas son de cada fork
     packages/                 wheels que no están en PyPI (stapipy)
     build/                    compilar con Nuitka y armar el entregable; ver su README
     docs/                     documentos con público propio: el mapa Modbus generado,

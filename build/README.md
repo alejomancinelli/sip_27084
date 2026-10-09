@@ -38,6 +38,10 @@ correrlo con algo cambiado. Y lo que va después de `--` se agrega al final:
 
     .venv\Scripts\python.exe build\build.py -- --lto=yes
 
+En Linux es lo mismo con `.venv/bin/python` y barras normales. **Se compila en la
+plataforma donde va a correr**: Nuitka no compila cruzado, así que el entregable de una
+Jetson se arma en una Jetson —ver «En la Jetson», más abajo—.
+
 **El directorio de salida tiene que estar vacío**, y el script lo exige antes de arrancar.
 Nuitka no pisa los `.c` que dejó una corrida anterior: aborta con un `AssertionError` que
 no explica nada, o con un error del backend de Scons. Se corta con el motivo, o se borra
@@ -68,6 +72,51 @@ sincronizado con el título de la ventana. Ver el docstring del script para la f
 completa del entregable, por qué el programa y los datos de la instalación quedan en
 carpetas separadas (`program/` e `installation/`), por qué los accesos directos se crean
 en el equipo y no viajan adentro del paquete, y qué hace `Verificar camara.cmd`.
+
+## En la Jetson
+
+El mismo par de scripts, corrido en una Jetson. `build.py` deja afuera las opciones que
+sólo existen para un `.exe` —icono, consola, propiedades del archivo— y `make_release.py`
+arma la misma carpeta con lanzadores de bash:
+
+    <APP_NAME>-<version>/
+        program/                  main.bin y todo lo suyo
+        installation/             lo de esta planta — NO se toca al actualizar
+        _entorno.sh               la ruta de datos, y nada más
+        <APP_NAME>.sh
+        <APP_NAME> sin pantalla.sh
+        Crear accesos directos.sh    menú de aplicaciones y escritorio, con un .desktop
+        Verificar camara.sh          le pregunta a ldd qué biblioteca del SDK falta
+    <APP_NAME>-<version>.tar.gz   esto es lo que se copia al equipo
+
+**Se copia el `.tar.gz`, no la carpeta.** Un pendrive en FAT32 o exFAT no guarda el
+permiso de ejecución, y la carpeta copiada así llega con un `main.bin` que no arranca.
+`--no-archive` lo saltea, para cuando se copia con `rsync` o `scp`.
+
+**La Jetson de build tiene que tener el mismo JetPack que la de la planta.** Nuitka
+empaqueta las bibliotecas que encuentra —CUDA, TensorRT, las de torch—, y las de otro
+JetPack no cargan contra el driver de la planta. También el mismo Python 3.10 y los mismos
+wheels: torch y torchvision de NVIDIA, como dice el `README.md` de la raíz.
+
+**Antes de compilar, las dos claves del repositorio de firma.** `system/license/_public_key.py`
+—sin ella el binario no conoce ninguna clave, toda licencia le da «inválida» y el equipo
+queda para siempre en modo de puesta en marcha— y, si los pesos van cifrados,
+`system/inference/models/_model_key.py`. Las dos están en el `.gitignore`, y `build.py`
+las borra al terminar, compile o no: para reintentar hay que volver a generarlas. Si falta
+la pública, lo avisa antes de arrancar. Ver `docs/licensing.md` y `docs/model_protection.md`.
+
+En el equipo de la planta:
+
+    tar xzf <APP_NAME>-<version>.tar.gz
+    cd <APP_NAME>-<version>
+    bash "Verificar camara.sh" <ip de la cámara>
+    bash "Crear accesos directos.sh"
+
+**El `.engine` no se compila acá**: está atado a la GPU y a la versión de TensorRT, así que
+se genera en el equipo de la planta y se deja en `installation/models/`. La licencia,
+tampoco: se pide desde la pestaña de licencia **del equipo de la planta**, porque la
+solicitud lleva la huella de la máquina que la genera. Una licencia pedida desde la Jetson
+de build sólo vale en la Jetson de build.
 
 ## Qué falta medir en cada fork
 

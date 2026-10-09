@@ -133,6 +133,15 @@ class TestLaunchString:
     def test_each_codec_picks_its_encoder(self, codec, encoder):
         assert encoder in _build_launch_string(codec)
 
+    @pytest.mark.parametrize("codec, encoder", [
+        ("h264_hw", "nvv4l2h264enc"),
+        ("h265_hw", "nvv4l2h265enc"),
+    ])
+    def test_the_hardware_encoder_is_fed_nvmm_memory(self, codec, encoder):
+        """El encoder de la Jetson rechaza memoria de sistema: nvvidconv la pasa a NVMM."""
+        launch = _build_launch_string(codec)
+        assert launch.index("nvvidconv") < launch.index("(memory:NVMM)") < launch.index(encoder)
+
     @pytest.mark.parametrize("codec", list(rtsp._CODEC_PIPELINES))
     def test_every_codec_ends_in_pay0(self, codec):
         """gst-rtsp-server busca la salida por ese nombre: sin pay0 no hay stream."""
@@ -148,6 +157,67 @@ class TestLaunchString:
         """Escalar después de codificar no ahorraría nada: el costo es el encoder."""
         launch = _build_launch_string("h264_sw")
         assert launch.index("videoscale") < launch.index("x264enc")
+
+
+class _FakeGLibError(Exception):
+    """Lo que levanta `Gst.parse_launch` cuando falta un elemento."""
+
+
+class _FakeGst:
+    """`Gst` mínimo: `parse_launch` falla con `error` o devuelve un pipeline que se baja."""
+
+    class State:
+        NULL = "null"
+
+    def __init__(self, error: str = ""):
+        self.error = error
+        self.launched = []
+        self.states = []
+
+    def init(self, _argv):
+        pass
+
+    def parse_launch(self, launch: str):
+        self.launched.append(launch)
+        if self.error:
+            raise _FakeGLibError(self.error)
+        fake = self
+        return type("_Pipeline", (), {"set_state": lambda _self, state: fake.states.append(state)})()
+
+
+def _fake_gstreamer(monkeypatch, error: str = "") -> _FakeGst:
+    fake_gst = _FakeGst(error)
+    monkeypatch.setattr(rtsp, "_GSTREAMER_AVAILABLE", True)
+    monkeypatch.setattr(rtsp, "Gst", fake_gst, raising=False)
+    monkeypatch.setattr(rtsp, "GLib", type("_GLib", (), {"Error": _FakeGLibError}),
+                        raising=False)
+    return fake_gst
+
+
+class TestProbeCodec:
+    def test_without_gstreamer_the_reason_is_the_import_error(self, monkeypatch):
+        _no_gstreamer(monkeypatch)
+        assert "No module named 'gi'" in rtsp.probe_codec("h264_sw")
+
+    def test_an_unknown_codec_is_a_reason_and_not_the_default(self, monkeypatch):
+        """El servidor cae al default; quien verifica la instalación tiene que enterarse."""
+        fake_gst = _fake_gstreamer(monkeypatch)
+        assert "av1_hw" in rtsp.probe_codec("av1_hw")
+        assert fake_gst.launched == []
+
+    def test_a_missing_element_is_the_reason(self, monkeypatch):
+        _fake_gstreamer(monkeypatch, error="no element \"x264enc\"")
+        assert "x264enc" in rtsp.probe_codec("h264_sw")
+
+    def test_it_builds_the_same_pipeline_the_server_builds(self, monkeypatch):
+        fake_gst = _fake_gstreamer(monkeypatch)
+        assert rtsp.probe_codec("h264_hw") == ""
+        assert fake_gst.launched == [_build_launch_string("h264_hw")]
+
+    def test_the_probe_pipeline_is_released(self, monkeypatch):
+        fake_gst = _fake_gstreamer(monkeypatch)
+        rtsp.probe_codec("mjpeg")
+        assert fake_gst.states == [_FakeGst.State.NULL]
 
 
 class TestScaledSize:
