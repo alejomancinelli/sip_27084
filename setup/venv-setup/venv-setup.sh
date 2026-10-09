@@ -2,11 +2,17 @@
 #
 # Creates and provisions the project virtual environment on Linux.
 #
-# Linux counterpart of venv-setup.ps1. The one substantive difference is
-# --system-site-packages: GStreamer's Python bindings (python3-gi) and libgpiod's
-# (python3-libgpiod) are installed by apt as native modules and cannot be pip
-# installed, so the venv has to be able to see them. Everything the app needs from
-# PyPI still gets installed into the venv.
+# Linux counterpart of venv-setup.ps1. Two substantive differences:
+#
+#   - --system-site-packages: GStreamer's Python bindings (python3-gi) and TensorRT's
+#     (python3-libnvinfer) are installed by apt as native modules for the system
+#     Python and cannot be pip installed, so the venv has to be able to see them.
+#     Everything the app needs from PyPI still gets installed into the venv, and
+#     shadows any older apt copy of the same module.
+#   - On a Jetson it also installs the inference framework from setup/jetson/: the
+#     vendor wheels in packages/ first, then the rest pinned by its constraints.txt.
+#     On any other machine the framework is not installed: the mock model covers
+#     development. Run setup/jetson/setup-jetson.sh before this on a Jetson.
 #
 #     ./setup/venv-setup/venv-setup.sh
 #     ./setup/venv-setup/venv-setup.sh --force
@@ -34,6 +40,10 @@ VENV_PYTHON="$VENV_PATH/bin/python"
 REQUIREMENTS="$PROJECT_ROOT/requirements.txt"
 PACKAGES_DIR="$PROJECT_ROOT/packages"
 VERIFY_SCRIPT="$SCRIPT_DIR/verify_env.py"
+JETSON_DIR="$PROJECT_ROOT/setup/jetson"
+
+IS_JETSON=0
+[ -f /etc/nv_tegra_release ] && IS_JETSON=1
 
 step() { echo ""; echo "[STEP] $*"; }
 ok()   { echo "  OK   $*"; }
@@ -91,11 +101,56 @@ if [ "$SKIP_INSTALL" -eq 1 ]; then
 fi
 
 # --- 3/5  PyPI dependencies --------------------------------------------------
-step "3/5  Installing dependencies (large download: TensorFlow is ~250 MB)"
+step "3/5  Installing dependencies"
 
 "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel || fail "Failed to upgrade pip."
-"$VENV_PYTHON" -m pip install -r "$REQUIREMENTS" || fail "'pip install -r requirements.txt' failed."
-ok "requirements.txt installed"
+
+if [ "$IS_JETSON" -eq 0 ]; then
+    "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS" || fail "'pip install -r requirements.txt' failed."
+    ok "requirements.txt installed"
+    note "Not a Jetson: the inference framework (setup/jetson/) is not installed."
+else
+    CONSTRAINTS="$JETSON_DIR/constraints.txt"
+    [ -f "$CONSTRAINTS" ] || fail "$CONSTRAINTS is missing."
+
+    # Vendor wheels first, without dependencies: the framework builds that see the GPU
+    # (NVIDIA's torch) are not on PyPI, and once they are installed and satisfy
+    # constraints.txt nothing below replaces them. No -c here: pip refuses to constrain
+    # a wheel given by path, so the pins are checked by the next install instead, and a
+    # wheel of the wrong version fails there. stapipy is step 4.
+    shopt -s nullglob
+    _vendor=()
+    for _wheel in "$PACKAGES_DIR"/*aarch64.whl; do
+        case "$(basename "$_wheel")" in stapipy*) ;; *) _vendor+=("$_wheel") ;; esac
+    done
+    shopt -u nullglob
+    if [ ${#_vendor[@]} -gt 0 ]; then
+        "$VENV_PYTHON" -m pip install --no-deps "${_vendor[@]}" \
+            || fail "Installing the vendor wheels in packages/ failed."
+        for _wheel in "${_vendor[@]}"; do ok "vendor wheel $(basename "$_wheel")"; done
+    else
+        note "No vendor aarch64 wheels in packages/ - the next step will fail on any"
+        hint "framework pinned in setup/jetson/constraints.txt that PyPI does not have."
+    fi
+
+    "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" -r "$REQUIREMENTS" \
+        || fail "'pip install -r requirements.txt' failed."
+    ok "requirements.txt installed"
+
+    if [ -f "$JETSON_DIR/requirements.txt" ]; then
+        "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" -r "$JETSON_DIR/requirements.txt" \
+            || fail "'pip install -r setup/jetson/requirements.txt' failed."
+        ok "setup/jetson/requirements.txt installed"
+    fi
+
+    # Packages whose declared dependencies would replace something installed above.
+    if [ -f "$JETSON_DIR/requirements-nodeps.txt" ]; then
+        "$VENV_PYTHON" -m pip install --no-deps -c "$CONSTRAINTS" \
+            -r "$JETSON_DIR/requirements-nodeps.txt" \
+            || fail "'pip install --no-deps -r setup/jetson/requirements-nodeps.txt' failed."
+        ok "setup/jetson/requirements-nodeps.txt installed (--no-deps)"
+    fi
+fi
 
 # --- 4/5  stapipy (Sentech) from the local wheel -----------------------------
 # Not published on PyPI: it ships inside the SentechSDK. Watch the architecture -

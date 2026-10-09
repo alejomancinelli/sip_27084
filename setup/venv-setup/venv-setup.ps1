@@ -117,7 +117,7 @@ if ($SkipInstall) {
 }
 
 # --- 3/5  PyPI dependencies --------------------------------------------------
-Write-Step "3/5  Installing dependencies (large download: TensorFlow is ~250 MB)"
+Write-Step "3/5  Installing dependencies"
 
 & $VenvPython -m pip install --upgrade pip setuptools wheel
 if (-not $?) { throw "Failed to upgrade pip." }

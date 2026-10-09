@@ -65,11 +65,13 @@ en «Cómo devolver una mejora al template».
 
 ## Cómo se pone en marcha un equipo
 
-1. **Instalar**: `pip install -r requirements.txt` en un venv nuevo y copiar el wheel de
-   stapipy a `packages/`. El SDK de la cámara se instala con los scripts de
-   `setup/cameras/{windows,linux}/`. En la Jetson, además, torch y torchvision salen del
-   índice de NVIDIA y no de PyPI. Copiar `.env.example` como `.env` y completar los
-   secretos del equipo —`INFLUXDB_TOKEN`, sobre todo—: el `.env` no se versiona.
+1. **Instalar**: en la PC, `setup/venv-setup/venv-setup.ps1`. En la Jetson, en este
+   orden: `setup/jetson/setup-jetson.sh --camera-iface=<nic>` (lo de sistema), el SDK de
+   la cámara con `setup/cameras/linux/`, los wheels de torch y torchvision de NVIDIA y el
+   de stapipy en `packages/`, y `setup/venv-setup/venv-setup.sh`, que instala el framework
+   de `setup/jetson/` con sus versiones fijadas y termina corriendo `verify_env.py`.
+   Copiar `.env.example` como `.env` y completar los secretos del equipo
+   —`INFLUXDB_TOKEN`, sobre todo—: el `.env` no se versiona.
 2. **El modelo**: copiar el `.engine` a `models/` y apuntar
    `inference.models.segmenter.path`. **El `.engine` se compila en la Jetson**: está atado a
    la arquitectura de GPU y a la versión de TensorRT, así que no se puede generar en la PC de

@@ -158,6 +158,29 @@ def _build_launch_string(codec: str) -> str:
     )
 
 
+def probe_codec(codec: str) -> str:
+    """
+    Si el pipeline de `codec` se puede armar en este equipo: '' si sí, el motivo si no.
+
+    Arma el mismo pipeline que arma el servidor cuando llega un cliente y lo descarta,
+    así que lo que falte —un plugin, un encoder de hardware que este módulo no tiene— se
+    ve en la instalación y no con el primer reproductor. No negocia caps ni codifica:
+    contesta si los elementos existen, no si el stream va a andar. Un codec desconocido
+    es un motivo, no el default.
+    """
+    if not _GSTREAMER_AVAILABLE:
+        return f"GStreamer no disponible: {_IMPORT_ERROR}"
+    if codec not in _CODEC_PIPELINES:
+        return f"codec '{codec}' desconocido; opciones: {', '.join(_CODEC_PIPELINES)}"
+    Gst.init(None)
+    try:
+        pipeline = Gst.parse_launch(_build_launch_string(codec))
+    except GLib.Error as e:
+        return str(e)
+    pipeline.set_state(Gst.State.NULL)
+    return ""
+
+
 def _compute_scaled_size(width_px: int, height_px: int,
                          target_width_px: int) -> tuple[int, int] | None:
     """

@@ -142,7 +142,11 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       ui/                     levanta la app entera con cámaras mock; hace de main.py
       license/                emite la solicitud y simula el binario para probar la licencia
       model_protection/       cifra unos pesos y los abre en memoria; mide el costo
-    setup/                    instalación de SDK de cámara (en inglés, ver skill)
+    setup/                    instalación (en inglés, ver skill)
+      cameras/                SDK de cámara, por fabricante y sistema
+      venv-setup/             el venv, y verify_env.py que lo verifica en este equipo
+      jetson/                 lo de sistema de la Jetson; el framework de inferencia y
+                              sus versiones fijadas son DEL PROYECTO
     packages/                 wheels que no están en PyPI (stapipy)
     build/                    compilar con Nuitka y armar el entregable; ver su README
     docs/                     documentos con público propio: el mapa Modbus generado,
@@ -653,7 +657,9 @@ describe qué se mide en esta cinta, es de este proyecto.**
 - **De este proyecto** —lo que se reescribió al migrar—: `config.yaml` (sección `process:`
   incluida), `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
   `system/inference/metrics.py`, `system/inference/annotations.py`,
-  `system/inference/models/yolo_seg_model.py`, este archivo y el `README.md`.
+  `system/inference/models/yolo_seg_model.py`, el contenido de
+  `setup/jetson/{constraints,requirements,requirements-nodeps}.txt` y el bloque del fork
+  de `setup/venv-setup/verify_env.py`, este archivo y el `README.md`.
 - **Lo que este proyecto agregó de genérico ya volvió al template**: el subsistema de GPIO
   (`system/gpio_control.py`, `system/formats/gpio_status.py` y su cableado en `main.py`),
   `system/inference/rolling.py` y los arreglos de maquinaria de la sección B de
