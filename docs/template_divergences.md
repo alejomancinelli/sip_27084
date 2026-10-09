@@ -94,9 +94,24 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-**Hoy no hay ninguna pendiente.** Todo lo que estaba en esta tabla volvió con el PR #35;
-ver «Lo que ya volvió». Una mejora genérica nueva que nazca acá se anota en una tabla
-con tres columnas —archivo, qué se cambió, por qué es genérico— hasta que vuelva.
+Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Las de hoy son
+del build compilado en la Jetson; el detalle de por qué cada una está en
+`.claude/plans/jetson-compilation.md`.
+
+| Archivo | Qué se cambió | Por qué es genérico |
+|---|---|---|
+| `build/build.py` | En Linux el build es acelerado (`_ACCELERATED`): compila `system`, `tools` y `ui` con `no_site` y `--file-reference-choice=runtime`; lo de terceros —`cryptography` incluida— va suelto | En cualquier Jetson el standalone de torch no termina con 8 GB, y CUDA, TensorRT y Python salen del JetPack igual |
+| `build/make_release.py` | El entregable acelerado: `program/site-packages` copiado del venv sin lo de build, symlinks de apt como symlinks, lanzadores con `PYTHONPATH`, verificador de cámara que busca los paquetes donde viajan | Es la otra mitad del build acelerado |
+| `build/requirements.txt`, `build/README.md`, `build/.gitignore` | Nuitka 4.2.2 declarado; la forma de Linux documentada | Ídem |
+| `system/paths.py` | `APP_DIR` acelerado desde `__compiled__.containing_dir`, no desde `sys.executable` | Acelerado, `sys.executable` es el intérprete del equipo de build |
+| `system/license/verify.py` | Autocontrol del verificador con el vector 1 de la RFC 8032 antes de cada verificación | Con `cryptography` suelta, vaciar su `verify()` es el ataque de un rato en cualquier fork |
+| `system/system_monitor.py` | Potencia del INA3221 desde `in1_input × curr1_input` | JetPack 6 no publica `power1_input`: toda Jetson con JetPack 6 reporta 0 W |
+| `main.py` (fuera del bloque del fork) | El handler de SIGINT/SIGTERM agenda el cierre con `QTimer.singleShot(0, app.quit)` en vez de cerrar (`_build_interrupt_handler()`) | Compilado, el handler corre con el lock del config tomado y Qt 6 emite `aboutToQuit` en el acto: el cierre se trababa y abortaba en cualquier fork |
+| `tools/camera/abstract_driver.py`, `tools/camera/st_driver.py`, `system/camera/capture_thread.py` | `interrupt()` en el contrato del driver; `StDriver` despierta con él `connect()` y los reintentos; `CaptureThread.requestInterruption()` lo llama | Sin cámara, un cierre durante `connect()` dejaba el hilo vivo hasta 20 s y Qt abortaba, también desde fuentes |
+
+Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
+`test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
+`test/tools/camera/test_st_driver.py` y `test/build/`.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.

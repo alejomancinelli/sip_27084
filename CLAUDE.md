@@ -466,6 +466,20 @@ siguen vienen del template.
   publica **por tick y no por evento**, porque una serie de salud por evento no agrega
   información. La estructura de las series —measurements, tags y nombres de campo— es un
   contrato con los dashboards y está en `docs/influxdb.md`.
+- **En la Jetson el build es acelerado, no standalone.** Se compila lo nuestro —`system`,
+  `tools`, `ui`— y lo de terceros viaja suelto en `program/site-packages`, copiado del venv
+  que pasó `verify_env.py`: el standalone de torch no termina con 8 GB, y CUDA, TensorRT y
+  Python salen del JetPack igual. Lo decide `_ACCELERATED` en `build/build.py`; Windows
+  sigue standalone. `cryptography` va suelta aunque verifique la licencia —compilada,
+  Nuitka 4.2.2 carga vacía su extensión de Rust y ninguna licencia valida— y la cubre el
+  autocontrol de `system/license/verify.py`.
+- **Un handler de señal agenda el trabajo, no lo hace.** Compilado, Python corre el handler en
+  la primera instrucción no compilada del hilo principal, que suele estar adentro de un lock
+  —el `deepcopy` de `ConfigManager.get()`—, y en Qt 6 `quit()` corre `aboutToQuit` en el
+  acto: cerrar desde el handler dejaba a `stop()` esperando hilos que pedían ese lock, y Qt
+  abortaba al destruirlos vivos. El de `main.py` hace `QTimer.singleShot(0, app.quit)`. Por
+  lo mismo, una espera larga de un driver —un `connect()` que espera una cámara que no
+  aparece— se despierta con `interrupt()`, que `CaptureThread.requestInterruption()` llama.
 - **La licencia sólo se enforcea en un build compilado.** Corriendo desde fuentes el
   estado es `unlicensed_build`, la política es `off` y no se restringe nada, con una línea
   de log para que nunca sea silencioso: sacar la validación de un `.py` es borrar un `if`,
@@ -707,8 +721,9 @@ La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
 
-- **El build de la Jetson.** Desde fuentes el equipo está verificado; compilado con Nuitka
-  en Linux, nunca se probó. El orden, los riesgos y lo que queda por arreglar están en
+- **El binario de la Jetson con la cámara real.** El build acelerado está probado de punta a
+  punta —licencia, UI, Modbus, inferencia al mismo ritmo que desde fuentes y cierre limpio
+  por señal—, pero sin la cámara conectada. Lo medido y lo que falta está en
   `.claude/plans/jetson-compilation.md`.
 - **El widget del área central del monitor.** Hoy es la grilla de cámaras genérica. La
   versión anterior tenía un gráfico de áreas apiladas con la composición; si se lo quiere de
