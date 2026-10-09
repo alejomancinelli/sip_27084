@@ -65,7 +65,7 @@ video:
     # gst-rtsp-server instalado en el equipo: sin eso no levanta nada y lo avisa.
     enabled: false
     port: 8554
-    codec: h264_sw              # h264_sw | h264_hw | h265_sw | h265_hw | mjpeg
+    codec: h264_hw              # h264_sw | h264_hw | h265_sw | h265_hw | mjpeg
     fps: 15                     # ritmo del stream; el de la cámara o más bajo
     frame_width_px: 0           # ancho al que se escala antes de codificar; 0 = nativo
     net_interfaces: []          # interfaces por las que se publica; [] = todas

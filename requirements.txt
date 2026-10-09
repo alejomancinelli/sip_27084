@@ -14,7 +14,12 @@ PyYAML>=6.0
 
 # GUI y hilos de Qt: los QThread de system/ dependen de esto aunque no haya
 # ventana, porque las señales son el cableado entre subsistemas.
-PySide6>=6.5,<7
+#
+# Versión exacta, la misma en la PC y en la Jetson: la interfaz se prueba en una y corre
+# en la otra. Es la más nueva con wheel aarch64 para el glibc 2.35 de Ubuntu 22.04
+# (JetPack 6); las siguientes piden un glibc más nuevo. Subirla es subirla en los dos
+# lados, y sólo cuando la Jetson tenga wheel.
+PySide6==6.8.0.2
 
 # Métricas de hardware (CPU, RAM, disco, contadores de red) para system_monitor.
 # Multiplataforma: la misma API responde en Windows y en el aarch64 de la Jetson.

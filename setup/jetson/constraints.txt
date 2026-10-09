@@ -25,7 +25,3 @@ numpy>=1.24,<2.0
 # metadata header, and that header is what this version reads. Re-exporting the engine
 # with another version means changing this pin in the same commit.
 ultralytics==8.4.90
-
-# The newest PySide6 with an aarch64 wheel for Ubuntu 22.04's glibc (2.35), and the one
-# the UI was checked with on the Jetson. Newer aarch64 wheels need a newer glibc.
-PySide6==6.8.0.2
