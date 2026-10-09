@@ -62,6 +62,27 @@ class TestExtraFlags:
         assert "--enable-plugin=pyside6" in flags
 
 
+class TestOptionalPackages:
+    """
+    Lo que la maquinaria necesita que Nuitka incluya a mano, y sólo donde está instalado.
+    Va fuera de `_EXTRA_FLAGS`: el GPIO es del template, no de un fork.
+    """
+
+    def test_an_installed_package_is_included(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
+        assert "--include-package=gpiod" in build_script._flags("build/out")
+
+    def test_a_missing_one_is_left_out(self, build_script, monkeypatch):
+        """En Windows no existe, y pedirlo cortaría el build con «package not found»."""
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: False)
+        assert not [flag for flag in build_script._flags("build/out")
+                    if flag.startswith("--include-package=")]
+
+    def test_the_fork_block_stays_empty_either_way(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
+        assert build_script._EXTRA_FLAGS == ()
+
+
 class TestExclusions:
     def test_each_excluded_package_gets_its_own_flag(self, build_script, monkeypatch):
         monkeypatch.setattr(build_script, "_EXCLUDED", ("tensorflow", "keras"))
@@ -73,3 +94,23 @@ class TestExclusions:
         assert build_script._EXCLUDED == ()
         assert not [f for f in build_script._flags("build/out")
                     if f.startswith("--nofollow-import-to=")]
+
+
+class TestPlatform:
+    """
+    Las propiedades y el icono del `.exe` son recursos de un binario PE. En la Jetson no
+    hay dónde guardarlos, y el comando no los lleva.
+    """
+
+    def test_windows_gets_the_executable_properties(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_IS_WINDOWS", True)
+        flags = build_script._flags("build/out")
+        assert f"--windows-icon-from-ico={build_script._ICON}" in flags
+        assert any(flag.startswith("--product-version=") for flag in flags)
+
+    def test_linux_does_not(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_IS_WINDOWS", False)
+        flags = build_script._flags("build/out")
+        assert not [flag for flag in flags if flag.startswith("--windows-")]
+        assert not any(flag.startswith("--product-version=") for flag in flags)
+        assert "--standalone" in flags
