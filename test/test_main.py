@@ -127,6 +127,28 @@ class TestInterruptSignals:
         handled = any(getattr(s, "name", "") == "SIGBREAK" for s in main._interrupt_signals())
         assert handled is expected
 
+    def test_the_handler_schedules_the_quit_instead_of_running_it(self, monkeypatch):
+        """
+        El handler puede correr con un lock tomado, y en Qt 6 `quit()` corre `stop()` en el
+        acto: cerrar desde ahí trababa el cierre con hilos que pedían ese lock.
+        """
+        scheduled, quits = [], []
+
+        class FakeTimer:
+            @staticmethod
+            def singleShot(interval_ms: int, slot: object):
+                scheduled.append((interval_ms, slot))
+
+        class FakeApp:
+            def quit(self):
+                quits.append(True)
+
+        app = FakeApp()
+        monkeypatch.setattr(main, "QTimer", FakeTimer)
+        main._build_interrupt_handler(app)(signal.SIGTERM, None)
+        assert quits == []
+        assert scheduled == [(0, app.quit)]
+
 
 class TestModbusServerWiring:
     """

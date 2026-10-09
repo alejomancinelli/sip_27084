@@ -151,6 +151,13 @@ tampoco: se pide desde la pestaña de licencia **del equipo de la planta**, porq
 solicitud lleva la huella de la máquina que la genera. Una licencia pedida desde la Jetson
 de build sólo vale en la Jetson de build.
 
+**Compilado, el handler de una señal corre en un lugar distinto que desde fuentes.** Python lo
+ejecuta entre dos instrucciones no compiladas del hilo principal, y en el binario la primera
+suele estar adentro de una librería con un lock tomado —el `deepcopy` de
+`ConfigManager.get()`—. Por eso el handler de `main.py` sólo agenda el cierre en el event
+loop: un handler que cierre ahí mismo traba el cierre con cualquier hilo que pida ese lock,
+y Qt aborta al destruir el hilo todavía vivo. Vale para cualquier handler que se agregue.
+
 ## Qué falta medir en cada fork
 
 - El tamaño y el tiempo de build reales de esta instalación, con sus exclusiones. Un

@@ -2037,10 +2037,10 @@ def main(argv: list | None = None) -> int:
 
     # Ctrl+C y el SIGTERM de un servicio, con el event loop de Qt corriendo: sin esto la
     # señal queda esperando a que Qt devuelva el control, que no pasa. El timer al vacío
-    # es lo que le da al intérprete la chance de atenderla.
-    #
+    # es lo que le da al intérprete la chance de atenderla desde fuentes; compilado, la
+    # atiende la primera instrucción no compilada que corra el hilo principal.
     for signal_number in _interrupt_signals():
-        signal.signal(signal_number, lambda *_: app.quit())
+        signal.signal(signal_number, _build_interrupt_handler(app))
     interrupt_timer = QTimer()
     interrupt_timer.timeout.connect(lambda: None)
     interrupt_timer.start(_SIGNAL_POLL_INTERVAL_MS)
@@ -2062,6 +2062,20 @@ def _interrupt_signals() -> tuple:
     if hasattr(signal, "SIGBREAK"):
         signal_numbers.append(signal.SIGBREAK)
     return tuple(signal_numbers)
+
+
+def _build_interrupt_handler(app: QCoreApplication) -> Callable:
+    """
+    El handler de esas señales: agenda el cierre para la próxima vuelta del event loop.
+
+    No cierra ahí mismo porque Python corre el handler entre dos instrucciones cualesquiera
+    del hilo principal —compilado, en la primera que no lo esté, que suele ser el
+    `deepcopy` de `ConfigManager.get()` con su lock tomado— y en Qt 6 `quit()` emite
+    `aboutToQuit` en el acto. `stop()` correría anidado ahí, esperando a hilos que piden
+    ese mismo lock: el cierre se traba hasta el timeout y el proceso aborta con el
+    `QThread` todavía vivo. Desde el event loop no queda nada tomado debajo.
+    """
+    return lambda *_: QTimer.singleShot(0, app.quit)
 
 
 def _exit(exit_code: int, config: ConfigManager) -> int:
