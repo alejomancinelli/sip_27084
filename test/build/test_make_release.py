@@ -79,7 +79,7 @@ class TestLinuxRelease:
     donde existe.
     """
 
-    def _write(self, make_release, tmp_path, app_name: str = "Detección de pellet"):
+    def _write(self, make_release, tmp_path, app_name: str = "Inspección de piezas"):
         release, program = tmp_path / "release", tmp_path / "release" / "program"
         program.mkdir(parents=True)
         make_release._write_linux_scripts(str(release), str(program), "main.bin", app_name)
@@ -87,8 +87,8 @@ class TestLinuxRelease:
 
     def test_the_launchers_exec_the_nuitka_binary(self, make_release, tmp_path):
         release = self._write(make_release, tmp_path)
-        launcher = (release / "Detección de pellet.sh").read_text(encoding="utf-8")
-        headless = (release / "Detección de pellet sin pantalla.sh").read_text(encoding="utf-8")
+        launcher = (release / "Inspección de piezas.sh").read_text(encoding="utf-8")
+        headless = (release / "Inspección de piezas sin pantalla.sh").read_text(encoding="utf-8")
         assert 'exec "$BASE/program/main.bin" "$@"' in launcher
         assert 'exec "$BASE/program/main.bin" --headless "$@"' in headless
         assert 'source "$BASE/_entorno.sh"' in launcher
@@ -134,8 +134,8 @@ class TestLinuxRelease:
 
 class TestDesktopEntryId:
     def test_accents_and_spaces_become_a_plain_slug(self, make_release):
-        assert (make_release._desktop_entry_id("Detección de calidad de pellet")
-                == "deteccion-de-calidad-de-pellet")
+        assert (make_release._desktop_entry_id("Inspección de calidad de piezas")
+                == "inspeccion-de-calidad-de-piezas")
 
     def test_a_name_without_ascii_letters_still_gets_one(self, make_release):
         assert make_release._desktop_entry_id("・・・") == "app"

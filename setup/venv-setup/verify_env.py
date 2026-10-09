@@ -358,6 +358,9 @@ def _check_models(config: dict) -> list[str]:
 
 def _check_inference(config: dict) -> list[str]:
     """The fork's framework: imports, then its GPU probe once everything imported."""
+    if not INFERENCE_MODULES:
+        print(f"[{OK}] {'inference':<18} no framework declared - the mock model needs none")
+        return []
     errors, present = _check_modules(INFERENCE_MODULES, IS_JETSON)
     if len(present) < len(INFERENCE_MODULES):
         if not IS_JETSON:

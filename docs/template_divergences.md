@@ -114,6 +114,8 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
 
+Todo lo de esta tabla, más el timestamp del overlay y el STC-MCS312POE del catálogo, está en el [PR #35 del template](https://github.com/alejomancinelli/cv_projects_template/pull/35). Los archivos de maquinaria quedaron idénticos acá y allá, así que el merge de vuelta sólo choca en lo que es del fork: `setup/jetson/*.txt`, el bloque del fork de `verify_env.py`, `CLAUDE.md`, `README.md` y `system/version.py`.
+
 ### Lo que ya volvió
 
 Entró al template y ahora es maquinaria: el arreglo de conexión lenta de `st_driver.py`, el

@@ -1,5 +1,5 @@
-# Inference stack for the Jetson, installed by venv-setup.sh after the root
-# requirements.txt and always with -c setup/jetson/constraints.txt.
+# Inference stack for the Jetson, installed by venv-setup.sh in the same pass as the
+# root requirements.txt and always with -c setup/jetson/constraints.txt.
 #
 # PROJECT FILE: this is the framework this fork's model runs on. A fork on another
 # framework lists its own here.

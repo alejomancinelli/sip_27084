@@ -98,7 +98,7 @@ APT_PACKAGES=(
     python3.10 python3.10-venv python3.10-dev python3-pip
     # Nuitka on Linux needs patchelf for a standalone build; ccache cuts rebuilds.
     build-essential patchelf ccache
-    # torch from NVIDIA links against OpenBLAS.
+    # NVIDIA's torch for Jetson links against OpenBLAS. Harmless for another framework.
     libopenblas-dev
     # GStreamer, the RTSP server and their Python bindings. The bindings come from apt;
     # venv-setup.sh links `gi` into the venv.
@@ -123,7 +123,7 @@ sudo apt-get install -y --no-upgrade "${APT_PACKAGES[@]}"
 ok "${#APT_PACKAGES[@]} packages present"
 
 # --- 4/7  NVIDIA runtime pieces ------------------------------------------------------
-step "4/7  Checking TensorRT, the Jetson GStreamer plugins and torch's libraries"
+step "4/7  Checking TensorRT, the Jetson GStreamer plugins and what NVIDIA's torch loads"
 
 # TensorRT's Python binding is a JetPack apt package for the system Python 3.10;
 # venv-setup.sh links it into the venv.
@@ -151,12 +151,12 @@ for _element in nvvidconv nvv4l2h264enc nvv4l2h265enc x264enc x265enc; do
     fi
 done
 
-# torch 2.5 from NVIDIA loads libcusparseLt.so.0 at import. It is not part of JetPack's
-# default install; verify_env.py will show the import error if it stays missing.
+# NVIDIA's torch (2.5 and later) loads libcusparseLt.so.0 at import. It is not part of
+# JetPack's default install; verify_env.py shows the import error if it stays missing.
 if ldconfig -p | grep "libcusparseLt.so.0" > /dev/null; then
     ok "libcusparseLt.so.0"
 else
-    note "libcusparseLt.so.0 not found - torch 2.5 will fail to import without it."
+    note "libcusparseLt.so.0 not found - NVIDIA's torch 2.5+ fails to import without it."
     hint "It comes from NVIDIA's CUDA apt repository:"
     hint "  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/cuda-keyring_1.1-1_all.deb"
     hint "  sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt-get update"
@@ -292,6 +292,6 @@ echo ""
 [ "$_relogin" -eq 0 ] || echo " Log out and back in (or reboot): the new groups apply to new sessions."
 echo " Next:"
 echo "   1. Camera SDK:   bash setup/cameras/linux/sentech.sh"
-echo "   2. NVIDIA torch and torchvision wheels into packages/ (see setup/jetson/requirements.txt)"
+echo "   2. The vendor wheels the fork's framework needs (NVIDIA torch...) into packages/ - see setup/jetson/requirements.txt"
 echo "   3. Python side:  bash setup/venv-setup/venv-setup.sh"
 echo "   4. The .engine into models/, matching inference.models.*.path in config.yaml"

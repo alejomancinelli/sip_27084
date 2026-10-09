@@ -90,19 +90,18 @@ def _is_installed(package: str) -> bool:
 #         # Alcanza con que el import ande; la función decorada no se llama nunca.
 #         "--module-parameter=numba-disable-jit=yes",
 #     )
-_EXTRA_FLAGS: tuple = (
-    # `gpiod` se importa adentro de un try/except y su submódulo `line` desde adentro de
-    # un método, que es justo lo que el análisis estático de Nuitka puede no seguir. Sin
-    # esto el binario arranca igual —el módulo degrada a modo simulado— y el equipo se
-    # queda sin entradas ni salidas sin que nada falle, que es la peor forma de perderlas.
-    #
-    # Sólo existe en Linux, así que se agrega cuando está instalado: un build en Windows
-    # cortaría con «package not found» por un paquete que en Windows no va a estar nunca.
-    *(("--include-package=gpiod",) if _is_installed("gpiod") else ()),
-)
+_EXTRA_FLAGS: tuple = ()
 
 # Datos que viajan con el programa: los lee `paths.app_file()`, no `DATA_DIR`.
 _DATA_DIRS = ("ui/styles", "ui/icons")
+
+# Paquetes de la maquinaria que el análisis de Nuitka puede no seguir solo, y que entran
+# sólo si están instalados. `gpiod` se importa adentro de un try/except y su submódulo
+# `line` desde adentro de un método: sin la opción el binario arranca igual —el módulo
+# degrada a modo simulado— y el equipo se queda sin entradas ni salidas sin que nada
+# falle, que es la peor forma de perderlas. Sólo existe en Linux, y en Windows Nuitka
+# cortaría con «package not found» por un paquete que ahí no va a estar nunca.
+_OPTIONAL_PACKAGES = ("gpiod",)
 
 # Nuitka no compila para otra plataforma: el binario es de la máquina donde corre esto.
 _IS_WINDOWS = sys.platform == "win32"
@@ -144,6 +143,8 @@ def _flags(out_dir: str) -> list:
         "--assume-yes-for-downloads",
         f"--output-dir={out_dir}",
     ]
+    flags += [f"--include-package={package}" for package in _OPTIONAL_PACKAGES
+              if _is_installed(package)]
     flags += list(_EXTRA_FLAGS)
     flags += [f"--nofollow-import-to={package}" for package in _EXCLUDED]
     flags += [f"--include-data-dir={directory}={directory}" for directory in _DATA_DIRS]

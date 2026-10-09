@@ -62,6 +62,27 @@ class TestExtraFlags:
         assert "--enable-plugin=pyside6" in flags
 
 
+class TestOptionalPackages:
+    """
+    Lo que la maquinaria necesita que Nuitka incluya a mano, y sólo donde está instalado.
+    Va fuera de `_EXTRA_FLAGS`: el GPIO es del template, no de un fork.
+    """
+
+    def test_an_installed_package_is_included(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
+        assert "--include-package=gpiod" in build_script._flags("build/out")
+
+    def test_a_missing_one_is_left_out(self, build_script, monkeypatch):
+        """En Windows no existe, y pedirlo cortaría el build con «package not found»."""
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: False)
+        assert not [flag for flag in build_script._flags("build/out")
+                    if flag.startswith("--include-package=")]
+
+    def test_the_fork_block_stays_empty_either_way(self, build_script, monkeypatch):
+        monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
+        assert build_script._EXTRA_FLAGS == ()
+
+
 class TestExclusions:
     def test_each_excluded_package_gets_its_own_flag(self, build_script, monkeypatch):
         monkeypatch.setattr(build_script, "_EXCLUDED", ("tensorflow", "keras"))

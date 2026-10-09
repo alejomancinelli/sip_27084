@@ -64,9 +64,9 @@ pyserial>=3.5
 influxdb-client>=1.36
 paho-mqtt>=1.6,<3
 
-# Inferencia: NO va acá. El framework del modelo —en este proyecto torch, torchvision y
-# ultralytics sobre TensorRT— se instala sólo en el equipo, desde setup/jetson/: torch y
-# torchvision para la Jetson son wheels de NVIDIA que no están en PyPI, y los de PyPI
+# Inferencia: NO va acá. El framework del modelo de cada fork —torch, ultralytics,
+# TensorRT, el que use— se declara en setup/jetson/ y se instala sólo en el equipo: torch
+# y torchvision para la Jetson son wheels de NVIDIA que no están en PyPI, y los de PyPI
 # instalan una build que no ve la GPU. En la PC de desarrollo no hace falta ninguno: el
 # modelo `mock` cubre el camino entero y la suite de tests corre sin ellos.
 

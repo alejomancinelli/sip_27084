@@ -58,6 +58,10 @@ note() { echo " NOTE  $*"; }
 hint() { echo "        $*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
+# Whether a requirements file declares anything. The template ships the setup/jetson/
+# lists with comments only, and pip refuses an install that has nothing to install.
+has_requirements() { [ -f "$1" ] && grep -Ev '^[[:space:]]*(#|$)' "$1" > /dev/null; }
+
 echo "======================================================================"
 echo " Project environment provisioning (Linux)"
 echo "======================================================================"
@@ -175,7 +179,7 @@ else
     # dependencies, and only the framework file names them. Two passes leave pip
     # reporting a conflict in between that the second pass then solves.
     _requirement_files=(-r "$REQUIREMENTS")
-    if [ -f "$JETSON_DIR/requirements.txt" ]; then
+    if has_requirements "$JETSON_DIR/requirements.txt"; then
         _requirement_files+=(-r "$JETSON_DIR/requirements.txt")
     fi
     "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" "${_requirement_files[@]}" \
@@ -183,7 +187,7 @@ else
     ok "requirements.txt and setup/jetson/requirements.txt installed"
 
     # Packages whose declared dependencies would replace something installed above.
-    if [ -f "$JETSON_DIR/requirements-nodeps.txt" ]; then
+    if has_requirements "$JETSON_DIR/requirements-nodeps.txt"; then
         "$VENV_PYTHON" -m pip install --no-deps -c "$CONSTRAINTS" \
             -r "$JETSON_DIR/requirements-nodeps.txt" \
             || fail "'pip install --no-deps -r setup/jetson/requirements-nodeps.txt' failed."
