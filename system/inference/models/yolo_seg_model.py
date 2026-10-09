@@ -19,7 +19,9 @@ TensorRT (`runtime.deserialize_cuda_engine(bytes)`), que sí recibe bytes; está
 `docs/model_protection.md`.
 """
 
+import json
 import os
+import time
 
 import cv2
 import numpy as np
@@ -40,6 +42,9 @@ os.environ.setdefault("YOLO_OFFLINE", "true")
 
 # Ultralytics quiere la confianza en 0–1 y el contrato la declara en 0–100.
 _PCT_TO_FRACTION = 100.0
+
+_METADATA_LENGTH_BYTES = 4      # cabecera de un .engine de ultralytics: largo del JSON
+_WARMUP_SIDE_PX = 640           # entrada por defecto de YOLO, si el motor no la declara
 
 
 
@@ -77,37 +82,63 @@ class YoloSegModel(AbstractModel):
         # Los pesos en claro se leen igual por el contrato: es lo que valida el archivo,
         # deja la metadata que pueda traer y confronta la tarea antes de gastar la carga.
         # El framework después los relee de la ruta, que es lo único que acepta.
-        if not self._read_weights(path):
+        weights = self._read_weights(path)
+        if not weights:
+            return
+
+        # La tarea de un `.engine` sale de la cabecera que ultralytics le antepone al
+        # exportarlo, y se confronta antes de tocar TensorRT. `YOLO(path, task=...)` no
+        # sirve para eso: con un motor devuelve la tarea que se le pasó, no la del archivo.
+        exported = _ultralytics_metadata(weights)
+        if exported.get("task") and not self._verify_task(str(exported["task"])):
             return
 
         # Exception y no ImportError: importar ultralytics arrastra matplotlib, torch y
         # TensorRT, y cualquiera de ellos puede fallar con otra cosa. Escapada, mata el hilo
         # del motor sin una línea en el log.
         try:
-            from ultralytics import YOLO
+            import ultralytics
+            yolo_class = ultralytics.YOLO
+            installed_version = getattr(ultralytics, "__version__", None)
         except Exception as e:
             self._set_error(f"No se pudo importar ultralytics: {type(e).__name__}: {e}")
             logger.error(f"[Inference] Modelo '{self.model_slot}': {self._error}")
             return
+        _warn_version_mismatch(self.model_slot, exported.get("version"), installed_version)
 
         self._device = _pick_device()
         try:
-            model = YOLO(path, task="segment")
+            model = yolo_class(path, task="segment")
         except Exception as e:
             self._set_error(f"No se pudieron cargar los pesos de '{path}': {e}")
             logger.error(f"[Inference] Modelo '{self.model_slot}': {self._error}")
             return
 
-        # La tarea que informa el runtime, ahora sí: un `.engine` de ultralytics la trae en
-        # su metadata, y un desacuerdo tiene que salir acá y no adentro del postproceso.
-        if not self._verify_task(str(getattr(model, "task", "") or "")):
+        # Unos pesos sin cabecera —un `.pt`— declaran la tarea en el checkpoint, que es lo
+        # que ultralytics deja en `task` al cargarlos.
+        checkpoint_task = str(getattr(model, "task", "") or "")
+        if not exported.get("task") and not self._verify_task(checkpoint_task):
+            return
+
+        # Con un `.engine`, `YOLO()` sólo guarda la ruta: TensorRT abre el motor con el
+        # primer frame. Se fuerza acá para que un motor que no abre en esta GPU deje el
+        # modelo en error y no aparezca como un fallo de inferencia en cada frame, y para
+        # que la demora de abrirlo no caiga sobre el primer frame de la línea.
+        started = time.monotonic()
+        try:
+            model.predict(source=_warmup_frame(exported), verbose=False, device=self._device)
+        except Exception as e:
+            self._set_error(f"Los pesos de '{path}' cargaron pero no infieren: "
+                            f"{type(e).__name__}: {e}")
+            logger.error(f"[Inference] Modelo '{self.model_slot}': {self._error}")
             return
 
         self._model = model
         self._set_loaded()
         logger.info(
             f"[Inference] Modelo '{self.model_slot}': segmentación cargada en "
-            f"'{self._device}' desde '{path}'."
+            f"'{self._device}' desde '{path}' (primera inferencia: "
+            f"{(time.monotonic() - started) * 1000:.0f} ms)."
         )
 
     def predict(self, frame_bgr: np.ndarray,
@@ -196,6 +227,50 @@ def _is_protected_file(path: str) -> bool:
                 encrypted_weights.HEADER_SIZE))
     except OSError:
         return False
+
+
+def _ultralytics_metadata(weights: bytes) -> dict:
+    """
+    La metadata que ultralytics antepone a un `.engine`: largo en 4 bytes y un JSON.
+
+    Es el formato con el que ultralytics la escribe al exportar y la lee al cargar.
+    Unos pesos sin esa cabecera —un `.pt`, que es un zip, o un motor exportado con
+    `trtexec`— devuelven {}.
+    """
+    if len(weights) < _METADATA_LENGTH_BYTES:
+        return {}
+    length = int.from_bytes(weights[:_METADATA_LENGTH_BYTES], "little", signed=True)
+    end = _METADATA_LENGTH_BYTES + length
+    if length <= 0 or end > len(weights):
+        return {}
+    try:
+        metadata = json.loads(weights[_METADATA_LENGTH_BYTES:end].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _warn_version_mismatch(model_slot: str, exported_version, installed_version):
+    """
+    Avisa si el motor se exportó con otro ultralytics que el instalado.
+
+    No corta: casi siempre carga igual. Pero la cabecera la lee el ultralytics instalado,
+    y si un cambio de formato rompe la carga, el motivo tiene que estar en el log.
+    """
+    if exported_version and installed_version and exported_version != installed_version:
+        logger.warning(
+            f"[Inference] Modelo '{model_slot}': exportado con ultralytics "
+            f"{exported_version} y corre con {installed_version}. Fijar la misma versión "
+            f"en setup/jetson/constraints.txt, o reexportar el motor."
+        )
+
+
+def _warmup_frame(metadata: dict) -> np.ndarray:
+    """Un frame negro del tamaño de entrada del motor, o de 640 si no lo declara."""
+    size = metadata.get("imgsz") or [_WARMUP_SIDE_PX, _WARMUP_SIDE_PX]
+    if isinstance(size, int):
+        size = [size, size]
+    return np.zeros((int(size[0]), int(size[1]), 3), dtype=np.uint8)
 
 
 def _pick_device() -> str:

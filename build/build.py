@@ -107,6 +107,13 @@ _DATA_DIRS = ("ui/styles", "ui/icons")
 # Nuitka no compila para otra plataforma: el binario es de la máquina donde corre esto.
 _IS_WINDOWS = sys.platform == "win32"
 
+# Lo que el repositorio de firma deja justo antes de compilar. Entra al binario y se borra
+# después, compile o no: no se commitea y no tiene por qué quedar en el disco, donde
+# además le cambia a la suite de tests lo que encuentra al importar. La pública es la que
+# no puede faltar: sin ella el binario no valida ninguna licencia.
+_PUBLIC_KEY_MODULE = "system/license/_public_key.py"
+_KEY_MODULES = (_PUBLIC_KEY_MODULE, "system/inference/models/_model_key.py")
+
 
 def _windows_flags() -> list:
     """
@@ -184,9 +191,16 @@ def main() -> int:
         return 0
 
     _require_empty(out_dir, args.force)
+    if not os.path.isfile(os.path.join(_REPO_ROOT, _PUBLIC_KEY_MODULE)):
+        print(f"  OJO: no está {_PUBLIC_KEY_MODULE}. Este binario no va a validar ninguna "
+              f"licencia y queda en puesta en marcha. Ver docs/licensing.md.\n")
     started = time.monotonic()
-    # `cwd` en la raíz: las rutas de los datos y del icono son relativas a ella.
-    done = subprocess.run(command, cwd=_REPO_ROOT)
+    try:
+        # `cwd` en la raíz: las rutas de los datos y del icono son relativas a ella.
+        done = subprocess.run(command, cwd=_REPO_ROOT)
+    finally:
+        for removed in _remove_key_modules():
+            print(f"\n  se borra {removed}: ya está adentro del binario")
     elapsed = time.monotonic() - started
 
     dist = os.path.join(out_dir, "main.dist")
@@ -200,6 +214,17 @@ def main() -> int:
     print(f"\n  Ahora el entregable:")
     print(f"    {_shown([sys.executable, 'build/make_release.py', '--dist', f'{args.out}/main.dist'])}")
     return 0
+
+
+def _remove_key_modules() -> list:
+    """Borra los módulos de clave que haya. Devuelve los que borró, relativos a la raíz."""
+    removed = []
+    for relative in _KEY_MODULES:
+        path = os.path.join(_REPO_ROOT, relative)
+        if os.path.isfile(path):
+            os.remove(path)
+            removed.append(relative)
+    return removed
 
 
 def _shown(command: list) -> str:

@@ -93,3 +93,46 @@ class TestPlatform:
         assert not [flag for flag in flags if flag.startswith("--windows-")]
         assert not any(flag.startswith("--product-version=") for flag in flags)
         assert "--standalone" in flags
+
+
+def _place_key_modules(root) -> list:
+    """Deja los dos módulos de clave como los deja el repositorio de firma."""
+    paths = []
+    for relative in ("system/license/_public_key.py", "system/inference/models/_model_key.py"):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# clave generada\n", encoding="utf-8")
+        paths.append(path)
+    return paths
+
+
+class TestKeyModules:
+    """
+    Las claves entran al binario y se borran después. Una que queda en el disco cambia lo
+    que la suite encuentra al importar, y no tiene por qué estar en un checkout.
+    """
+
+    def test_both_are_removed(self, build_script, monkeypatch, tmp_path):
+        paths = _place_key_modules(tmp_path)
+        monkeypatch.setattr(build_script, "_REPO_ROOT", str(tmp_path))
+        assert len(build_script._remove_key_modules()) == 2
+        assert not any(path.exists() for path in paths)
+
+    def test_without_them_there_is_nothing_to_remove(self, build_script, monkeypatch, tmp_path):
+        monkeypatch.setattr(build_script, "_REPO_ROOT", str(tmp_path))
+        assert build_script._remove_key_modules() == []
+
+    def test_they_are_removed_even_if_the_build_does_not_finish(self, build_script,
+                                                                 monkeypatch, tmp_path):
+        paths = _place_key_modules(tmp_path)
+        monkeypatch.setattr(build_script, "_REPO_ROOT", str(tmp_path))
+        monkeypatch.setattr(build_script.sys, "argv",
+                            ["build.py", "--out", str(tmp_path / "out")])
+
+        def interrupted(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(build_script.subprocess, "run", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            build_script.main()
+        assert not any(path.exists() for path in paths)

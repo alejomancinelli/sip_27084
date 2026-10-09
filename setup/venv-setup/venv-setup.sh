@@ -171,15 +171,16 @@ else
         hint "framework pinned in setup/jetson/constraints.txt that PyPI does not have."
     fi
 
-    "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" -r "$REQUIREMENTS" \
-        || fail "'pip install -r requirements.txt' failed."
-    ok "requirements.txt installed"
-
+    # One resolution for both files: the vendor wheels went in without their
+    # dependencies, and only the framework file names them. Two passes leave pip
+    # reporting a conflict in between that the second pass then solves.
+    _requirement_files=(-r "$REQUIREMENTS")
     if [ -f "$JETSON_DIR/requirements.txt" ]; then
-        "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" -r "$JETSON_DIR/requirements.txt" \
-            || fail "'pip install -r setup/jetson/requirements.txt' failed."
-        ok "setup/jetson/requirements.txt installed"
+        _requirement_files+=(-r "$JETSON_DIR/requirements.txt")
     fi
+    "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" "${_requirement_files[@]}" \
+        || fail "'pip install' of requirements.txt and setup/jetson/requirements.txt failed."
+    ok "requirements.txt and setup/jetson/requirements.txt installed"
 
     # Packages whose declared dependencies would replace something installed above.
     if [ -f "$JETSON_DIR/requirements-nodeps.txt" ]; then

@@ -100,8 +100,8 @@ APT_PACKAGES=(
     build-essential patchelf ccache
     # torch from NVIDIA links against OpenBLAS.
     libopenblas-dev
-    # GStreamer, the RTSP server and their Python bindings. The bindings come from apt
-    # and reach the venv through --system-site-packages.
+    # GStreamer, the RTSP server and their Python bindings. The bindings come from apt;
+    # venv-setup.sh links `gi` into the venv.
     python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
     gir1.2-gst-rtsp-server-1.0 libgstrtspserver-1.0-0
     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
@@ -115,27 +115,30 @@ APT_PACKAGES=(
     gpiod
 )
 
+# --no-upgrade: installs what is missing and leaves what is there at its version. Without
+# it, listing python3.10 or the GStreamer plugins upgrades them as a side effect, and the
+# build Jetson drifts away from the plant's, which has to match it.
 sudo apt-get update -qq
-sudo apt-get install -y "${APT_PACKAGES[@]}"
-ok "${#APT_PACKAGES[@]} packages installed"
+sudo apt-get install -y --no-upgrade "${APT_PACKAGES[@]}"
+ok "${#APT_PACKAGES[@]} packages present"
 
 # --- 4/7  NVIDIA runtime pieces ------------------------------------------------------
 step "4/7  Checking TensorRT, the Jetson GStreamer plugins and torch's libraries"
 
-# TensorRT's Python binding is a JetPack apt package for the system Python 3.10; the venv
-# sees it through --system-site-packages.
+# TensorRT's Python binding is a JetPack apt package for the system Python 3.10;
+# venv-setup.sh links it into the venv.
 if python3.10 -c "import tensorrt" > /dev/null 2>&1; then
     ok "tensorrt $(python3.10 -c 'import tensorrt; print(tensorrt.__version__)')"
 else
     note "tensorrt not importable from python3.10 - installing python3-libnvinfer"
-    sudo apt-get install -y python3-libnvinfer
+    sudo apt-get install -y --no-upgrade python3-libnvinfer
     python3.10 -c "import tensorrt" > /dev/null 2>&1 \
         || fail "tensorrt still not importable. Is the JetPack runtime installed? (sudo apt install nvidia-jetpack)"
     ok "tensorrt $(python3.10 -c 'import tensorrt; print(tensorrt.__version__)')"
 fi
 
 if ! is_installed nvidia-l4t-gstreamer; then
-    sudo apt-get install -y nvidia-l4t-gstreamer || note "nvidia-l4t-gstreamer not available through apt"
+    sudo apt-get install -y --no-upgrade nvidia-l4t-gstreamer || note "nvidia-l4t-gstreamer not available through apt"
 fi
 
 # Which video.rtsp.codec values this module can use. The Orin Nano has no NVENC: there
@@ -217,8 +220,43 @@ else
     fi
 fi
 
-# --- 6/7  GigE camera network ------------------------------------------------------
-step "6/7  Network for GigE Vision cameras"
+# --- 6/7  Network ------------------------------------------------------------------
+# Each sysctl file is loaded on its own (-p), not with --system: that reloads every file
+# in /etc/sysctl.d and prints the errors of other packages' settings as if they were ours.
+step "6/7  Network: listening ports and GigE Vision cameras"
+
+# Modbus TCP listens on 502, and Linux reserves ports below 1024 for root. The app runs
+# as this user, so the threshold drops to the lowest port config.yaml enables. That
+# opens the ports from there to 1023 to any user, which is fine on a dedicated machine.
+# Not setcap: the venv's python is a symlink to /usr/bin/python3.10, so every Python
+# script on the machine would get it, and on the compiled main.bin each update drops it.
+LOW_PORT="$(python3.10 - "$CONFIG_FILE" <<'EOF' 2>/dev/null || true
+import sys, yaml
+config = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+def section(*keys):
+    node = config
+    for key in keys:
+        node = (node or {}).get(key) or {}
+    return node
+servers = (section("modbus", "tcp"), section("video", "http"), section("video", "rtsp"))
+low = [int(s.get("port") or 0) for s in servers if s.get("enabled")]
+low = [port for port in low if 0 < port < 1024]
+if low:
+    print(min(low))
+EOF
+)"
+PORTS_FILE=/etc/sysctl.d/61-unprivileged-ports.conf
+if [ -z "$LOW_PORT" ]; then
+    ok "no enabled server in config.yaml listens below port 1024"
+else
+    _wanted="net.ipv4.ip_unprivileged_port_start=$LOW_PORT"
+    if ! grep -sx "$_wanted" "$PORTS_FILE" > /dev/null; then
+        printf '%s\n' "# The app listens on port $LOW_PORT (config.yaml) as a normal user." "$_wanted" \
+            | sudo tee "$PORTS_FILE" > /dev/null
+        sudo sysctl --quiet -p "$PORTS_FILE"
+    fi
+    ok "ports from $(sysctl -n net.ipv4.ip_unprivileged_port_start) up need no root ($PORTS_FILE)"
+fi
 
 # Socket buffers: a full frame arrives in a burst, and with the default 208 KB the
 # driver drops packets and the camera reports incomplete frames.
@@ -227,7 +265,7 @@ if [ ! -f "$SYSCTL_FILE" ]; then
     printf '%s\n' "# GigE Vision: room for a full frame burst" \
         "net.core.rmem_max=16777216" "net.core.wmem_max=16777216" \
         | sudo tee "$SYSCTL_FILE" > /dev/null
-    sudo sysctl --quiet --system
+    sudo sysctl --quiet -p "$SYSCTL_FILE"
 fi
 ok "socket buffers: $(sysctl -n net.core.rmem_max) bytes ($SYSCTL_FILE)"
 

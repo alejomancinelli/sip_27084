@@ -5,6 +5,8 @@ Ultralytics es un doble: acá se verifica el postproceso —qué máscara, qué 
 umbral—, no el framework. Sin GPU y sin pesos.
 """
 
+import json
+import logging
 import sys
 import types
 
@@ -84,6 +86,12 @@ def _square(x1: int, y1: int, x2: int, y2: int) -> np.ndarray:
 
 def _frame() -> np.ndarray:
     return np.full((_FRAME_SIDE_PX, _FRAME_SIDE_PX, 3), 120, dtype=np.uint8)
+
+
+def _engine_bytes(metadata: dict) -> bytes:
+    """Un .engine como lo escribe ultralytics: largo del JSON, el JSON y el motor."""
+    header = json.dumps(metadata).encode()
+    return len(header).to_bytes(4, "little", signed=True) + header + b"motor serializado"
 
 
 def _install(monkeypatch, fake_yolo: _FakeYolo | None, *, protected: bool = False,
@@ -169,6 +177,7 @@ class TestLoad:
         def _crash(name):
             raise TypeError("not 'KeyboardModifier'")
 
+        del sys.modules["ultralytics"].YOLO
         sys.modules["ultralytics"].__getattr__ = _crash
         model.load()
         assert model.status == STATUS_ERROR
@@ -178,6 +187,49 @@ class TestLoad:
         """Puesto al importar el módulo: un backend de Qt en el hilo del motor lo mata."""
         import os
         assert os.environ.get("MPLBACKEND", "").lower() == "agg"
+
+    def test_the_engine_is_opened_before_reporting_loaded(self, monkeypatch):
+        """Con un .engine, YOLO() sólo guarda la ruta: sin esto TensorRT abre en el frame 1."""
+        fake = _FakeYolo()
+        model = YoloSegModel(_MockConfig(), _SLOT)
+        _install(monkeypatch, fake, weights=_engine_bytes({"task": "segment", "imgsz": [64, 96]}))
+        model.load()
+        assert model.is_loaded
+        assert [call["source"].shape for call in fake.calls] == [(64, 96, 3)]
+
+    def test_an_engine_that_does_not_infer_is_an_error_not_loaded(self, monkeypatch):
+        fake = _FakeYolo()
+        fake.predict = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("engine plan"))
+        model = YoloSegModel(_MockConfig(), _SLOT)
+        _install(monkeypatch, fake)
+        model.load()
+        assert model.status == STATUS_ERROR
+        assert "engine plan" in model.error
+
+    def test_the_task_comes_from_the_engine_header_not_from_the_call(self, monkeypatch):
+        """YOLO(path, task='segment') devuelve 'segment' para cualquier motor."""
+        built = []
+        model = YoloSegModel(_MockConfig(), _SLOT)
+        _install(monkeypatch, _FakeYolo(task="segment"),
+                 weights=_engine_bytes({"task": "detect"}))
+        sys.modules["ultralytics"].YOLO = lambda path, task=None: built.append(path)
+        model.load()
+        assert model.status == STATUS_ERROR
+        assert built == [], "confrontó la tarea después de abrir el motor"
+
+    def test_another_export_version_is_warned(self, monkeypatch, caplog):
+        model = YoloSegModel(_MockConfig(), _SLOT)
+        _install(monkeypatch, _FakeYolo(), weights=_engine_bytes({"task": "segment",
+                                                                  "version": "8.4.90"}))
+        sys.modules["ultralytics"].__version__ = "8.4.60"
+        with caplog.at_level(logging.WARNING):
+            model.load()
+        assert model.is_loaded
+        assert any("8.4.90" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.parametrize("weights", [b"PK\x03\x04zip de un .pt", b"", b"\x05\x00\x00\x00{}"])
+    def test_weights_without_a_header_have_no_metadata(self, weights):
+        assert yolo_seg_model._ultralytics_metadata(weights) == {}
 
     def test_unloading_leaves_it_ready_to_load_again(self, monkeypatch):
         model = _loaded(monkeypatch, None)
@@ -225,7 +277,7 @@ class TestPredict:
         _install(monkeypatch, fake)
         model.load()
         model.predict(_frame())
-        assert fake.calls[0]["conf"] == pytest.approx(0.2)
+        assert fake.calls[-1]["conf"] == pytest.approx(0.2)
 
     def test_a_detection_without_a_polygon_is_dropped(self, monkeypatch):
         """Un segmentador que no devuelve forma no midió nada: el área del bbox sería un

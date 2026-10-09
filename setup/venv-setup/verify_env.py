@@ -128,11 +128,22 @@ def _import(module_name: str):
 
 
 def _version(module) -> str:
-    """Version reported by a module, or '?' when it does not publish one."""
+    """
+    Version reported by a module, or by the package that installed it; '?' if neither.
+
+    Some vendor bindings (stapipy) publish no `__version__`, and theirs is the version
+    that matters when the native libraries they were built for do not match.
+    """
     for attribute in ("__version__", "VERSION", "version"):
         value = getattr(module, attribute, None)
         if isinstance(value, str):
             return value
+    top_level = module.__name__.split(".")[0]
+    for distribution in importlib.metadata.packages_distributions().get(top_level, []):
+        try:
+            return importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            continue
     return "?"
 
 
