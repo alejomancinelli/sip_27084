@@ -707,6 +707,9 @@ La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
 
+- **El build de la Jetson.** Desde fuentes el equipo está verificado; compilado con Nuitka
+  en Linux, nunca se probó. El orden, los riesgos y lo que queda por arreglar están en
+  `.claude/plans/jetson-compilation.md`.
 - **El widget del área central del monitor.** Hoy es la grilla de cámaras genérica. La
   versión anterior tenía un gráfico de áreas apiladas con la composición; si se lo quiere de
   vuelta, entra por `_build_monitor_content()` sin tocar nada más.
