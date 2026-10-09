@@ -1,0 +1,27 @@
+# Version pins for the Jetson. venv-setup.sh passes this file with -c to every install
+# it runs on a Jetson, so nothing installed later can quietly swap one of these.
+#
+# PROJECT FILE: the versions below are this fork's inference stack on JetPack 6.x. The
+# template ships the same three files with the framework lines empty.
+#
+# To add a package by hand on the Jetson, keep the pins:
+#     .venv/bin/python -m pip install -c setup/jetson/constraints.txt <package>
+
+# NVIDIA's torch for JetPack 6 (CUDA 12.6). Pinned by its public version on purpose:
+# PyPI has no 2.5.0a0, so only the wheel in packages/ can satisfy it, whatever local
+# label (+872d972e41.nv24.08...) its file carries. A PyPI torch on aarch64 does not see
+# the Jetson's GPU, and inference falls back to CPU.
+torch==2.5.0a0
+
+# Built from source against that torch. PyPI also has a 0.20.0, compiled against PyPI's
+# torch: with that one, ultralytics fails on the first frame with
+# "operator torchvision::nms does not exist".
+torchvision==0.20.0
+
+# The NVIDIA torch wheel is compiled against the numpy 1.x ABI.
+numpy>=1.24,<2.0
+
+# The version the .engine in models/ was exported with: the engine carries ultralytics'
+# metadata header, and that header is what this version reads. Re-exporting the engine
+# with another version means changing this pin in the same commit.
+ultralytics==8.4.90

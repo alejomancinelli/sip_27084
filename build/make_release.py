@@ -14,6 +14,14 @@ Deja una carpeta lista para copiar al equipo de la planta:
         Crear accesos directos.cmd   se corre una vez, ya instalado
         Verificar camara.cmd         que el equipo tenga lo que la cámara necesita
 
+**En Linux —la Jetson— la forma es la misma** y cambian los lanzadores: `.sh` en vez de
+`.cmd`, `_entorno.sh` en vez de `_Entorno.cmd`, el ejecutable es `main.bin`, y los accesos
+directos son `.desktop`. Además se deja un `<APP_NAME>-<version>.tar.gz` al lado de la
+carpeta: es lo que se copia al equipo, porque un pendrive en FAT32 o exFAT no guarda el
+permiso de ejecución y la carpeta copiada así llega con un `main.bin` que no arranca. El
+script corre en la plataforma del entregable, igual que `build.py`: no se arma un
+entregable de Linux desde Windows.
+
 El nombre sale de `system.app_name` en el `config.yaml` que se está empaquetando: es el
 mismo texto que la ventana muestra en su título, así que el operador ve un solo nombre en
 todos lados y no hay una segunda cadena que mantener sincronizada acá.
@@ -47,26 +55,58 @@ copiarlo suelto es una carpeta que se agrega o se saca sin recompilar, útil cua
 no está decidido qué marca de cámara usa cada instalación. Los dos se copian enteros desde
 el venv si están; si al fork no le hace falta soporte para una marca, sencillamente no está
 instalado y esta etapa lo avisa y sigue.
+
+**En Linux el build es acelerado y todo lo de terceros va suelto.** La forma la decide
+`_ACCELERATED` de `build.py`, que este script lee para no tener un segundo lugar que la
+diga. Nuitka deja un `main.bin` que contiene sólo lo nuestro, y `program/` lleva además
+los datos que leen sus módulos (`_DATA_DIRS`) y `program/site-packages/`: el del venv que
+pasó `verify_env.py`, copiado y no reinstalado, para que la planta corra los mismos bytes
+que se probaron sin necesitar internet ni pip. Sin lo de compilar y testear, y con los
+symlinks de los paquetes de apt (`gi`, `tensorrt`) como symlinks: resuelven contra el
+JetPack del equipo, que tiene que ser el mismo. Los lanzadores le apuntan `PYTHONPATH` a
+esa carpeta, y `_LOOSE_PACKAGES` no aplica: `stapipy` y `pypylon` ya viajan ahí.
 """
 
 import argparse
+import glob
+import importlib.metadata
+import importlib.util
 import os
 import re
+import shlex
 import shutil
 import struct
 import sys
+import unicodedata
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BUILD_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_BUILD_DIR)
 sys.path.insert(0, _REPO_ROOT)
 
 from system.version import APP_VERSION  # noqa: E402
 
 _DEFAULT_DIST = "build/out/main.dist"
+_DEFAULT_ACCELERATED_DIST = "build/out"
 _DEFAULT_OUT = "build/release"
 
+_IS_WINDOWS = sys.platform == "win32"
+
+# El ejecutable que deja Nuitka en `main.dist`. En Linux es `main.bin`; `main` queda como
+# respaldo por si una versión de Nuitka lo deja sin sufijo.
+_EXECUTABLE_NAMES = ("main.exe",) if _IS_WINDOWS else ("main.bin", "main")
+
 # Paquetes que viajan como carpeta al lado del ejecutable en vez de compilados. Ver el
-# docstring del módulo para el motivo de cada uno.
+# docstring del módulo para el motivo de cada uno. Sólo en standalone.
 _LOOSE_PACKAGES = ("stapipy", "pypylon")
+
+# Dónde viaja lo de terceros en el build acelerado, adentro de `program/`.
+_SITE_PACKAGES_DIR = "site-packages"
+
+# Distribuciones del venv que son de compilar o de testear y no viajan. Se sacan por su
+# metadata y no por nombre de carpeta, que no siempre coincide: pytest deja además un
+# `py.py` suelto en la raíz.
+_BUILD_ONLY_DISTRIBUTIONS = ("nuitka", "ordered-set", "zstandard", "pytest", "pluggy",
+                             "iniconfig")
 
 # Archivos con nombre fijo, propios de la maquinaria y no de la instalación: van siempre,
 # si están. Los pesos del modelo NO están acá a propósito — un fork no tiene un nombre de
@@ -110,20 +150,21 @@ _DETACHED = 'start "" "%~dp0program\\main.exe"{arguments} %*'
 _FOREGROUND = '"%~dp0program\\main.exe"{arguments} %*'
 
 
-def _launchers(app_name: str) -> tuple:
+def _launchers(app_name: str, extension: str) -> tuple:
     """
-    Nombre, descripción, qué le pasa al `.exe` y si el proceso queda suelto.
+    Nombre, descripción, qué le pasa al ejecutable y si el proceso queda suelto.
 
     Dos por defecto: con ventana y sin ventana. Un fork con una herramienta de línea de
     comandos que comparte el mismo ejecutable —un subcomando de calibración, por
     ejemplo— agrega su fila acá con `detach=False`, porque **`detach` es lo que decide si
     aparece una consola**: con `start` el `cmd` larga el proceso y se cierra sin dejar
     ventana, que es lo que quiere la app; una herramienta que tiene que mostrar algo en
-    esa consola —el resultado de un ajuste, un chequeo— no se larga y se espera.
+    esa consola —el resultado de un ajuste, un chequeo— no se larga y se espera. En Linux
+    no aplica: la consola la abre o no el `.desktop`, y el lanzador hace `exec` siempre.
     """
     return (
-        (f"{app_name}.cmd", f"Arranca {app_name}.", "", True),
-        (f"{app_name} sin pantalla.cmd",
+        (f"{app_name}{extension}", f"Arranca {app_name}.", "", True),
+        (f"{app_name} sin pantalla{extension}",
          "Arranca sin ventana: equipo en gabinete sin monitor. No hace falta tocar el "
          "config.", "--headless", True),
     )
@@ -393,6 +434,379 @@ def _external_dlls(program: str, package: str) -> list:
     return needed
 
 
+# ── Linux ─────────────────────────────────────────────────────────────────────────
+#
+# Las plantillas de bash se completan con `.replace()` de marcas `@NOMBRE@` y no con
+# `.format()`: bash usa llaves en cada `${...}` y en cada función, y duplicarlas todas
+# vuelve ilegible justo lo que el integrador va a abrir para ver qué hace el archivo.
+
+_LINUX_ENV_NAME = "_entorno.sh"
+_LINUX_ENV_BODY = r"""# No se ejecuta directamente: lo cargan con `source` los demás .sh de esta carpeta.
+#
+# SIP_DATA_DIR es lo que separa los datos de esta planta del programa: sin esta línea el
+# ejecutable busca su config al lado suyo, adentro de program/, y una actualización (que
+# reemplaza program/ entero) se llevaría puesta la calibración.
+#
+# Vive en un archivo aparte y no en cada lanzador porque una ruta repetida en varios
+# archivos se corrige en uno y se olvida en los otros.
+export SIP_DATA_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/installation"
+"""
+
+_LINUX_LAUNCHER_BODY = r"""#!/bin/bash
+# @DESCRIPTION@
+#
+# La ruta de datos la pone @ENV_NAME@, que es el único archivo donde vive. Un arranque que
+# no llega a abrir la ventana deja el motivo en installation/data/logs.
+BASE="$(dirname "$(readlink -f "$0")")"
+source "$BASE/@ENV_NAME@"
+@PYTHON_ENV@exec "$BASE/program/@EXECUTABLE@"@ARGUMENTS@ "$@"
+"""
+
+# Lo que el lanzador agrega en el build acelerado, antes del `exec`.
+_LINUX_PYTHON_ENV = r"""# Lo de terceros viaja suelto en program/@SITE_PACKAGES@ y es lo único que el programa
+# importa: ni el PYTHONPATH de quien lo lanza ni el ~/.local de la sesión.
+export PYTHONPATH="$BASE/program/@SITE_PACKAGES@"
+export PYTHONNOUSERSITE=1
+"""
+
+# El acceso se crea **en el equipo y contra el lugar donde quedó instalado**, igual que en
+# Windows: un `.desktop` que viaja en el entregable apunta a la instalación del equipo
+# donde se armó, y arrancar otra instalación publica con otra calibración sin fallar.
+_LINUX_SHORTCUTS_BODY = r"""#!/bin/bash
+# Crea el acceso a la app en el menú de aplicaciones y en el escritorio de este equipo.
+#
+# Se corre una vez, después de copiar esta carpeta a donde va a quedar, con el usuario que
+# va a usar la app:
+#
+#     bash "Crear accesos directos.sh"
+#
+# El acceso apunta a rutas absolutas de acá, así que si después se mueve la carpeta hay
+# que volver a correrlo. NO viaja adentro del entregable a propósito: uno copiado de otro
+# equipo arrancaría la instalación de ese equipo, con su calibración, sin fallar.
+set -e
+BASE="$(dirname "$(readlink -f "$0")")"
+NAME=@NAME@
+LAUNCHER="$BASE/$NAME.sh"
+ICON="$BASE/program/"@ICON@
+ENTRY_ID=@ENTRY_ID@
+
+# Exec= de un .desktop tiene su propio escapado, que además cambia entre escritorios.
+# Una ruta con estos caracteres no se escapa: se corta antes de escribir un acceso roto.
+case "$LAUNCHER" in
+    *[\"\`\$\\]*)
+        echo "  La ruta tiene comillas, \$, \` o \\ y un acceso directo no la puede llamar:"
+        echo "    $LAUNCHER"
+        echo "  Mover la carpeta a una ruta sin esos caracteres y volver a correr esto."
+        exit 1
+        ;;
+esac
+
+write_entry() {
+    printf '%s\n' \
+        "[Desktop Entry]" \
+        "Type=Application" \
+        "Name=$NAME" \
+        "Comment=$NAME - versión @VERSION@" \
+        "Exec=\"$LAUNCHER\"" \
+        "Path=$BASE" \
+        "Icon=$ICON" \
+        "Terminal=false" \
+        "Categories=Utility;" > "$1"
+    chmod +x "$1"
+}
+
+APPS="$HOME/.local/share/applications"
+mkdir -p "$APPS"
+write_entry "$APPS/$ENTRY_ID.desktop"
+echo "  creado: $NAME, en el menú de aplicaciones"
+
+# xdg-user-dir devuelve el home cuando el escritorio no está configurado, y en un equipo
+# en castellano la carpeta es ~/Escritorio: por eso no se escribe ~/Desktop a mano.
+DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+if [ -n "$DESKTOP" ] && [ "$DESKTOP" != "$HOME" ] && [ -d "$DESKTOP" ]; then
+    write_entry "$DESKTOP/$ENTRY_ID.desktop"
+    # GNOME no lanza un .desktop del escritorio que no esté marcado como confiable.
+    gio set "$DESKTOP/$ENTRY_ID.desktop" metadata::trusted true 2>/dev/null || true
+    echo "  creado: $NAME, en $DESKTOP"
+    echo "  Si el icono aparece sin permiso para ejecutar: clic derecho, Permitir ejecutar."
+else
+    echo "  Este usuario no tiene carpeta de escritorio: el acceso queda sólo en el menú."
+fi
+"""
+
+# Estático, a diferencia del de Windows: allá las DLL que faltan se sacan del `.pyd` al
+# armar el entregable, porque el equipo no trae con qué leerlas. Acá `ldd` ya está en el
+# equipo y contesta contra el enlazador de ESE equipo, que es justo la pregunta.
+_LINUX_CHECK_BODY = r"""#!/bin/bash
+# Comprueba que este equipo tenga lo que hace falta para abrir las cámaras.
+#
+# Se corre antes de arrancar por primera vez, y cuando una cámara no conecta. No toca
+# nada: sólo mira. Opcionalmente se le pasa una IP para ver si responde:
+#
+#     bash "Verificar camara.sh" 10.8.1.130
+#
+# Lo que necesita cada fabricante NO es lo mismo, y esa es la diferencia que importa:
+#
+#   Sentech  el paquete viaja con el programa, pero sus bibliotecas nativas salen del
+#            SentechSDK, que tiene que estar INSTALADO en este equipo, junto con la
+#            variable GENICAM_GENTL64_PATH que deja su instalador.
+#   Basler   pypylon trae su propio runtime de pylon, así que no hay que instalar nada;
+#            lo único que importa es que el paquete haya viajado.
+#
+# Las bibliotecas que busca no están escritas acá: se las pregunta a `ldd`, sobre las
+# extensiones que viajan. Sus nombres llevan la versión del SDK adentro.
+BASE="$(dirname "$(readlink -f "$0")")"
+PROGRAM="$BASE/program"
+PACKAGES="$BASE/@PACKAGES@"
+MISSING=0
+
+# Lo que Nuitka dejó en program/ lo carga el ejecutable antes que nadie: sin esto, `ldd`
+# daría por faltante una biblioteca que sí viaja.
+export LD_LIBRARY_PATH="$PROGRAM${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Un paquete puede ser una carpeta o una sola extensión (stapipy.cpython-310-*.so).
+has_package() {
+    compgen -G "$PACKAGES/$1*" > /dev/null
+}
+
+check_libs() {
+    local libs
+    libs="$(find "$PACKAGES"/$1* -name '*.so*' -type f -exec ldd {} \; 2>/dev/null \
+            | awk '/not found/ {print $1}' | sort -u)"
+    if [ -z "$libs" ]; then
+        echo "    ok      ldd encuentra todas sus bibliotecas"
+        return
+    fi
+    while IFS= read -r lib; do
+        echo "    FALTA   $lib"
+        MISSING=$((MISSING + 1))
+    done <<< "$libs"
+}
+
+echo
+echo "  Verificación de soporte de cámaras"
+echo "  ----------------------------------"
+echo
+echo "  [Sentech / Omron]"
+if has_package stapipy; then
+    echo "    ok      el paquete stapipy viaja con el programa"
+    check_libs stapipy
+    if [ -n "$GENICAM_GENTL64_PATH" ]; then
+        echo "    ok      GENICAM_GENTL64_PATH=$GENICAM_GENTL64_PATH"
+    else
+        echo "    FALTA   GENICAM_GENTL64_PATH: la deja el instalador del SentechSDK en"
+        echo "            /etc/environment, y entra recién al volver a iniciar sesión"
+        MISSING=$((MISSING + 1))
+    fi
+else
+    echo "    n/a     stapipy no viaja: esta compilación no soporta Sentech"
+fi
+echo
+echo "  [Basler]"
+if has_package pypylon; then
+    echo "    ok      pypylon viaja con el programa - no hace falta instalar el SDK de Basler"
+    check_libs pypylon
+else
+    echo "    n/a     pypylon no viaja: esta compilación no soporta Basler"
+fi
+echo
+if [ -z "$1" ]; then
+    echo "  [Red] sin IP. Se le puede pasar una: bash \"Verificar camara.sh\" 10.8.1.130"
+else
+    echo "  [Red] probando $1"
+    if ping -c 2 -W 2 "$1" > /dev/null 2>&1; then
+        echo "    ok responde     $1"
+    else
+        echo "    sin respuesta   $1"
+        echo "    Ojo: no todas las cámaras contestan ping, así que esto solo no decide."
+    fi
+fi
+echo
+if [ "$MISSING" -gt 0 ]; then
+    echo "  Faltan $MISSING cosas en este equipo. Las bibliotecas de Sentech se resuelven"
+    echo "  instalando el SentechSDK, y tiene que ser el que corresponde a esta compilación:"
+    echo "  la versión va en el nombre del archivo, así que otra versión del SDK no sirve."
+else
+    echo "  No falta nada de lo que se puede comprobar desde acá."
+fi
+"""
+
+
+def _fill(template: str, **values: str) -> str:
+    """Reemplaza cada `@CLAVE@` de una plantilla de bash por su valor."""
+    for key, value in values.items():
+        template = template.replace(f"@{key.upper()}@", value)
+    return template
+
+
+def _desktop_entry_id(app_name: str) -> str:
+    """
+    El nombre del `.desktop`: el de la app, sin tildes ni espacios.
+
+    El escritorio lo usa como identificador de la aplicación, y uno con espacios o tildes
+    anda en un escritorio y en otro no. El nombre que ve el operador va adentro, en `Name=`.
+    """
+    plain = unicodedata.normalize("NFKD", app_name).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-") or "app"
+
+
+def _build_script():
+    """
+    `build.py` cargado como módulo: de ahí salen el icono, la forma del build y los datos.
+
+    Se lee y no se copia para que un fork que cambia cualquiera de los tres no tenga que
+    acordarse de cambiarlo en dos archivos.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "build_script", os.path.join(_BUILD_DIR, "build.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _program_icon() -> str:
+    """El icono del programa —el que compila en el `.exe`—, relativo al repo y a `program/`."""
+    return _build_script()._ICON
+
+
+def _write_linux_scripts(release: str, program: str, executable: str, app_name: str, *,
+                         accelerated: bool):
+    """Lanzadores, accesos directos y verificador de cámara, en bash."""
+    _write_script(os.path.join(release, _LINUX_ENV_NAME), _LINUX_ENV_BODY)
+    print(f"    {_LINUX_ENV_NAME}     la ruta de datos, y nada más")
+    python_env = (_fill(_LINUX_PYTHON_ENV, site_packages=_SITE_PACKAGES_DIR)
+                  if accelerated else "")
+    for launcher_name, description, arguments, _ in _launchers(app_name, ".sh"):
+        _write_script(os.path.join(release, launcher_name), _fill(
+            _LINUX_LAUNCHER_BODY, description=description, env_name=_LINUX_ENV_NAME,
+            python_env=python_env, executable=executable,
+            arguments=f" {arguments}" if arguments else ""))
+        print(f"    {launcher_name}")
+
+    # El icono lo pide el `.desktop` por ruta; si el fork lo puso fuera de los datos que
+    # compila `build.py`, se lo copia para que el acceso no quede sin icono.
+    icon = _program_icon()
+    _copy_into(os.path.join(_REPO_ROOT, icon), os.path.join(program, icon))
+    shortcuts_name = "Crear accesos directos.sh"
+    _write_script(os.path.join(release, shortcuts_name), _fill(
+        _LINUX_SHORTCUTS_BODY, name=shlex.quote(app_name), icon=shlex.quote(icon),
+        entry_id=shlex.quote(_desktop_entry_id(app_name)), version=APP_VERSION))
+    print(f"    {shortcuts_name}   se corre una vez, ya instalado")
+
+    check_name = "Verificar camara.sh"
+    packages = f"program/{_SITE_PACKAGES_DIR}" if accelerated else "program"
+    _write_script(os.path.join(release, check_name), _fill(_LINUX_CHECK_BODY,
+                                                           packages=packages))
+    print(f"    {check_name}         pregunta a ldd qué falta, en el equipo")
+
+
+def _write_windows_scripts(release: str, program: str, app_name: str):
+    """Lanzadores, accesos directos y verificador de cámara, en `cmd`."""
+    _write_text(os.path.join(release, _ENV_NAME), _ENV_BODY)
+    print(f"    {_ENV_NAME}    la ruta de datos, y nada más")
+    for launcher_name, description, arguments, detach in _launchers(app_name, ".cmd"):
+        launch = (_DETACHED if detach else _FOREGROUND).format(
+            arguments=f" {arguments}" if arguments else "")
+        _write_text(os.path.join(release, launcher_name),
+                    _LAUNCHER_BODY.format(description=description, env_name=_ENV_NAME,
+                                          launch=launch))
+        print(f"    {launcher_name}{'' if detach else '   (deja la consola a la vista)'}")
+
+    _write_text(os.path.join(release, _SHORTCUTS_NAME),
+                _SHORTCUTS_BODY.format(command=_shortcuts_command(app_name)))
+    print(f"    {_SHORTCUTS_NAME}   se corre una vez, ya instalado")
+
+    _write_text(os.path.join(release, _CHECK_NAME), _check_body(program))
+    external = _external_dlls(program, "stapipy")
+    print(f"    {_CHECK_NAME}         busca {len(external)} DLL del SDK en el equipo")
+
+
+def _write_script(path: str, text: str):
+    """Un script de bash: saltos de Unix y permiso de ejecución."""
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    os.chmod(path, 0o755)
+
+
+def _archive(release: str) -> str:
+    """
+    Empaqueta el entregable en un `.tar.gz` al lado de la carpeta. Devuelve su ruta.
+
+    El tar guarda el permiso de ejecución; la carpeta copiada a un pendrive en FAT32 o
+    exFAT lo pierde, y el equipo recibe un `main.bin` que no arranca y lanzadores que no
+    se pueden ejecutar.
+    """
+    parent, name = os.path.split(release)
+    return shutil.make_archive(release, "gztar", root_dir=parent, base_dir=name)
+
+
+def _site_packages() -> str:
+    """El `site-packages` del venv del repo, que en Windows y en Linux no está en el mismo lugar."""
+    venv = os.path.join(_REPO_ROOT, ".venv")
+    if _IS_WINDOWS:
+        return os.path.join(venv, "Lib", "site-packages")
+    matches = sorted(glob.glob(os.path.join(venv, "lib", "python3*", "site-packages")))
+    return matches[0] if matches else os.path.join(venv, "lib", "site-packages")
+
+
+def _copy_site_packages(source: str, target: str) -> list:
+    """
+    Copia el `site-packages` del venv sin lo de compilar y testear. Devuelve lo que dejó.
+
+    Los symlinks se copian como symlinks: los de `gi` y `tensorrt` apuntan a apt y tienen
+    que resolver contra el JetPack del equipo de la planta, no viajar duplicados. Los
+    `__pycache__` viajan: sin ellos el primer arranque compila miles de módulos, y si
+    `program/` no se puede escribir, todos los arranques.
+    """
+    left_out = _build_only_entries(source)
+
+    def ignore(directory: str, names: list) -> set:
+        return left_out.intersection(names) if directory == source else set()
+
+    shutil.copytree(source, target, symlinks=True, ignore=ignore)
+    return sorted(left_out)
+
+
+def _build_only_entries(site_packages: str) -> set:
+    """
+    Lo que dejan en la raíz del `site-packages` las distribuciones de compilar y testear.
+
+    Una que otra distribución del venv declara como dependencia se queda: sacarla rompería
+    en la planta un import que acá anduvo. Las de un extra (`pytest; extra == "test"`) no
+    cuentan: pip las instala sólo si alguien pidió el extra, y casi cada paquete declara
+    su suite de tests así.
+    """
+    distributions = list(importlib.metadata.distributions(path=[site_packages]))
+    build_only = {_normalize_distribution(name) for name in _BUILD_ONLY_DISTRIBUTIONS}
+    required = {_normalize_distribution(re.match(r"[A-Za-z0-9._-]*", requirement).group())
+                for distribution in distributions
+                if _normalize_distribution(distribution.metadata["Name"]) not in build_only
+                for requirement in distribution.requires or ()
+                if not re.search(r"\bextra\b", requirement.partition(";")[2])}
+    entries = set()
+    for distribution in distributions:
+        name = _normalize_distribution(distribution.metadata["Name"])
+        if name not in build_only or name in required:
+            continue
+        for file in distribution.files or ():
+            if file.parts[0] not in ("..", "__pycache__"):
+                entries.add(file.parts[0])
+    return entries
+
+
+def _normalize_distribution(name: str | None) -> str:
+    """El nombre de una distribución como lo compara pip: `Ordered_Set` es `ordered-set`."""
+    return re.sub(r"[-_.]+", "-", name or "").lower()
+
+
+def _find_executable(dist: str) -> str:
+    """El nombre del ejecutable que dejó Nuitka en `dist`, o vacío si no hay ninguno."""
+    for name in _EXECUTABLE_NAMES:
+        if os.path.isfile(os.path.join(dist, name)):
+            return name
+    return ""
+
+
 def _write_text(path: str, text: str):
     """Un archivo de texto con saltos de Windows: los lee el `cmd` y el Notepad."""
     with open(path, "w", encoding="utf-8", newline="\r\n") as handle:
@@ -434,14 +848,24 @@ def _app_name(config_path: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Arma el entregable.")
-    parser.add_argument("--dist", default=_DEFAULT_DIST, help="el main.dist de Nuitka")
+    parser.add_argument("--dist", default="",
+                        help="lo que dejó Nuitka: el main.dist, o la carpeta del main.bin "
+                             "en el build acelerado; vacío = el de build.py por defecto")
     parser.add_argument("--out", default=_DEFAULT_OUT, help="dónde dejar el entregable")
     parser.add_argument("--name", default="", help="nombre de la carpeta; vacío = automático")
+    parser.add_argument("--no-archive", action="store_true", dest="no_archive",
+                        help="en Linux, no armar el .tar.gz")
     args = parser.parse_args()
 
-    dist = os.path.join(_REPO_ROOT, args.dist) if not os.path.isabs(args.dist) else args.dist
-    if not os.path.isfile(os.path.join(dist, "main.exe")):
-        raise SystemExit(f"No hay main.exe en {dist}. Compilar primero — ver build/README.md.")
+    if not _IS_WINDOWS and not sys.platform.startswith("linux"):
+        raise SystemExit(f"Sin entregable para {sys.platform}: sólo Windows y Linux.")
+    accelerated = _build_script()._ACCELERATED
+    dist = args.dist or (_DEFAULT_ACCELERATED_DIST if accelerated else _DEFAULT_DIST)
+    dist = os.path.join(_REPO_ROOT, dist) if not os.path.isabs(dist) else dist
+    executable = _find_executable(dist)
+    if not executable:
+        raise SystemExit(f"No hay {' ni '.join(_EXECUTABLE_NAMES)} en {dist}. "
+                         f"Compilar primero — ver build/README.md.")
 
     app_name = _app_name(os.path.join(_REPO_ROOT, "config.yaml"))
     name = args.name or f"{app_name}-{APP_VERSION}"
@@ -452,22 +876,10 @@ def main() -> int:
         shutil.rmtree(release)
 
     print(f"  {name}")
-    shutil.copytree(dist, program, ignore=shutil.ignore_patterns("__pycache__"))
-    print(f"    program/        {_size_mb(program):6.1f} MB, {_count(program)} archivos")
-
-    for package in _LOOSE_PACKAGES:
-        source = os.path.join(_REPO_ROOT, ".venv", "Lib", "site-packages", package)
-        if not _copy_into(source, os.path.join(program, package)):
-            # Se avisa y se sigue: cada paquete es el soporte de **una** marca de cámara,
-            # y no tener el de una marca que esta planta no usa no es motivo para no
-            # armar el entregable. `Verificar camara.cmd` lo dice en el equipo.
-            print(f"    program/{package}/  FALTA en el venv: el entregable queda sin "
-                  f"soporte para esa marca")
-            continue
-        print(f"    program/{package}/  suelto, {_size_mb(os.path.join(program, package)):.0f} MB")
-
-    if _copy_stable_abi_dll(program):
-        print(f"    program/{_STABLE_ABI_DLL}   lo pide un paquete suelto; Nuitka no lo copia")
+    if accelerated:
+        _assemble_accelerated(dist, executable, program)
+    else:
+        _assemble_standalone(dist, program)
 
     missing = []
     for source_rel, target_rel in _INSTALLATION_FILES:
@@ -480,23 +892,10 @@ def main() -> int:
                os.path.join(installation, _MODELS_DIR))
     print(f"    installation/   {_size_mb(installation):6.1f} MB")
 
-    _write_text(os.path.join(release, _ENV_NAME), _ENV_BODY)
-    print(f"    {_ENV_NAME}    la ruta de datos, y nada más")
-    for launcher_name, description, arguments, detach in _launchers(app_name):
-        launch = (_DETACHED if detach else _FOREGROUND).format(
-            arguments=f" {arguments}" if arguments else "")
-        _write_text(os.path.join(release, launcher_name),
-                    _LAUNCHER_BODY.format(description=description, env_name=_ENV_NAME,
-                                          launch=launch))
-        print(f"    {launcher_name}{'' if detach else '   (deja la consola a la vista)'}")
-
-    _write_text(os.path.join(release, _SHORTCUTS_NAME),
-                _SHORTCUTS_BODY.format(command=_shortcuts_command(app_name)))
-    print(f"    {_SHORTCUTS_NAME}   se corre una vez, ya instalado")
-
-    _write_text(os.path.join(release, _CHECK_NAME), _check_body(program))
-    external = _external_dlls(program, "stapipy")
-    print(f"    {_CHECK_NAME}         busca {len(external)} DLL del SDK en el equipo")
+    if _IS_WINDOWS:
+        _write_windows_scripts(release, program, app_name)
+    else:
+        _write_linux_scripts(release, program, executable, app_name, accelerated=accelerated)
 
     if missing:
         print("\n  FALTAN, hay que ponerlos a mano en installation/:")
@@ -504,7 +903,55 @@ def main() -> int:
             print(f"    {item}")
 
     print(f"\n  Total: {_size_mb(release):.1f} MB en {release}")
+    if not _IS_WINDOWS and not args.no_archive:
+        archive = _archive(release)
+        print(f"  Para copiar al equipo: {archive} "
+              f"({os.path.getsize(archive) / 1e6:.0f} MB)")
     return 0
+
+
+def _assemble_standalone(dist: str, program: str):
+    """El `main.dist` de Nuitka entero, y al lado lo que no se compila."""
+    shutil.copytree(dist, program, ignore=shutil.ignore_patterns("__pycache__"))
+    print(f"    program/        {_size_mb(program):6.1f} MB, {_count(program)} archivos")
+
+    site_packages = _site_packages()
+    for package in _LOOSE_PACKAGES:
+        source = os.path.join(site_packages, package)
+        if not _copy_into(source, os.path.join(program, package)):
+            # Se avisa y se sigue: cada paquete es el soporte de **una** marca de cámara,
+            # y no tener el de una marca que esta planta no usa no es motivo para no
+            # armar el entregable. `Verificar camara` lo dice en el equipo.
+            print(f"    program/{package}/  FALTA en el venv: el entregable queda sin "
+                  f"soporte para esa marca")
+            continue
+        print(f"    program/{package}/  suelto, {_size_mb(os.path.join(program, package)):.0f} MB")
+
+    # `python3.dll` es cosa de Windows: en Linux una extensión de ABI estable resuelve sus
+    # símbolos contra el proceso que la carga, y no hay un reenviador que copiar.
+    if _IS_WINDOWS and _copy_stable_abi_dll(program):
+        print(f"    program/{_STABLE_ABI_DLL}   lo pide un paquete suelto; Nuitka no lo copia")
+
+
+def _assemble_accelerated(dist: str, executable: str, program: str):
+    """
+    El binario, los datos que leen sus módulos y lo de terceros suelto.
+
+    De la carpeta de Nuitka sale sólo el ejecutable: al lado queda `main.build/`, con los
+    `.c` de la compilación, que no son parte del programa.
+    """
+    os.makedirs(program)
+    shutil.copy2(os.path.join(dist, executable), os.path.join(program, executable))
+    data_dirs = _build_script()._DATA_DIRS
+    for directory in data_dirs:
+        _copy_into(os.path.join(_REPO_ROOT, directory), os.path.join(program, directory))
+    print(f"    program/        {executable} ({_size_mb(program):.1f} MB con "
+          f"{', '.join(data_dirs)})")
+
+    target = os.path.join(program, _SITE_PACKAGES_DIR)
+    left_out = _copy_site_packages(_site_packages(), target)
+    print(f"    program/{_SITE_PACKAGES_DIR}/  {_size_mb(target):.0f} MB; quedan afuera: "
+          f"{', '.join(left_out) or 'nada'}")
 
 
 def _size_mb(path: str) -> float:

@@ -19,7 +19,7 @@ import csv
 import os
 
 from system.modbus.registers import MAP_PATH, SCHEMA
-from system.modbus.schema import Reg
+from system.modbus.schema import Reg, to_plc_address
 from system.paths import PROJECT_ROOT
 
 DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")
@@ -39,7 +39,7 @@ def _row(reg: Reg) -> tuple[str, ...]:
     """Una fila de la tabla, con todo ya como texto."""
     return (
         str(reg.addr),
-        f"4{reg.addr:04d}",              # el número con el que el PLC lo direcciona
+        to_plc_address(reg.addr),        # el número con el que el PLC lo direcciona
         reg.name,
         reg.desc,
         reg.unit or "-",

@@ -49,6 +49,18 @@ class AbstractCameraDriver(ABC):
     def disconnect(self):
         """Libera los recursos crudos del host."""
 
+    def interrupt(self):
+        """
+        Pide, desde otro hilo, que un `connect()` en curso vuelva cuanto antes.
+
+        Existe porque `connect()` puede esperar segundos —una GigE que no aparece— y el
+        hilo de captura no ve su propia interrupción mientras espera: el cierre lo daba
+        por colgado y Qt abortaba con el hilo vivo. No libera nada, eso sigue siendo
+        `disconnect()` del hilo dueño, y es terminal: un driver interrumpido no vuelve a
+        conectar. Sin redefinir no hace nada, que alcanza para un `connect()` que vuelve
+        enseguida.
+        """
+
     @abstractmethod
     def get_frame(self, timeout_ms: int = 500) -> np.ndarray | None:
         """

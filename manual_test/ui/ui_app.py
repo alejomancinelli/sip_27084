@@ -32,7 +32,7 @@ hacer `main.py`, con los mismos métodos públicos. Ver `docs/ui.md`.
     el logger real                 puenteado al log de la barra lateral
 
 Lo único sintético son los frames, que salen del `mock` driver, y el controlador de
-GPIO, porque ese módulo todavía no existe en el repo. El servidor RTSP es el único que no
+GPIO, porque el de verdad sin `gpiod` deja las entradas quietas. El servidor RTSP es el único que no
 se levanta —necesita GStreamer—: su chip dice `disabled` si el config lo apaga.
 
 Qué mirar:
@@ -100,9 +100,9 @@ Qué mirar:
   - **Herramienta de ROI**: pestaña Cámaras → Cinta entrada → «Herramienta interactiva de
     ROI». Se dibuja con el mouse sobre el frame en vivo; al guardar, el recuadro azul
     aparece en el panel de la grilla, que lee el ROI del config.
-  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble
-    —el módulo de GPIO todavía no existe en el repo—. Las salidas conmutan y las
-    entradas se mueven solas cada dos segundos.
+  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble:
+    el de verdad, sin `gpiod`, queda en simulado y con las entradas quietas. Las salidas
+    conmutan y las entradas se mueven solas cada dos segundos.
   - **Sin licencia instalada, el equipo abre igual.** Correr con `--simulate-no-license`
     para verlo: al abrir la ventana aparece un cartel, y el footer muestra un chip rojo
     «SIN LICENCIA» todo el tiempo que dure el estado. Sin el flag, corriendo desde
@@ -139,14 +139,14 @@ from system.camera.capture_thread import CaptureThread                   # noqa:
 from system.config_manager import ConfigManager                          # noqa: E402
 from system.formats import camera_health, com_status, system_status       # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
-from system.inference.metrics import compute_metrics                     # noqa: E402
-from system.inference.pipeline import Pipeline                           # noqa: E402
+from system.inference import annotations, metrics                        # noqa: E402
+from system.inference.pipeline import BeltPipeline                       # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
 from system.license.request import save_request                          # noqa: E402
 from system.logger import logger                                         # noqa: E402
-from system.modbus.registers import SCHEMA                               # noqa: E402
+from system.modbus.registers import REGISTERS, SCHEMA                    # noqa: E402
 from system.modbus.server import SharedModbusServer                      # noqa: E402
 from system.system_monitor import SystemMonitor                          # noqa: E402
 from system.telemetry.persistence import PersistenceThread               # noqa: E402
@@ -168,6 +168,10 @@ _GPIO_INTERVAL_MS = 2000         # cada cuánto se mueven las entradas del GPIO 
 _CONFIG_WATCH_INTERVAL_MS = 1000 # cada cuánto se mira si cambió el config.yaml
 
 _HEARTBEAT_MAX = 65535           # el registro es uint16: el contador da la vuelta ahí
+
+# Los nombres del mapa cargado, como en `main.py`: el de cada instalación declara lo que
+# lee su PLC y no tiene por qué traer todo lo que esto mide.
+_REGISTER_NAMES = frozenset(reg.name for reg in REGISTERS)
 _SERVER_STOP_TIMEOUT_S = 5.0     # espera al hilo del servidor Modbus al cerrar
 
 _GPIO_INPUT_COUNT = 4
@@ -241,8 +245,8 @@ class _FakeGpioController:
     """
     Controlador de GPIO de mentira, con la interfaz que espera `ui/dialogs/gpio_dialog.py`.
 
-    Está acá y no en el repo porque el módulo de GPIO todavía no existe: cuando exista,
-    esta clase se borra y se cablea el de verdad.
+    Es un doble y no `system/gpio_control.py` porque el de verdad, sin `gpiod`, queda en
+    simulado con las entradas quietas, y esta prueba las quiere ver moverse.
     """
 
     hardware_available = False
@@ -359,8 +363,21 @@ class _DemoApp(QObject):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config, Pipeline(config, pipeline_slot),
-                analyzer=compute_metrics,
+                config,
+                BeltPipeline(config, pipeline_slot,
+                             dark_background_threshold=config.get(
+                                 "process.dark_background_threshold", {}) or {}),
+                analyzer=metrics.build_analyzer(
+                    class_names=config.get(
+                        "inference.models.segmenter.class_names", []) or [],
+                    belt_roi_px=config.get("process.belt_roi_px", {}) or {}),
+                annotator=annotations.chain(
+                    annotations.belt_roi_annotator(
+                        config.get("process.belt_roi_px", {}) or {}),
+                    annotations.composition_panel_annotator(
+                        config.get("inference.models.segmenter.class_names", []) or [],
+                        class_colors_bgr=tuple(tuple(color) for color in (config.get(
+                            "inference.overlay.class_colors_bgr", []) or [])))),
                 annotate_gate=self._is_annotated_watched,
             )
             engine.result_ready.connect(self._on_result_ready)
@@ -465,7 +482,7 @@ class _DemoApp(QObject):
              "detection_count": result.detection_count,
              "illumination_pct": result.illumination_pct,
              **result.metrics},
-            tags={"camera": result.camera_slot, "pipeline": result.pipeline_slot},
+            tags={"camara_id": result.camera_slot, "pipeline": result.pipeline_slot},
         )
         if result.annotated_bgr is None:
             return
@@ -554,8 +571,10 @@ class _DemoApp(QObject):
 
         # Un solo `encode_batch` para los dos consumidores: el datastore que lee el PLC
         # y la tabla que mira el operador. Si se codificara dos veces, podrían
-        # divergir.
-        registers = SCHEMA.encode_batch(values)
+        # divergir. Sólo lo que tiene fila: con un nombre de más, `encode_batch` levanta
+        # KeyError y el ciclo entero se cae.
+        registers = SCHEMA.encode_batch(
+            {name: value for name, value in values.items() if name in _REGISTER_NAMES})
         self._modbus.update_block(registers)
         self._window.diagnostics_view.update_modbus_values(registers)
 

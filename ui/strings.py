@@ -146,6 +146,9 @@ _TEXTS: dict[str, dict[str, str]] = {
     "cam_box_calibration":    {"es": "Calibración de lente",
                                "en": "Lens calibration",
                                "pt": "Calibração da lente"},
+    "cam_box_image_adjust":   {"es": "Ajuste de imagen para la medición",
+                               "en": "Image adjustment for measurement",
+                               "pt": "Ajuste de imagem para a medição"},
     "cam_enabled":            {"es": "Cámara habilitada",
                                "en": "Camera enabled",
                                "pt": "Câmera habilitada"},
@@ -177,6 +180,32 @@ _TEXTS: dict[str, dict[str, str]] = {
                                      "matrix and a list of coefficients.",
                                "pt": "Os intrínsecos da lente são editados no config.yaml: são "
                                      "uma matriz e uma lista de coeficientes."},
+    "cam_brightness_factor":  {"es": "Brillo (x1.0 = sin cambio):",
+                               "en": "Brightness (x1.0 = no change):",
+                               "pt": "Brilho (x1.0 = sem alteração):"},
+    "cam_clahe":              {"es": "Contraste local CLAHE (0 = apagado):",
+                               "en": "CLAHE local contrast (0 = off):",
+                               "pt": "Contraste local CLAHE (0 = desligado):"},
+    "cam_image_adjust_note":  {"es": "Para reproducir un equipo o un modelo entrenado con imágenes "
+                                     "ajustadas. En una instalación nueva, dejarlo en x1.0 y "
+                                     "ajustar la ganancia: el modelo se entrena con la imagen del "
+                                     "sensor. No es un ajuste de pantalla: cambia la imagen que "
+                                     "mide el modelo y la que guarda el dataset, y con ella el "
+                                     "brillo que se compara con la iluminación mínima. Se aplica "
+                                     "al reiniciar.",
+                               "en": "To reproduce equipment or a model trained on adjusted "
+                                     "images. On a new installation, leave it at x1.0 and adjust "
+                                     "the gain: the model is trained on the sensor image. This is "
+                                     "not a display setting: it changes the image the model "
+                                     "measures and the one the dataset stores, and with it the "
+                                     "brightness compared against the minimum illumination. "
+                                     "Applied on restart.",
+                               "pt": "Para reproduzir um equipamento ou um modelo treinado com "
+                                     "imagens ajustadas. Em uma instalação nova, deixar em x1.0 e "
+                                     "ajustar o ganho: o modelo é treinado com a imagem do sensor. "
+                                     "Não é um ajuste de tela: muda a imagem que o modelo mede e a "
+                                     "que o dataset guarda, e com ela o brilho comparado com a "
+                                     "iluminação mínima. Aplicado ao reiniciar."},
     "cam_calibration_set":    {"es": "Corrección de lente configurada",
                                "en": "Lens correction configured",
                                "pt": "Correção de lente configurada"},
@@ -296,9 +325,9 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Contraste local CLAHE"},
     "video_display_note":     {"es": "Los dos ajustes van sólo al camino de visualización —la UI y "
                                      "los streams—: el modelo y el dataset siguen recibiendo el "
-                                     "frame crudo. El contraste local rescata una escena con una "
-                                     "zona quemada y otra en sombra, y cuesta bastante más que "
-                                     "el gamma.",
+                                     "frame de la cámara. El contraste local rescata una escena "
+                                     "con una zona quemada y otra en sombra, y cuesta bastante "
+                                     "más que el gamma.",
                                "en": "Both adjustments apply only to the display path —the UI and "
                                      "the streams—: the model and the dataset still get the raw "
                                      "frame. Local contrast rescues a scene with one blown-out "
@@ -387,36 +416,72 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Espessura da linha (px):"},
 
     # ── Proceso (configuración) ──────────────────────────────────────────────
-    "process_empty_note":     {"es": "Esta instalación todavía no declaró parámetros de "
-                                     "proceso editables desde la pantalla.\n\n"
-                                     "Los parámetros de lo que se mide —escalas de píxel, "
-                                     "límites de carga, umbrales— son distintos en cada "
-                                     "proyecto, así que el template no los trae: viven en la "
-                                     "sección «process:» del config.yaml y hoy se editan ahí.\n\n"
-                                     "Para ponerlos en esta pantalla se completa "
-                                     "ui/views/config/process_tab.py, que tiene los dos "
-                                     "patrones —un valor suelto y un mapa por cámara— en su "
-                                     "docstring. Ver docs/ui.md.",
-                               "en": "This installation has not declared any process "
-                                     "parameters editable from the screen yet.\n\n"
-                                     "The parameters of what gets measured —pixel scales, "
-                                     "load limits, thresholds— differ in every project, so the "
-                                     "template does not ship them: they live in the «process:» "
-                                     "section of config.yaml and are edited there for now.\n\n"
-                                     "To bring them to this screen, fill in "
-                                     "ui/views/config/process_tab.py, whose docstring has both "
-                                     "patterns —a plain value and a per-camera map—. "
-                                     "See docs/ui.md.",
-                               "pt": "Esta instalação ainda não declarou parâmetros de "
-                                     "processo editáveis pela tela.\n\n"
-                                     "Os parâmetros do que se mede —escalas de pixel, limites "
-                                     "de carga, limiares— são diferentes em cada projeto, "
-                                     "então o template não os traz: vivem na seção «process:» "
-                                     "do config.yaml e hoje se editam ali.\n\n"
-                                     "Para colocá-los nesta tela, complete "
-                                     "ui/views/config/process_tab.py, cujo docstring tem os "
-                                     "dois padrões —um valor solto e um mapa por câmera—. "
-                                     "Ver docs/ui.md."},
+    "process_box_belt":       {"es": "Rectángulo de cinta",
+                               "en": "Belt rectangle",
+                               "pt": "Retângulo da esteira"},
+    "process_belt_note":      {"es": "Es la referencia del 100 % de carga y lo que se dibuja "
+                                     "sobre el anotado. No es el ROI de la cámara: el modelo "
+                                     "sigue mirando el frame entero, así que la composición "
+                                     "por clase se mide contra el frame y la carga contra "
+                                     "este rectángulo.",
+                               "en": "This is the 100 % load reference and what gets drawn on "
+                                     "the annotated frame. It is not the camera ROI: the "
+                                     "model still sees the whole frame, so the per-class "
+                                     "composition is measured against the frame and the load "
+                                     "against this rectangle.",
+                               "pt": "É a referência de 100 % de carga e o que se desenha "
+                                     "sobre o anotado. Não é o ROI da câmera: o modelo "
+                                     "continua vendo o quadro inteiro, então a composição "
+                                     "por classe se mede contra o quadro e a carga contra "
+                                     "este retângulo."},
+    "process_belt_tool":      {"es": "Dibujar sobre el video...",
+                               "en": "Draw on the video...",
+                               "pt": "Desenhar sobre o vídeo..."},
+    "process_belt_title":     {"es": "Definir rectángulo de cinta",
+                               "en": "Define belt rectangle",
+                               "pt": "Definir retângulo da esteira"},
+    "process_box_dark":       {"es": "Fondo oscuro",
+                               "en": "Dark background",
+                               "pt": "Fundo escuro"},
+    "process_dark_threshold": {"es": "Umbral (0-255):",
+                               "en": "Threshold (0-255):",
+                               "pt": "Limiar (0-255):"},
+    "process_dark_off":       {"es": "sin refinar",
+                               "en": "no refinement",
+                               "pt": "sem refinar"},
+    "process_dark_note":      {"es": "Los píxeles de la clase más oscuros que el umbral se "
+                                     "descartan: es el fondo que el contorno del modelo mete "
+                                     "entre partículas sueltas. En 0 no se refina nada.\n\n"
+                                     "Se calibra mirando la cinta y con la exposición "
+                                     "definitiva: el mismo número sobre una imagen más clara "
+                                     "o más oscura no significa lo mismo.",
+                               "en": "Pixels of the class darker than the threshold are "
+                                     "dropped: it is the background the model outline "
+                                     "includes between scattered particles. At 0 nothing is "
+                                     "refined.\n\nCalibrate it looking at the belt and with "
+                                     "the final exposure: the same number over a brighter or "
+                                     "darker image does not mean the same thing.",
+                               "pt": "Os pixels da classe mais escuros que o limiar são "
+                                     "descartados: é o fundo que o contorno do modelo inclui "
+                                     "entre partículas soltas. Em 0 não se refina nada.\n\n"
+                                     "Calibra-se olhando a esteira e com a exposição "
+                                     "definitiva: o mesmo número sobre uma imagem mais clara "
+                                     "ou mais escura não significa o mesmo."},
+    "process_box_window":     {"es": "Tendencias",
+                               "en": "Trends",
+                               "pt": "Tendências"},
+    "process_window_s":       {"es": "Ventana de las medias (s):",
+                               "en": "Averaging window (s):",
+                               "pt": "Janela das médias (s):"},
+    "process_window_note":    {"es": "Sobre cuánto tiempo se promedian las tendencias que "
+                                     "lee el PLC. Toma efecto al reiniciar.",
+                               "en": "How long a span the trends the PLC reads are averaged "
+                                     "over. Takes effect on restart.",
+                               "pt": "Sobre quanto tempo se calculam as médias que o CLP lê. "
+                                     "Entra em vigor ao reiniciar."},
+    "process_no_cameras":     {"es": "No hay cámaras declaradas en el config.yaml.",
+                               "en": "No cameras declared in config.yaml.",
+                               "pt": "Nenhuma câmera declarada no config.yaml."},
 
     # ── Dataset (configuración) ──────────────────────────────────────────────
     "col_box_general":        {"es": "Recolección",    "en": "Collection",    "pt": "Coleta"},
@@ -482,15 +547,21 @@ _TEXTS: dict[str, dict[str, str]] = {
     "mb_register_count":      {"es": "Registros expuestos:",
                                "en": "Exposed registers:",
                                "pt": "Registradores expostos:"},
-    "mb_map_extent":          {"es": "El mapa cargado usa hasta el registro {max_addr}.",
-                               "en": "The loaded map uses up to register {max_addr}.",
-                               "pt": "O mapa carregado usa até o registrador {max_addr}."},
-    "mb_map_overflow":        {"es": "El mapa llega al registro {max_addr}, más allá de los "
-                                     "{count} expuestos: esos registros no se publican.",
-                               "en": "The map reaches register {max_addr}, past the {count} "
-                                     "exposed: those registers are not published.",
-                               "pt": "O mapa chega ao registrador {max_addr}, além dos {count} "
-                                     "expostos: esses registradores não são publicados."},
+    "mb_map_extent":          {"es": "El mapa cargado usa hasta el registro {max_addr} "
+                                     "({plc_addr} para el PLC).",
+                               "en": "The loaded map uses up to register {max_addr} "
+                                     "({plc_addr} for the PLC).",
+                               "pt": "O mapa carregado usa até o registrador {max_addr} "
+                                     "({plc_addr} para o CLP)."},
+    "mb_map_overflow":        {"es": "El mapa llega al registro {max_addr} ({plc_addr} para "
+                                     "el PLC), más allá de los {count} expuestos: esos "
+                                     "registros no se publican.",
+                               "en": "The map reaches register {max_addr} ({plc_addr} for the "
+                                     "PLC), past the {count} exposed: those registers are "
+                                     "not published.",
+                               "pt": "O mapa chega ao registrador {max_addr} ({plc_addr} para "
+                                     "o CLP), além dos {count} expostos: esses registradores "
+                                     "não são publicados."},
     "mb_serial_port":         {"es": "Puerto serie:",  "en": "Serial port:",  "pt": "Porta serial:"},
     "mb_baudrate":            {"es": "Baudrate:",      "en": "Baud rate:",    "pt": "Baud rate:"},
     "mb_parity":              {"es": "Paridad:",       "en": "Parity:",       "pt": "Paridade:"},

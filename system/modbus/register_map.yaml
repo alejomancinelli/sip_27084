@@ -1,4 +1,4 @@
-# Mapa de registros Modbus — específico de la instalación.
+# Mapa de registros Modbus — SIP Smart Belt Monitor, Cargill APG 27084.
 #
 # Es la fuente ÚNICA de verdad del mapa: de acá salen la tabla de la UI, la
 # documentación para el integrador (`python -m system.modbus.export_map`) y las
@@ -8,6 +8,12 @@
 # Direccionamiento BASE-1: el registro 1 es el primer holding register, el que el
 # PLC lee como 40001. Regla única: **reg N ⇔ 4000N**, sin off-by-one que traducir
 # entre el código, la documentación y el integrador.
+#
+# LAS DIRECCIONES SON LAS DE LA VERSIÓN ANTERIOR DEL EQUIPO y no se mueven: el PLC
+# ya está programado contra ellas. Lo que sí cambió al migrar son los `name:`, que
+# pasaron al inglés porque son el contrato con `metrics.py` y con el código, no con
+# el PLC. Dos cambios de semántica, decididos a propósito y anotados donde van: el
+# registro 51 y los tres registros nuevos del final.
 #
 # Campos de cada entrada (ver `system/modbus/schema.py`):
 #   addr      dirección base-1, única
@@ -19,126 +25,195 @@
 #   unit      unidad del valor SIN escalar, para la doc
 #   is_bool   codifica como 0/1
 #
-# Las filas `config` son un espejo R/W que el PLC puede escribir; este mapa no
-# declara ninguna, porque en el template la configuración se edita sólo en el
-# equipo. Los campos config_key / default / apply / mirror_from_config sólo
-# aplican a esas filas.
-#
-# Este archivo es lo que cambia en cada fork. La maquinaria que lo lee, no.
+# Este mapa no declara filas `config`: la configuración se edita en el equipo y el
+# PLC no escribe nada. El servidor sirve sólo FC03.
 
 # ── Palabras de estado (1-2) ─────────────────────────────────────────────────
 - addr: 1
   name: system_status_bitfield
-  desc: Estado del sistema (bitfield)
+  desc: Estado del sistema (bitfield) — un bit en 1 es una falla
   producer: health
 
 - addr: 2
   name: com_status_bitfield
-  desc: Canales de comunicación (bitfield)
+  desc: Canales de comunicación (bitfield) — un bit en 1 es un canal andando
   producer: health
 
-# ── Resultados de inferencia (3-50) ──────────────────────────────────────────
-# Rango reservado, sin filas: el motor de inferencia ya corre, pero qué publica es lo
-# más específico de cada proyecto y sale de `metrics.compute_metrics`, que se escribe
-# en cada fork. El fork agrega acá sus filas con `producer: inference`.
+# ── Resultados de inferencia (3-12) ──────────────────────────────────────────
+# Los nombres de las filas `producer: inference` son el contrato con `metrics.py`:
+# una métrica se publica si existe una fila que se llame igual. Renombrar una acá
+# sin renombrarla allá deja el registro en cero y se avisa una sola vez en el log.
 #
-# Al hacerlo, mantener INMUTABLE el mapeo posición → registro: si el resultado son
-# fracciones por clase, el registro reporta siempre el mismo slot, y renombrar una
-# clase o mover un umbral no cambia qué registro la transporta. El PLC no se
-# reprograma porque en el equipo se haya editado un nombre.
+# La composición (3 y 4) y la carga (5) tienen DENOMINADORES DISTINTOS a propósito:
+# 3 y 4 reparten entre sí lo detectado y suman 1000; 5 es lo detectado sobre el ROI
+# de cinta y por eso puede pasar de 1000 cuando la cinta desborda.
+- addr: 3
+  name: pct_pellet_norm
+  desc: Composición — pellet entero, sobre el total detectado
+  producer: inference
+  unit: '%'
+  scale: 10
+
+- addr: 4
+  name: pct_desmenuzado_norm
+  desc: Composición — desmenuzado, sobre el total detectado
+  producer: inference
+  unit: '%'
+  scale: 10
+
+- addr: 5
+  name: pct_carga
+  desc: Carga de la cinta respecto del ROI; pasa de 100 % si hay desborde
+  producer: inference
+  unit: '%'
+  scale: 10
+
+# ── Medias móviles de 1 h (6-10) ─────────────────────────────────────────────
+# La tendencia, no la medición instantánea. Los dos últimos son los que dicen si se
+# puede confiar en las tres medias: sin ellos, una media de tres muestras sobre una
+# hora se lee igual que una hora entera bien medida.
+- addr: 6
+  name: pct_pellet_norm_1h
+  desc: Pellet — media de la última hora, sólo con material en la cinta
+  producer: health
+  unit: '%'
+  scale: 10
+
+- addr: 7
+  name: pct_desmenuzado_norm_1h
+  desc: Desmenuzado — media de la última hora, sólo con material en la cinta
+  producer: health
+  unit: '%'
+  scale: 10
+
+- addr: 8
+  name: pct_carga_1h
+  desc: Carga — media de la última hora, sobre todas las mediciones
+  producer: health
+  unit: '%'
+  scale: 10
+
+- addr: 9
+  name: window_coverage_pct
+  desc: Cuánto de la última hora se llegó a medir — valida el registro 8
+  producer: health
+  unit: '%'
+
+- addr: 10
+  name: material_present_pct
+  desc: Cuánto de lo medido tenía material — valida los registros 6 y 7
+  producer: health
+  unit: '%'
+
+# ── Salud del modelo (11-12) ─────────────────────────────────────────────────
+- addr: 11
+  name: confidence_pct
+  desc: Confianza media de las detecciones; 0 sin detecciones, que no es baja confianza
+  producer: inference
+  unit: '%'
+
+- addr: 12
+  name: inference_time_ms
+  desc: Duración del último ciclo de inferencia
+  producer: inference
+  unit: ms
+
+# 13-50 libres. El rango quedó reservado en la versión anterior y sigue libre.
 
 # ── Cámaras (51-80) ──────────────────────────────────────────────────────────
 # Bloque de 4 registros por cámara, con paso fijo: `camera_N` arranca en
-# 51 + 4*(N-1) — camera_1 en 51, camera_2 en 55, camera_3 en 59, y así hasta
-# camera_7 en 75. Abajo va sólo camera_1 como ejemplo: el fork copia el bloque y
-# corre las direcciones para las cámaras que tenga declaradas en `cameras` del
-# config.yaml.
+# 51 + 4*(N-1). Hoy hay una sola cámara; 55-80 quedan para las que se agreguen.
 - addr: 51
   name: camera_1_state_bitfield
-  desc: Estado de la cámara 1 (bitfield)
+  desc: Estado de la cámara 1 (bitfield); el bit 6 es lente sucio
   producer: health
+  # CAMBIÓ AL MIGRAR: antes era un enum 0-5 y ahora es un bitfield, que es lo que
+  # además transporta el bit de lente sucio. Es el único registro del mapa cuya
+  # semántica se movió, y la lógica del PLC sobre él se actualiza aparte.
 
 - addr: 52
   name: camera_1_temperature_c
-  desc: Temperatura de la cámara 1
+  desc: Temperatura de la cámara 1; 0 cuando no hay lectura
   producer: health
   unit: °C
-  scale: 10
 
 - addr: 53
   name: camera_1_fps
   desc: Frames por segundo medidos de la cámara 1
   producer: health
   unit: fps
-  scale: 10
 
 - addr: 54
   name: camera_1_illumination_pct
-  desc: Brillo medio del ROI de la cámara 1
+  desc: Brillo medio del frame de la cámara 1
   producer: inference
   unit: '%'
 
-# ── Salud del equipo (81-99) ─────────────────────────────────────────────────
+# ── Salud del equipo (81-90) ─────────────────────────────────────────────────
 # Las claves espejan las de `SystemMonitor.get_metrics()`, para que el productor
-# no tenga que traducir nombres en el camino.
+# no tenga que traducir nombres en el camino. Todas sin escala, en enteros, como
+# las venía leyendo el PLC.
 - addr: 81
   name: heartbeat
   desc: Heartbeat / watchdog — cambia en cada ciclo mientras la app viva
   producer: health
 
 - addr: 82
+  name: gpio_inputs_bitfield
+  desc: Entradas digitales (bitfield); bits 8-11 marcan falla de lectura
+  producer: health
+
+- addr: 83
+  name: gpio_outputs_bitfield
+  desc: Salidas digitales (bitfield) — eco de lo comandado, no lectura del hardware
+  producer: health
+
+- addr: 84
   name: cpu_usage_pct
   desc: CPU en uso
   producer: health
   unit: '%'
 
-- addr: 83
+- addr: 85
   name: gpu_usage_pct
   desc: GPU en uso
   producer: health
   unit: '%'
 
-- addr: 84
+- addr: 86
   name: ram_used_mb
   desc: RAM usada
   producer: health
   unit: MB
 
-- addr: 85
-  name: ram_total_mb
-  desc: RAM total del equipo
-  producer: health
-  unit: MB
-
-- addr: 86
+- addr: 87
   name: disk_free_gb
   desc: Espacio libre en disco
   producer: health
   unit: GB
-  scale: 10
 
-- addr: 87
+- addr: 88
   name: cpu_temp_c
   desc: Temperatura de CPU
   producer: health
   unit: °C
-  scale: 10
 
-- addr: 88
+- addr: 89
   name: gpu_temp_c
   desc: Temperatura de GPU
   producer: health
   unit: °C
-  scale: 10
 
-- addr: 89
+- addr: 90
   name: power_w
   desc: Consumo estimado
   producer: health
   unit: W
-  scale: 10
 
 # ── Reloj del equipo (97-98) ─────────────────────────────────────────────────
+# NUEVOS: el rango 91-100 estaba libre en el mapa anterior. El PLC puede ignorarlos
+# hasta que se los quiera usar.
+#
 # El reloj del equipo como **segundos desde 1970-01-01 00:00 UTC**, en dos registros.
 #
 # **Para qué está: el PLC es el único reloj confiable que hay.** El vencimiento de la

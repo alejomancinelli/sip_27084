@@ -56,7 +56,7 @@ _DEFAULT_FPS_LIMIT = 15.0
 
 _PAUSE_POLL_S = 0.2     # cada cuánto revisa el thread si volvió la captura
 _QUEUE_MAXSIZE = 2      # cola corta: semántica always-fresh
-_CONNECT_TIMEOUT_S = 5  # espera máxima a que el thread confirme la adquisición
+_CONNECT_TIMEOUT_S = 20  # espera a que el thread confirme la adquisición; ver connect()
 _CONNECT_POLL_S = 0.1
 _JOIN_TIMEOUT_S = 5.0
 _RETRY_DELAY_S = 5      # entre reintentos de conexión del thread de captura
@@ -123,6 +123,9 @@ class StDriver(AbstractCameraDriver):
         self._img_queue: Queue = Queue(maxsize=_QUEUE_MAXSIZE)
         self._grab_active = False
         self._force_disconnect = False
+        # Lo prende `interrupt()` y no se apaga: despierta las esperas de `connect()` y
+        # de los reintentos, que con `time.sleep` no se enteraban del cierre.
+        self._interrupted = threading.Event()
         self._grab_thread: threading.Thread | None = None
         self._nodemap = None
         # Device y datastream vivos: los necesita _apply_capture_enabled para cortar la
@@ -139,6 +142,8 @@ class StDriver(AbstractCameraDriver):
             logger.error(f"[StDriver] No se pudo cargar stapipy ({_IMPORT_ERROR}). "
                          f"{_import_hint()} No se puede conectar.")
             return False
+        if self._interrupted.is_set():
+            return False
 
         with _stapi_lock:
             # _grab_loop maneja la reconexión por su cuenta: no levantar un segundo
@@ -153,16 +158,37 @@ class StDriver(AbstractCameraDriver):
             )
             self._grab_thread.start()
 
+        # También corta si alguien llamó a `disconnect()` o `interrupt()` mientras se
+        # esperaba: sin eso, cerrar la aplicación durante el primer intento se queda
+        # esperando el timeout entero.
         deadline = time.time() + _CONNECT_TIMEOUT_S
-        while not self.is_connected and time.time() < deadline:
-            time.sleep(_CONNECT_POLL_S)
+        while (not self.is_connected and self._grab_active and time.time() < deadline
+               and not self._interrupted.wait(_CONNECT_POLL_S)):
+            pass
 
+        if not self.is_connected and self._interrupted.is_set():
+            return False
         if not self.is_connected:
-            logger.error(f"[StDriver] {self._address} no conectó en {_CONNECT_TIMEOUT_S} s.")
-            self._grab_active = False
+            # **El thread queda vivo a propósito.** Enumerar una GigE puede tardar más que
+            # este timeout, y el thread está justamente en esa llamada bloqueante: bajar
+            # `_grab_active` acá lo mata cuando está por terminar, y como cada reintento
+            # vuelve a enumerar desde cero con el mismo presupuesto, una cámara más lenta
+            # que el timeout no conectaría nunca por más que se reintente.
+            #
+            # Dejándolo trabajar, el siguiente `connect()` encuentra el thread vivo, sale
+            # por el early-return de arriba y devuelve el estado real. Si la cámara de
+            # verdad no está, el propio loop reintenta y lo dice, sin acumular threads.
+            logger.warning(
+                f"[StDriver] {self._address} no confirmó la adquisición en "
+                f"{_CONNECT_TIMEOUT_S} s. El thread sigue intentando."
+            )
             return False
 
         return True
+
+    def interrupt(self):
+        self._interrupted.set()
+        self._grab_active = False
 
     def disconnect(self):
         self._grab_active = False
@@ -550,7 +576,7 @@ class StDriver(AbstractCameraDriver):
                         f"[StDriver] {self._address} no encontrada. "
                         f"Reintento en {_RETRY_DELAY_S} s."
                     )
-                    time.sleep(_RETRY_DELAY_S)
+                    self._interrupted.wait(_RETRY_DELAY_S)
 
             except Exception as e:
                 logger.warning(
@@ -558,7 +584,7 @@ class StDriver(AbstractCameraDriver):
                     f"Reintento en {_RETRY_DELAY_S} s."
                 )
                 self.is_connected = False
-                time.sleep(_RETRY_DELAY_S)
+                self._interrupted.wait(_RETRY_DELAY_S)
 
     # ── Decodificación ───────────────────────────────────────────────────────
 

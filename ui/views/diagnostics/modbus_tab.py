@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from system.config_manager import ConfigManager
 from system.modbus.registers import SCHEMA
+from system.modbus.schema import to_plc_address
 
 from ui import service_status
 from ui.strings import tr
@@ -93,7 +94,8 @@ class ModbusTab(AbstractDiagnosticsTab):
             row = self._table.rowCount()
             self._table.insertRow(row)
             self._row_by_address[address] = row
-            for column, text in enumerate([str(address), description, _EMPTY_VALUE]):
+            for column, text in enumerate(
+                    [to_plc_address(address), description, _EMPTY_VALUE]):
                 item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemIsEnabled)
                 self._table.setItem(row, column, item)

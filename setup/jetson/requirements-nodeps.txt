@@ -1,0 +1,7 @@
+# Installed by venv-setup.sh with --no-deps, after requirements.txt.
+#
+# PROJECT FILE. These are packages whose declared dependencies would replace something
+# installed on purpose. ultralytics asks for opencv-python, which overwrites the
+# headless OpenCV and brings its own Qt, and for a torch that pip may satisfy from PyPI.
+# Their real dependencies are listed in requirements.txt next to this file.
+ultralytics

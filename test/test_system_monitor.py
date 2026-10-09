@@ -126,6 +126,7 @@ class _FakeJetson:
         monkeypatch.setattr(sm, "_GPU_LOAD_PATHS", (str(self.gpu_load_path),))
         monkeypatch.setattr(sm, "_POWER_GLOBS",
                             ((str(self.power_path / "*" / "in_power0_input"), 1_000.0),))
+        monkeypatch.setattr(sm, "_POWER_HWMON_GLOB", str(self.power_path / "hwmon*"))
         self.monitor = _linux_monitor()
 
     def set_zones(self, *zones: tuple[str, int]):
@@ -407,6 +408,20 @@ class TestPower:
         monkeypatch.setattr(sm, "_POWER_GLOBS",
                             ((str(tmp_path / "*" / "power1_input"), 1_000_000.0),))
         assert _linux_monitor()._read_power_w() == 12.3
+
+    def test_jetpack_6_publishes_voltage_and_current(self, jetson):
+        """En JetPack 6 no hay nodo de potencia: sale de mV × mA del canal del módulo."""
+        hwmon_path = jetson.power_path / "hwmon2"
+        hwmon_path.mkdir(parents=True)
+        (hwmon_path / "in1_input").write_text("5080\n")
+        (hwmon_path / "curr1_input").write_text("1840\n")
+        assert jetson.monitor._read_power_w() == 9.3
+
+    def test_a_channel_without_current_reports_no_source(self, jetson):
+        hwmon_path = jetson.power_path / "hwmon2"
+        hwmon_path.mkdir(parents=True)
+        (hwmon_path / "in1_input").write_text("5080\n")
+        assert jetson.monitor._read_power_w() is None
 
     def test_no_rail_reports_no_source(self, jetson):
         assert jetson.monitor._read_power_w() is None
@@ -784,6 +799,7 @@ class TestGetMetrics:
         monkeypatch.setattr(sm, "_THERMAL_BASE", str(tmp_path / "missing"))
         monkeypatch.setattr(sm, "_GPU_LOAD_PATHS", ())
         monkeypatch.setattr(sm, "_POWER_GLOBS", ())
+        monkeypatch.setattr(sm, "_POWER_HWMON_GLOB", str(tmp_path / "missing"))
         metrics = _monitor().get_metrics()
         assert set(metrics) == _EXPECTED_KEYS
         assert metrics["gpu_usage_pct"] == 0

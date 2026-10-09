@@ -90,6 +90,22 @@ class _FakeDriver(AbstractCameraDriver):
         return {**self._status, "connected": self.is_connected}
 
 
+class _NeverConnectsDriver(_FakeDriver):
+    """Un `connect()` que espera a una cámara que no aparece, como el de StDriver."""
+
+    def __init__(self):
+        super().__init__()
+        self._interrupted = threading.Event()
+
+    def connect(self) -> bool:
+        self.connect_calls += 1
+        self._interrupted.wait(30)
+        return False
+
+    def interrupt(self):
+        self._interrupted.set()
+
+
 class _Collector:
     """Junta lo que emiten las señales desde el hilo de captura."""
 
@@ -255,6 +271,24 @@ class TestConfigError:
 
 
 # ── Conexión y reconexión ────────────────────────────────────────────────────
+
+class TestStopWhileConnecting:
+    """
+    Con la cámara desconectada el hilo pasa casi todo el tiempo adentro de `connect()`.
+    Si el cierre no lo despierta, el `wait()` se rinde con el hilo vivo y Qt aborta.
+    """
+
+    def test_stopping_wakes_a_connect_that_is_still_waiting(self, monkeypatch):
+        driver = _NeverConnectsDriver()
+        thread = _thread(monkeypatch, driver)
+        thread.start()
+        assert _wait_until(lambda: driver.connect_calls == 1)
+
+        started_s = time.monotonic()
+        thread.requestInterruption()
+        assert thread.wait(_WAIT_TIMEOUT_MS)
+        assert time.monotonic() - started_s < 1.0
+
 
 class TestConnection:
     def test_the_thread_connects_by_itself(self, monkeypatch):

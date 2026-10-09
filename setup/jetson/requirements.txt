@@ -1,0 +1,25 @@
+# Inference stack for the Jetson, installed by venv-setup.sh in the same pass as the
+# root requirements.txt and always with -c setup/jetson/constraints.txt.
+#
+# PROJECT FILE: this is the framework this fork's model runs on. A fork on another
+# framework lists its own here.
+#
+# torch and torchvision are NOT downloaded: venv-setup.sh installs them first from the
+# NVIDIA wheels in packages/ (gitignored, copied by hand). Listed here so their own
+# dependencies (sympy, networkx, jinja2, fsspec...) get resolved from PyPI.
+#
+#     packages/torch-2.5.0a0+872d972e41.nv24.08*-cp310-cp310-linux_aarch64.whl
+#     packages/torchvision-0.20.0-cp310-cp310-linux_aarch64.whl
+torch
+torchvision
+
+# ultralytics' own dependencies (8.4.90, the version pinned in constraints.txt), minus
+# the two that replace something: torch (above) and opencv-python (the root
+# requirements.txt installs the headless build). ultralytics itself comes from
+# requirements-nodeps.txt. Changing the pin means re-reading its Requires-Dist here.
+matplotlib>=3.3.0
+pillow>=7.1.2
+requests>=2.23.0
+polars>=0.20.0
+nvidia-ml-py>=12.0.0
+ultralytics-thop>=2.0.18

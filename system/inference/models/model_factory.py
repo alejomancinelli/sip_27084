@@ -16,11 +16,13 @@ from system.logger import logger
 from .abstract_model import AbstractModel
 from .mock_model import MockModel
 from .null_model import NullModel
+from .yolo_seg_model import YoloSegModel
 
 # Registro único: la clave es el valor que lleva `type` en la sección del modelo.
 # NullModel no figura acá — no se elige por config, es la salida ante un fallo.
 _MODEL_CLASSES: dict[str, type[AbstractModel]] = {
     "mock": MockModel,
+    "yolo_seg": YoloSegModel,
 }
 
 # Valores válidos de `type`, para mensajes de error y validación de config.

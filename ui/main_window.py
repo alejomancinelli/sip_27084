@@ -10,9 +10,9 @@ Tres cosas que no son obvias:
   - **ConfigView se arma la primera vez que se navega a ella.** Son ocho pestañas con
     cientos de campos y el arranque de la aplicación no las necesita; hasta entonces su
     lugar en el stack lo ocupa un cartel.
-  - **El botón de GPIO aparece sólo si hay controlador.** El template no trae el módulo
-    de GPIO, así que `set_gpio()` es lo que lo habilita: sin eso el botón no está, en
-    vez de estar y no hacer nada.
+  - **El botón de GPIO aparece sólo si hay controlador.** `set_gpio()` es lo que lo
+    habilita: un equipo que no lo inyecta no tiene botón, en vez de tener uno que no hace
+    nada.
   - **Sin licencia válida, el footer lo dice todo el tiempo y lo dice una sola vez al
     abrir.** `update_license()` pinta toda la barra de rojo mientras el estado lo
     amerite —el mismo criterio que el bit que va al PLC—, y no un chip: en una barra de
@@ -142,8 +142,8 @@ class MainWindow(QMainWindow):
         """
         Inyecta el controlador de GPIO y, si lo hay, el hilo que informa las entradas.
 
-        Sin esto el botón de GPIO no aparece: es la mitad de UI de un subsistema que el
-        template todavía no tiene. Ver `ui/dialogs/gpio_dialog.py`.
+        Sin esto el botón de GPIO no aparece: un equipo sin entradas ni salidas digitales
+        no muestra un panel que no comanda nada. Ver `ui/dialogs/gpio_dialog.py`.
         """
         self._gpio_controller = gpio_controller
         self._gpio_thread = gpio_thread
@@ -316,8 +316,8 @@ class MainWindow(QMainWindow):
         Reloj del header, con su aire a la izquierda dentro de su propio grupo.
 
         El hueco es del reloj y no de lo que tenga al lado: así mide lo mismo con el
-        grupo de GPIO presente y sin él, que es el caso de cualquier instalación que
-        todavía no tenga el módulo de GPIO.
+        grupo de GPIO presente y sin él, que es el caso de cualquier equipo con el GPIO
+        apagado.
         """
         self._clock_label = QLabel()
         self._clock_label.setObjectName("headerClock")
@@ -479,17 +479,24 @@ class MainWindow(QMainWindow):
         self.set_status_message(tr("status_config_saved"))
         self.config_saved.emit()
 
-    def _on_open_roi_requested(self, camera_slot: str):
+    def _on_open_roi_requested(self, camera_slot: str, config_prefix: str,
+                               title_key: str):
         """
         Abre el diálogo de ROI alimentado con el frame en vivo de esa cámara.
 
-        El frame sale del panel que la vista de monitor tenga para ese slot: si el fork
-        no puso ninguno, el diálogo se abre igual y se dibuja sobre negro, que es mejor
-        que no abrirse.
+        **Qué rectángulo se dibuja lo dice quien lo pide.** La pestaña manda bajo qué clave
+        guardarlo y cómo titular la ventana, así que esta ventana no conoce ninguna sección
+        del config: sirve igual al ROI de análisis de una cámara que al rectángulo que un
+        proyecto mida aparte, sin enterarse de cuál es cuál.
+
+        El frame sale del panel que la vista de monitor tenga para ese slot: si el widget
+        del centro no expone uno, el diálogo se abre igual y se dibuja sobre negro, que es
+        mejor que no abrirse.
         """
         from ui.dialogs.roi_dialog import RoiDialog
 
-        dialog = RoiDialog(self._config, camera_slot, self)
+        dialog = RoiDialog(self._config, camera_slot, self,
+                           config_prefix=config_prefix, title_key=title_key)
         panel = self._get_camera_panel(camera_slot)
         if panel is not None:
             panel.frame_updated.connect(dialog.update_frame)
