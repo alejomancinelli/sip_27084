@@ -123,6 +123,9 @@ class StDriver(AbstractCameraDriver):
         self._img_queue: Queue = Queue(maxsize=_QUEUE_MAXSIZE)
         self._grab_active = False
         self._force_disconnect = False
+        # Lo prende `interrupt()` y no se apaga: despierta las esperas de `connect()` y
+        # de los reintentos, que con `time.sleep` no se enteraban del cierre.
+        self._interrupted = threading.Event()
         self._grab_thread: threading.Thread | None = None
         self._nodemap = None
         # Device y datastream vivos: los necesita _apply_capture_enabled para cortar la
@@ -139,6 +142,8 @@ class StDriver(AbstractCameraDriver):
             logger.error(f"[StDriver] No se pudo cargar stapipy ({_IMPORT_ERROR}). "
                          f"{_import_hint()} No se puede conectar.")
             return False
+        if self._interrupted.is_set():
+            return False
 
         with _stapi_lock:
             # _grab_loop maneja la reconexión por su cuenta: no levantar un segundo
@@ -153,13 +158,16 @@ class StDriver(AbstractCameraDriver):
             )
             self._grab_thread.start()
 
-        # También corta si alguien llamó a `disconnect()` mientras se esperaba: sin eso,
-        # cerrar la aplicación durante el primer intento se queda esperando el timeout
-        # entero.
+        # También corta si alguien llamó a `disconnect()` o `interrupt()` mientras se
+        # esperaba: sin eso, cerrar la aplicación durante el primer intento se queda
+        # esperando el timeout entero.
         deadline = time.time() + _CONNECT_TIMEOUT_S
-        while not self.is_connected and self._grab_active and time.time() < deadline:
-            time.sleep(_CONNECT_POLL_S)
+        while (not self.is_connected and self._grab_active and time.time() < deadline
+               and not self._interrupted.wait(_CONNECT_POLL_S)):
+            pass
 
+        if not self.is_connected and self._interrupted.is_set():
+            return False
         if not self.is_connected:
             # **El thread queda vivo a propósito.** Enumerar una GigE puede tardar más que
             # este timeout, y el thread está justamente en esa llamada bloqueante: bajar
@@ -177,6 +185,10 @@ class StDriver(AbstractCameraDriver):
             return False
 
         return True
+
+    def interrupt(self):
+        self._interrupted.set()
+        self._grab_active = False
 
     def disconnect(self):
         self._grab_active = False
@@ -564,7 +576,7 @@ class StDriver(AbstractCameraDriver):
                         f"[StDriver] {self._address} no encontrada. "
                         f"Reintento en {_RETRY_DELAY_S} s."
                     )
-                    time.sleep(_RETRY_DELAY_S)
+                    self._interrupted.wait(_RETRY_DELAY_S)
 
             except Exception as e:
                 logger.warning(
@@ -572,7 +584,7 @@ class StDriver(AbstractCameraDriver):
                     f"Reintento en {_RETRY_DELAY_S} s."
                 )
                 self.is_connected = False
-                time.sleep(_RETRY_DELAY_S)
+                self._interrupted.wait(_RETRY_DELAY_S)
 
     # ── Decodificación ───────────────────────────────────────────────────────
 

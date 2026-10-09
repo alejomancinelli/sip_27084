@@ -142,6 +142,63 @@ class TestGrabLoopReconnect:
         assert system.by_address_calls == 4
 
 
+class TestInterrupt:
+    """
+    El cierre no espera a una cámara que no aparece: ni en `connect()` ni entre
+    reintentos. Sin esto el hilo de captura seguía vivo cuando el cierre se rendía, y Qt
+    abortaba el proceso.
+    """
+
+    def test_a_waiting_connect_returns_at_once(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", True)
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        camera_never_answers = threading.Event()
+        monkeypatch.setattr(driver, "_grab_loop", lambda: camera_never_answers.wait(5))
+        results = []
+        waiter = threading.Thread(target=lambda: results.append(driver.connect()))
+        waiter.start()
+        time.sleep(0.2)
+
+        started_s = time.monotonic()
+        driver.interrupt()
+        waiter.join(2)
+        camera_never_answers.set()
+
+        assert results == [False]
+        assert time.monotonic() - started_s < 1.0
+
+    def test_an_interrupted_driver_does_not_connect_again(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", True)
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        driver.interrupt()
+        assert driver.connect() is False
+        assert driver._grab_thread is None
+
+    def test_the_wait_between_retries_wakes_up_too(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_RETRY_DELAY_S", 30)
+        system.is_plugged = False
+        driver = _driver(system, grabs_before_stop=1)
+        loop = threading.Thread(target=driver._grab_loop)
+        loop.start()
+        assert _wait_for(lambda: system.by_address_calls >= 1)
+
+        started_s = time.monotonic()
+        driver.interrupt()
+        loop.join(2)
+
+        assert not loop.is_alive()
+        assert time.monotonic() - started_s < 1.0
+
+
+def _wait_for(condition, timeout_s: float = 2.0) -> bool:
+    deadline_s = time.monotonic() + timeout_s
+    while time.monotonic() < deadline_s:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 class TestDeviceListRefresh:
     """
     Buscar por dirección tiene que re-enumerar antes.
