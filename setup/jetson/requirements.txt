@@ -13,12 +13,13 @@
 torch
 torchvision
 
-# ultralytics' own dependencies (8.4.60), minus the two that replace something: torch
-# (above) and opencv-python (the root requirements.txt installs the headless build).
-# ultralytics itself comes from requirements-nodeps.txt.
+# ultralytics' own dependencies (8.4.90, the version pinned in constraints.txt), minus
+# the two that replace something: torch (above) and opencv-python (the root
+# requirements.txt installs the headless build). ultralytics itself comes from
+# requirements-nodeps.txt. Changing the pin means re-reading its Requires-Dist here.
 matplotlib>=3.3.0
 pillow>=7.1.2
 requests>=2.23.0
-scipy>=1.4.1
 polars>=0.20.0
+nvidia-ml-py>=12.0.0
 ultralytics-thop>=2.0.18

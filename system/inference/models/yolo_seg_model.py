@@ -19,6 +19,8 @@ TensorRT (`runtime.deserialize_cuda_engine(bytes)`), que sí recibe bytes; está
 `docs/model_protection.md`.
 """
 
+import os
+
 import cv2
 import numpy as np
 
@@ -27,6 +29,14 @@ from system.logger import logger
 from . import encrypted_weights
 from .abstract_model import STATUS_UNLOADED, TASK_SEGMENTATION, AbstractModel
 from ..result import Detection
+
+# Ultralytics lee estas variables al importarse, así que van antes del import de `load()`.
+# El equipo no grafica nunca, y un matplotlib que elige backend de Qt dentro del hilo de
+# inferencia choca con PySide6 y mata el hilo. Tampoco tiene internet: sin AUTOINSTALL,
+# ante un import que falta ultralytics intentaría un `pip install` en la planta.
+os.environ.setdefault("MPLBACKEND", "Agg")
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+os.environ.setdefault("YOLO_OFFLINE", "true")
 
 # Ultralytics quiere la confianza en 0–1 y el contrato la declara en 0–100.
 _PCT_TO_FRACTION = 100.0
@@ -70,10 +80,13 @@ class YoloSegModel(AbstractModel):
         if not self._read_weights(path):
             return
 
+        # Exception y no ImportError: importar ultralytics arrastra matplotlib, torch y
+        # TensorRT, y cualquiera de ellos puede fallar con otra cosa. Escapada, mata el hilo
+        # del motor sin una línea en el log.
         try:
             from ultralytics import YOLO
-        except ImportError as e:
-            self._set_error(f"No se pudo importar ultralytics: {e}")
+        except Exception as e:
+            self._set_error(f"No se pudo importar ultralytics: {type(e).__name__}: {e}")
             logger.error(f"[Inference] Modelo '{self.model_slot}': {self._error}")
             return
 

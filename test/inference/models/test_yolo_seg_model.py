@@ -161,6 +161,24 @@ class TestLoad:
         model.load()
         assert model.status == STATUS_ERROR
 
+    def test_a_framework_that_crashes_on_import_reports_the_reason(self, monkeypatch):
+        """Lo que pasó en la Jetson: matplotlib levantó TypeError adentro del import."""
+        model = YoloSegModel(_MockConfig(), _SLOT)
+        _install(monkeypatch, None)
+
+        def _crash(name):
+            raise TypeError("not 'KeyboardModifier'")
+
+        sys.modules["ultralytics"].__getattr__ = _crash
+        model.load()
+        assert model.status == STATUS_ERROR
+        assert "TypeError" in model.error
+
+    def test_matplotlib_is_kept_off_qt_before_ultralytics_is_imported(self):
+        """Puesto al importar el módulo: un backend de Qt en el hilo del motor lo mata."""
+        import os
+        assert os.environ.get("MPLBACKEND", "").lower() == "agg"
+
     def test_unloading_leaves_it_ready_to_load_again(self, monkeypatch):
         model = _loaded(monkeypatch, None)
         model.unload()

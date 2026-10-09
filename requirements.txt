@@ -7,8 +7,8 @@
 #   Linux:    .venv/bin/python -m pip install -r requirements.txt
 
 # Núcleo
-# numpy queda por debajo de 2.0: es lo que piden las librerías de deep learning
-# (Torch, stardist, csbdeep) y los wheels compilados contra la ABI de numpy 1.x.
+# numpy queda por debajo de 2.0: el torch de NVIDIA para la Jetson y OpenCV 4.8 están
+# compilados contra la ABI de numpy 1.x.
 numpy>=1.24,<2.0
 PyYAML>=6.0
 
@@ -23,11 +23,12 @@ psutil>=5.9
 # OpenCV de la misma época que numpy 1.x: los wheels 4.9+ se compilan contra la ABI
 # de numpy 2 y no cargan con numpy 1.
 #
-# Variante con GUI a propósito, no la headless que usan los proyectos en producción:
-# manual_test/camera_live_view.py muestra el feed con cv2.imshow. Cuando entre la UI
-# de PySide6 y el visor deje de depender de imshow, pasar a opencv-python-headless
-# (las dos instaladas a la vez se pisan).
-opencv-python>=4.8,<4.9
+# Una variante por plataforma, y las dos instaladas a la vez se pisan. En Windows va la
+# de GUI, porque manual_test/camera_live_view.py muestra el feed con cv2.imshow. En Linux
+# la headless: el wheel con GUI trae su propio Qt 5 y apunta la ruta de plugins de Qt a
+# la suya, y eso le gana a PySide6 cuando cv2 se importa antes que la ventana.
+opencv-python>=4.8,<4.9 ; sys_platform == "win32"
+opencv-python-headless>=4.8,<4.9 ; sys_platform == "linux"
 
 # Cámaras Basler. El wheel incluye su propio runtime de pylon, así que alcanza para
 # capturar: el SDK completo (viewer, IP Configurator, filter driver) es opcional y lo
@@ -58,17 +59,17 @@ pyserial>=3.5
 influxdb-client>=1.36
 paho-mqtt>=1.6,<3
 
-# Inferencia: YOLO de segmentación sobre el motor de TensorRT (system/inference/models).
-# `ultralytics` sí está en PyPI, pero **torch y torchvision para la Jetson no**: los wheels
-# de aarch64 con CUDA los publica NVIDIA en su propio índice y los instala setup-jetson.
-# En un equipo de desarrollo sin GPU no hace falta ninguno de los tres: el modelo `mock`
-# cubre el camino entero y la suite de tests corre sin ellos.
-ultralytics>=8.1
+# Inferencia: NO va acá. El framework del modelo —en este proyecto torch, torchvision y
+# ultralytics sobre TensorRT— se instala sólo en el equipo, desde setup/jetson/: torch y
+# torchvision para la Jetson son wheels de NVIDIA que no están en PyPI, y los de PyPI
+# instalan una build que no ve la GPU. En la PC de desarrollo no hace falta ninguno: el
+# modelo `mock` cubre el camino entero y la suite de tests corre sin ellos.
 
-# Entradas y salidas digitales de la Jetson (system/gpio_control.py). Sólo Linux: en
-# Windows no se instala y el módulo degrada a modo simulado, que es lo que corre en
-# desarrollo. Se declara acá porque es una dependencia real del equipo.
-#   gpiod>=2.1 ; sys_platform == "linux"
+# Entradas y salidas digitales de la Jetson (system/gpio_control.py), sobre la API v2 de
+# libgpiod: `request_lines` y `gpiod.line` no existen en la v1, que es la que trae apt en
+# Ubuntu 22.04 como python3-libgpiod. Éste es el de PyPI, que la trae adentro. Sólo
+# Linux: en Windows no se instala y el módulo degrada a modo simulado.
+gpiod>=2.1,<3 ; sys_platform == "linux"
 
 # Firma de las licencias (system/license). Ed25519: la clave pública son 32 bytes que
 # entran en una línea del código y no hay parámetros que elegir mal. Hay wheels cp310

@@ -80,7 +80,7 @@ CAMERA_SDKS = [
 INFERENCE_MODULES = [
     ("torch", "NVIDIA wheel in packages/ - setup/jetson/requirements.txt"),
     ("torchvision", "wheel in packages/ - setup/jetson/requirements.txt"),
-    ("tensorrt", "apt: python3-libnvinfer - setup/jetson/setup-jetson.sh"),
+    ("tensorrt", "apt: python3-libnvinfer, linked into the venv by venv-setup.sh"),
     ("ultralytics", "setup/jetson/requirements-nodeps.txt"),
 ]
 
@@ -136,6 +136,23 @@ def _version(module) -> str:
     return "?"
 
 
+def _outside_venv(module) -> str:
+    """
+    Where the module was loaded from, if that is outside this venv; '' if it is inside.
+
+    The release is built from the venv —`make_release.py` copies the camera packages
+    from its site-packages— so a module that imports from ~/.local or the system
+    passes here and is missing on the plant's machine. The apt modules venv-setup.sh
+    links count as inside: the link lives in the venv. Compared without resolving
+    links on purpose.
+    """
+    location = getattr(module, "__file__", None)
+    if not location or sys.prefix == sys.base_prefix:
+        return ""
+    prefix = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
+    return "" if os.path.normcase(os.path.abspath(location)).startswith(prefix) else location
+
+
 def _check_modules(entries: list, required: bool) -> tuple[list[str], list[str]]:
     """Imports each entry. Returns the unmet requirements and the modules that imported."""
     errors: list[str] = []
@@ -143,7 +160,11 @@ def _check_modules(entries: list, required: bool) -> tuple[list[str], list[str]]
     for module_name, source in entries:
         module, problem = _import(module_name)
         if module is not None:
-            present.append(module_name)
+            outside = _outside_venv(module)
+            if outside:
+                problem = f"loaded from outside the venv: {outside} - install it into the venv"
+            else:
+                present.append(module_name)
         errors += _verdict(module_name, f"{problem} ({source})" if problem else "",
                            required, _version(module) if module else "")
     return errors, present

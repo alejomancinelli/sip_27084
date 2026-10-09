@@ -39,9 +39,12 @@ note() { echo " NOTE  $*"; }
 hint() { echo "        $*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
+# No `grep -q` at the end of a pipe in this script: -q exits on the first match, the
+# command feeding it can die of SIGPIPE, and under pipefail a match reads as a miss.
+
 # Installed according to dpkg; `dpkg -s` alone also matches removed-but-configured ones.
 is_installed() {
-    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep "install ok installed" > /dev/null
 }
 
 echo "======================================================================"
@@ -147,7 +150,7 @@ done
 
 # torch 2.5 from NVIDIA loads libcusparseLt.so.0 at import. It is not part of JetPack's
 # default install; verify_env.py will show the import error if it stays missing.
-if ldconfig -p | grep -q "libcusparseLt.so.0"; then
+if ldconfig -p | grep "libcusparseLt.so.0" > /dev/null; then
     ok "libcusparseLt.so.0"
 else
     note "libcusparseLt.so.0 not found - torch 2.5 will fail to import without it."
@@ -175,7 +178,7 @@ ok "udev rule $GPIO_RULE"
 
 _relogin=0
 for _group in gpio dialout; do
-    if id -nG "$USER" | tr ' ' '\n' | grep -qx "$_group"; then
+    if id -nG "$USER" | tr ' ' '\n' | grep -x "$_group" > /dev/null; then
         ok "$USER is in $_group"
     else
         sudo usermod -aG "$_group" "$USER"

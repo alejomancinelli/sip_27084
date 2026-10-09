@@ -21,6 +21,11 @@ torchvision==0.20.0
 # The NVIDIA torch wheel is compiled against the numpy 1.x ABI.
 numpy>=1.24,<2.0
 
-# Known-good on the Jetson (JetPack 6.2.1, Python 3.10). It must also be the version the
-# .engine was exported with: the engine carries ultralytics' metadata header.
-ultralytics==8.4.60
+# The version the .engine in models/ was exported with: the engine carries ultralytics'
+# metadata header, and that header is what this version reads. Re-exporting the engine
+# with another version means changing this pin in the same commit.
+ultralytics==8.4.90
+
+# The newest PySide6 with an aarch64 wheel for Ubuntu 22.04's glibc (2.35), and the one
+# the UI was checked with on the Jetson. Newer aarch64 wheels need a newer glibc.
+PySide6==6.8.0.2

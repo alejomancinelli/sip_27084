@@ -133,6 +133,15 @@ class TestLaunchString:
     def test_each_codec_picks_its_encoder(self, codec, encoder):
         assert encoder in _build_launch_string(codec)
 
+    @pytest.mark.parametrize("codec, encoder", [
+        ("h264_hw", "nvv4l2h264enc"),
+        ("h265_hw", "nvv4l2h265enc"),
+    ])
+    def test_the_hardware_encoder_is_fed_nvmm_memory(self, codec, encoder):
+        """El encoder de la Jetson rechaza memoria de sistema: nvvidconv la pasa a NVMM."""
+        launch = _build_launch_string(codec)
+        assert launch.index("nvvidconv") < launch.index("(memory:NVMM)") < launch.index(encoder)
+
     @pytest.mark.parametrize("codec", list(rtsp._CODEC_PIPELINES))
     def test_every_codec_ends_in_pay0(self, codec):
         """gst-rtsp-server busca la salida por ese nombre: sin pay0 no hay stream."""
