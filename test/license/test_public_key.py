@@ -46,6 +46,11 @@ def source_key(monkeypatch):
 class TestWithoutGeneratedModule:
     """Un checkout de fuentes: no hay build y la tabla en código es todo lo que hay."""
 
+    @pytest.fixture(autouse=True)
+    def _no_build_keys(self, monkeypatch):
+        """Sin módulo generado aunque un build local haya dejado el suyo en el disco."""
+        monkeypatch.setattr(public_key, "_generated_keys", None)
+
     def test_the_template_carries_no_key(self):
         assert not public_key.PUBLIC_KEYS
         assert public_key.get_public_key("iea-1") is None

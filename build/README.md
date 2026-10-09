@@ -101,8 +101,9 @@ wheels: torch y torchvision de NVIDIA, como dice el `README.md` de la raíz.
 **Antes de compilar, las dos claves del repositorio de firma.** `system/license/_public_key.py`
 —sin ella el binario no conoce ninguna clave, toda licencia le da «inválida» y el equipo
 queda para siempre en modo de puesta en marcha— y, si los pesos van cifrados,
-`system/inference/models/_model_key.py`. Las dos están en el `.gitignore` y se borran
-después del build. Ver `docs/licensing.md` y `docs/model_protection.md`.
+`system/inference/models/_model_key.py`. Las dos están en el `.gitignore`, y `build.py`
+las borra al terminar, compile o no: para reintentar hay que volver a generarlas. Si falta
+la pública, lo avisa antes de arrancar. Ver `docs/licensing.md` y `docs/model_protection.md`.
 
 En el equipo de la planta:
 
