@@ -1,0 +1,9 @@
+# Installed by venv-setup.sh with --no-deps, after requirements.txt.
+#
+# FORK FILE, empty in the template. Packages whose declared dependencies would replace
+# something installed on purpose. ultralytics is the case that motivated it: it asks for
+# opencv-python, which overwrites the headless OpenCV and brings its own Qt, and for a
+# torch that pip may satisfy from PyPI. Their real dependencies go in requirements.txt
+# next to this file.
+#
+#     ultralytics

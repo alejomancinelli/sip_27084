@@ -1,0 +1,21 @@
+# Inference stack for the Jetson, installed by venv-setup.sh in the same pass as the
+# root requirements.txt and always with -c setup/jetson/constraints.txt.
+#
+# FORK FILE: the framework the fork's model runs on. Empty in the template, whose model
+# is the mock one; venv-setup.sh skips a list with nothing in it.
+#
+# Vendor wheels are NOT downloaded: venv-setup.sh installs every *aarch64.whl in
+# packages/ first (gitignored, copied by hand), without dependencies. They are listed
+# here anyway so their own dependencies get resolved from PyPI. A fork on ultralytics
+# over NVIDIA's torch, for example:
+#
+#     torch
+#     torchvision
+#     # ultralytics' own Requires-Dist for the pinned version, minus the two that replace
+#     # something: torch (above) and opencv-python (the root installs the headless one).
+#     matplotlib>=3.3.0
+#     pillow>=7.1.2
+#     requests>=2.23.0
+#     polars>=0.20.0
+#     nvidia-ml-py>=12.0.0
+#     ultralytics-thop>=2.0.18
