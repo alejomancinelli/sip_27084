@@ -1,6 +1,7 @@
 # Compilación con Nuitka
 
-Las salidas de build no se versionan; sí este archivo, `build.py` y `make_release.py`.
+Las salidas de build no se versionan; sí este archivo, `build.py`, `make_release.py` y
+`requirements.txt`.
 
 ## La forma del entregable
 
@@ -15,13 +16,37 @@ la máquina?". Tres formas:
 | **Standalone** | todo, en una carpeta | no |
 | Onefile | todo, en un `.exe` | no, pero descomprime a temp en cada arranque |
 
-**Este proyecto usa standalone.** Onefile queda descartado en la mayoría de los casos por
-el tiempo de descompresión en cada arranque, y porque es la forma que más falsos positivos
-levanta en los antivirus. La acelerada dejaría un intérprete a mano en el equipo del
-cliente; si eso no es un problema para el fork, es la opción más barata —el comando es el
-mismo, sacando `--standalone`— y conviene medirla antes de asumir standalone por defecto.
+**Windows usa standalone y Linux usa la acelerada**, y lo decide `_ACCELERATED` en
+`build.py`. Onefile queda descartado en la mayoría de los casos por el tiempo de
+descompresión en cada arranque, y porque es la forma que más falsos positivos levanta en
+los antivirus.
+
+En Windows el equipo del cliente no tiene Python, y el standalone es lo que lo resuelve. En
+una Jetson pasa lo contrario, y por eso ahí va la acelerada:
+
+- **El standalone no termina.** Traduce a C todo lo que `main.py` alcanza —torch,
+  torchvision, ultralytics y lo que ellos importan, miles de módulos— y con 8 GB de RAM son
+  horas y un OOM. La acelerada compila sólo `system`, `tools` y `ui`: 1,7 minutos, el gcc
+  más grande en 250 MB y el swap sin tocar (Orin NX 8 GB, 20W, Nuitka 4.2.2).
+- **No ganaría nada.** CUDA, TensorRT, el driver y GStreamer tienen que salir del JetPack
+  del equipo en cualquier forma, el `python3.10` del sistema está siempre, y la velocidad
+  está en CUDA y no en el Python que lo llama: compilado mide lo mismo que desde fuentes.
+- **Lo que hay que proteger es nuestro**, y eso sí se compila. Lo de terceros viaja suelto
+  en `program/site-packages`: el venv que pasó `verify_env.py`, copiado tal cual.
+
+El precio es que lo de terceros se puede editar en el equipo. Por eso `cryptography`, que
+verifica la licencia, tiene un autocontrol en `system/license/verify.py`; compilarla no es
+una opción, porque con Nuitka 4.2.2 su extensión de Rust carga vacía y ninguna licencia
+valida.
 
 ## Cómo se compila
+
+Nuitka no está en el venv del proyecto: se instala aparte, con su versión fijada en
+`requirements.txt` (en la Jetson, con `-c setup/jetson/constraints.txt`):
+
+    .venv\Scripts\python.exe -m pip install -r build\requirements.txt
+
+Y después:
 
     .venv\Scripts\python.exe build\build.py                   compila
     .venv\Scripts\python.exe build\build.py --dry-run         muestra el comando y no compila
@@ -54,7 +79,8 @@ Seis constantes al principio del archivo, marcadas en el propio docstring:
 - `_COMPANY`, `_PRODUCT`, `_DESCRIPTION`, `_ICON` — identidad del programa en las
   propiedades del `.exe`. `_PRODUCT` es un placeholder (`APP_NAME`): conviene que
   coincida con `system.app_name` del `config.yaml`, que es el título de la ventana.
-- `_EXCLUDED` — paquetes que **no** entran al ejecutable, vacía por defecto. Un fork que
+- `_EXCLUDED` — paquetes que **no** entran al ejecutable standalone, vacía por defecto (en
+  la acelerada no se compila nada de terceros, así que no aplica). Un fork que
   usa un framework de inferencia pesado y no lo necesita en el entregable —por ejemplo,
   si exporta su modelo a ONNX Runtime y ya no corre TensorFlow— lo agrega acá. Nuitka
   empaqueta todo lo que `main.py` importa; esto es sólo para lo que el fork sabe que no
@@ -75,12 +101,12 @@ en el equipo y no viajan adentro del paquete, y qué hace `Verificar camara.cmd`
 
 ## En la Jetson
 
-El mismo par de scripts, corrido en una Jetson. `build.py` deja afuera las opciones que
-sólo existen para un `.exe` —icono, consola, propiedades del archivo— y `make_release.py`
-arma la misma carpeta con lanzadores de bash:
+El mismo par de scripts, corrido en una Jetson. `build.py` compila en la forma acelerada y
+deja afuera las opciones que sólo existen para un `.exe` —icono, consola, propiedades del
+archivo— y `make_release.py` arma la misma carpeta con lanzadores de bash:
 
     <APP_NAME>-<version>/
-        program/                  main.bin y todo lo suyo
+        program/                  main.bin, ui/styles, ui/icons y site-packages/
         installation/             lo de esta planta — NO se toca al actualizar
         _entorno.sh               la ruta de datos, y nada más
         <APP_NAME>.sh
@@ -93,10 +119,17 @@ arma la misma carpeta con lanzadores de bash:
 permiso de ejecución, y la carpeta copiada así llega con un `main.bin` que no arranca.
 `--no-archive` lo saltea, para cuando se copia con `rsync` o `scp`.
 
-**La Jetson de build tiene que tener el mismo JetPack que la de la planta.** Nuitka
-empaqueta las bibliotecas que encuentra —CUDA, TensorRT, las de torch—, y las de otro
-JetPack no cargan contra el driver de la planta. También el mismo Python 3.10 y los mismos
-wheels: torch y torchvision de NVIDIA, como dice el `README.md` de la raíz.
+**`program/site-packages` es el venv del equipo de build**, copiado: los mismos wheels
+—torch y torchvision de NVIDIA, como dice el `README.md` de la raíz— sin Nuitka ni pytest.
+Los paquetes que vienen de apt (`gi`, `tensorrt`) viajan como symlinks y resuelven contra
+el sistema del equipo de la planta. Los lanzadores le apuntan `PYTHONPATH` a esa carpeta, y
+`main.bin` se compila sin `site`, así que no importa nada más: ni el `dist-packages` de
+JetPack ni el `~/.local` del usuario.
+
+**La Jetson de build tiene que tener el mismo JetPack que la de la planta.** Las
+extensiones de `site-packages` están compiladas contra su CUDA, su TensorRT y su glibc, y
+los symlinks de apt tienen que encontrar las mismas versiones. `main.bin` trae `libpython`
+estática, pero usa la librería estándar de `/usr/lib/python3.10`, que JetPack trae siempre.
 
 **Antes de compilar, las dos claves del repositorio de firma.** `system/license/_public_key.py`
 —sin ella el binario no conoce ninguna clave, toda licencia le da «inválida» y el equipo

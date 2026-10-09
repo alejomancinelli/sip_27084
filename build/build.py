@@ -9,6 +9,13 @@ En la Jetson es el mismo comando con `.venv/bin/python`. **Se compila en la plat
 donde va a correr**: Nuitka no compila cruzado, así que el entregable de la Jetson se arma
 en una Jetson con el mismo JetPack que la de la planta.
 
+**La forma cambia con la plataforma, y la decide `_ACCELERATED`.** En Windows el build es
+standalone: todo en una carpeta, sin Python en el equipo del cliente. En Linux es
+acelerado: se compila sólo lo nuestro —`system`, `tools`, `ui`— y lo de terceros viaja
+suelto en `program/site-packages`, porque en una Jetson el standalone de torch no termina
+con 8 GB y CUDA, TensorRT y el `python3.10` tienen que salir del JetPack igual. El porqué
+completo, y lo que se midió, está en el `README.md`.
+
 **Por qué es un script y no un comando en el README.** Dos motivos, y el primero es que
 una de las opciones no es una constante: el `.exe` lleva la versión en sus propiedades, y
 ese número tiene un solo dueño, `system/version.py`. Escrito a mano en un comando que se
@@ -65,8 +72,9 @@ _ICON = "ui/icons/iea_100x100.ico"
 # Paquetes que no entran al ejecutable, y por qué cada uno. Vacía por defecto: Nuitka
 # empaqueta lo que `main.py` importa, así que sólo hace falta excluir lo que el proyecto
 # sabe que no necesita en el entregable —un framework de inferencia que el modelo elegido
-# no usa, un SDK de cámara que no corresponde a esta instalación—. Ejemplo de un fork que
-# corre su modelo en ONNX Runtime y no en TensorFlow:
+# no usa, un SDK de cámara que no corresponde a esta instalación—. Aplica al standalone:
+# en el build acelerado no se compila nada de terceros. Ejemplo de un fork que corre su
+# modelo en ONNX Runtime y no en TensorFlow:
 #
 #     _EXCLUDED = (
 #         "tensorflow",   # el modelo corre en ONNX Runtime; el config pide el tipo _onnx
@@ -92,7 +100,8 @@ def _is_installed(package: str) -> bool:
 #     )
 _EXTRA_FLAGS: tuple = ()
 
-# Datos que viajan con el programa: los lee `paths.app_file()`, no `DATA_DIR`.
+# Datos que viajan con el programa, al lado de los módulos que los leen. En standalone
+# los copia Nuitka; en acelerado, `make_release.py`, que lee esta misma tupla.
 _DATA_DIRS = ("ui/styles", "ui/icons")
 
 # Paquetes de la maquinaria que el análisis de Nuitka puede no seguir solo, y que entran
@@ -100,11 +109,36 @@ _DATA_DIRS = ("ui/styles", "ui/icons")
 # `line` desde adentro de un método: sin la opción el binario arranca igual —el módulo
 # degrada a modo simulado— y el equipo se queda sin entradas ni salidas sin que nada
 # falle, que es la peor forma de perderlas. Sólo existe en Linux, y en Windows Nuitka
-# cortaría con «package not found» por un paquete que ahí no va a estar nunca.
+# cortaría con «package not found» por un paquete que ahí no va a estar nunca. En el
+# build acelerado no hace falta: viaja suelto con el resto de lo de terceros.
 _OPTIONAL_PACKAGES = ("gpiod",)
 
 # Nuitka no compila para otra plataforma: el binario es de la máquina donde corre esto.
 _IS_WINDOWS = sys.platform == "win32"
+
+# Standalone en Windows, acelerado en Linux: ver el docstring. `make_release.py` lee esta
+# constante para saber qué entregable armar, así que no hay un segundo lugar que la diga.
+_ACCELERATED = not _IS_WINDOWS
+_ACCELERATED_BINARY = "main.bin"   # el nombre que le da Nuitka en Linux
+
+# Lo que el build acelerado compila: lo nuestro y nada más. `--include-package` además de
+# seguir los imports porque `_public_key` y `_model_key` se importan adentro de un
+# try/except, y un módulo que el análisis no sigue el binario lo busca como archivo en
+# runtime —sin encontrarlo, o encontrando uno que alguien dejó ahí—.
+#
+# `cryptography` NO va, aunque verifique la licencia: Nuitka 4.2.2 carga vacía su
+# extensión de Rust (PyO3, inicialización multifase) y ninguna licencia validaría nunca.
+# Suelta la cubre el autocontrol de `system/license/verify.py`.
+_OWN_PACKAGES = ("system", "tools", "ui")
+
+_ACCELERATED_FLAGS = (
+    # Sin `site`, el intérprete no suma el `dist-packages` del sistema ni `~/.local`: lo de
+    # terceros sale sólo del `site-packages` que viaja, que es el que se probó.
+    "--python-flag=no_site",
+    # `__file__` relativo al binario y no a los fuentes del equipo de build: los QSS y los
+    # iconos se buscan al lado de su módulo, y en la planta la ruta del repo no existe.
+    "--file-reference-choice=runtime",
+)
 
 # Lo que el repositorio de firma deja justo antes de compilar. Entra al binario y se borra
 # después, compile o no: no se commitea y no tiene por qué quedar en el disco, donde
@@ -135,14 +169,20 @@ def _windows_flags() -> list:
 def _flags(out_dir: str) -> list:
     """Las opciones de Nuitka, en el orden en que se leen."""
     flags = [
-        "--standalone",
+        *(() if _ACCELERATED else ("--standalone",)),
         "--enable-plugin=pyside6",
         "--python-flag=no_docstrings",
-        "--no-deployment-flag=excluded-module-usage",
+        *(_ACCELERATED_FLAGS if _ACCELERATED
+          else ("--no-deployment-flag=excluded-module-usage",)),
         *(_windows_flags() if _IS_WINDOWS else ()),
         "--assume-yes-for-downloads",
         f"--output-dir={out_dir}",
     ]
+    if _ACCELERATED:
+        flags += [f"--follow-import-to={package}" for package in _OWN_PACKAGES]
+        flags += [f"--include-package={package}" for package in _OWN_PACKAGES]
+        return flags + list(_EXTRA_FLAGS)
+
     flags += [f"--include-package={package}" for package in _OPTIONAL_PACKAGES
               if _is_installed(package)]
     flags += list(_EXTRA_FLAGS)
@@ -204,16 +244,24 @@ def main() -> int:
             print(f"\n  se borra {removed}: ya está adentro del binario")
     elapsed = time.monotonic() - started
 
-    dist = os.path.join(out_dir, "main.dist")
     if done.returncode != 0:
         print(f"\n  FALLÓ en {elapsed / 60:.1f} min (código {done.returncode}).")
         print(f"  Si dice «Failed to add resources to file», es el antivirus tomando el "
               f".exe mientras Nuitka lo escribe: hace falta una exclusión para {out_dir}.")
         return done.returncode
 
-    print(f"\n  {_size_mb(dist):.0f} MB en {_count(dist)} archivos, {elapsed / 60:.1f} min")
+    if _ACCELERATED:
+        # Al lado del binario queda `main.build/` con los .c: no es parte del programa.
+        binary = os.path.join(out_dir, _ACCELERATED_BINARY)
+        print(f"\n  {_ACCELERATED_BINARY}: {os.path.getsize(binary) / 1e6:.1f} MB, "
+              f"{elapsed / 60:.1f} min")
+        dist_arg = args.out
+    else:
+        dist = os.path.join(out_dir, "main.dist")
+        print(f"\n  {_size_mb(dist):.0f} MB en {_count(dist)} archivos, {elapsed / 60:.1f} min")
+        dist_arg = f"{args.out}/main.dist"
     print(f"\n  Ahora el entregable:")
-    print(f"    {_shown([sys.executable, 'build/make_release.py', '--dist', f'{args.out}/main.dist'])}")
+    print(f"    {_shown([sys.executable, 'build/make_release.py', '--dist', dist_arg])}")
     return 0
 
 

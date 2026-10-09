@@ -26,6 +26,21 @@ def build_script():
     return module
 
 
+@pytest.fixture
+def standalone(build_script, monkeypatch):
+    """El build de Windows, corra donde corra la suite: la forma la decide la plataforma."""
+    monkeypatch.setattr(build_script, "_ACCELERATED", False)
+    return build_script
+
+
+@pytest.fixture
+def accelerated(build_script, monkeypatch):
+    """El build de Linux, corra donde corra la suite."""
+    monkeypatch.setattr(build_script, "_IS_WINDOWS", False)
+    monkeypatch.setattr(build_script, "_ACCELERATED", True)
+    return build_script
+
+
 class TestExtraFlags:
     """
     Las opciones que suma cada fork.
@@ -44,22 +59,26 @@ class TestExtraFlags:
                             ("--module-parameter=numba-disable-jit=yes",))
         assert "--module-parameter=numba-disable-jit=yes" in build_script._flags("build/out")
 
-    def test_they_come_before_the_exclusions(self, build_script, monkeypatch):
+    def test_they_come_before_the_exclusions(self, standalone, monkeypatch):
         """
         Una opción del fork puede hablar de un paquete que además se excluye, y Nuitka
         lee la línea en orden. Juntas y en este orden se leen como una sola decisión.
         """
-        monkeypatch.setattr(build_script, "_EXTRA_FLAGS", ("--una-opcion",))
-        monkeypatch.setattr(build_script, "_EXCLUDED", ("tensorflow",))
-        flags = build_script._flags("build/out")
+        monkeypatch.setattr(standalone, "_EXTRA_FLAGS", ("--una-opcion",))
+        monkeypatch.setattr(standalone, "_EXCLUDED", ("tensorflow",))
+        flags = standalone._flags("build/out")
         assert flags.index("--una-opcion") < flags.index("--nofollow-import-to=tensorflow")
 
-    def test_the_machinery_flags_are_still_there(self, build_script, monkeypatch):
+    def test_the_machinery_flags_are_still_there(self, standalone, monkeypatch):
         """Sumar no es reemplazar: lo que el template ya pasaba sigue estando."""
-        monkeypatch.setattr(build_script, "_EXTRA_FLAGS", ("--una-opcion",))
-        flags = build_script._flags("build/out")
+        monkeypatch.setattr(standalone, "_EXTRA_FLAGS", ("--una-opcion",))
+        flags = standalone._flags("build/out")
         assert "--standalone" in flags
         assert "--enable-plugin=pyside6" in flags
+
+    def test_the_accelerated_build_takes_them_too(self, accelerated, monkeypatch):
+        monkeypatch.setattr(accelerated, "_EXTRA_FLAGS", ("--una-opcion",))
+        assert "--una-opcion" in accelerated._flags("build/out")
 
 
 class TestOptionalPackages:
@@ -68,25 +87,30 @@ class TestOptionalPackages:
     Va fuera de `_EXTRA_FLAGS`: el GPIO es del template, no de un fork.
     """
 
-    def test_an_installed_package_is_included(self, build_script, monkeypatch):
-        monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
-        assert "--include-package=gpiod" in build_script._flags("build/out")
+    def test_an_installed_package_is_included(self, standalone, monkeypatch):
+        monkeypatch.setattr(standalone, "_is_installed", lambda package: True)
+        assert "--include-package=gpiod" in standalone._flags("build/out")
 
-    def test_a_missing_one_is_left_out(self, build_script, monkeypatch):
+    def test_a_missing_one_is_left_out(self, standalone, monkeypatch):
         """En Windows no existe, y pedirlo cortaría el build con «package not found»."""
-        monkeypatch.setattr(build_script, "_is_installed", lambda package: False)
-        assert not [flag for flag in build_script._flags("build/out")
+        monkeypatch.setattr(standalone, "_is_installed", lambda package: False)
+        assert not [flag for flag in standalone._flags("build/out")
                     if flag.startswith("--include-package=")]
 
     def test_the_fork_block_stays_empty_either_way(self, build_script, monkeypatch):
         monkeypatch.setattr(build_script, "_is_installed", lambda package: True)
         assert build_script._EXTRA_FLAGS == ()
 
+    def test_the_accelerated_build_leaves_it_loose(self, accelerated, monkeypatch):
+        """Acelerado, `gpiod` viaja en `site-packages` con el resto de lo de terceros."""
+        monkeypatch.setattr(accelerated, "_is_installed", lambda package: True)
+        assert "--include-package=gpiod" not in accelerated._flags("build/out")
+
 
 class TestExclusions:
-    def test_each_excluded_package_gets_its_own_flag(self, build_script, monkeypatch):
-        monkeypatch.setattr(build_script, "_EXCLUDED", ("tensorflow", "keras"))
-        flags = build_script._flags("build/out")
+    def test_each_excluded_package_gets_its_own_flag(self, standalone, monkeypatch):
+        monkeypatch.setattr(standalone, "_EXCLUDED", ("tensorflow", "keras"))
+        flags = standalone._flags("build/out")
         assert "--nofollow-import-to=tensorflow" in flags
         assert "--nofollow-import-to=keras" in flags
 
@@ -108,12 +132,45 @@ class TestPlatform:
         assert f"--windows-icon-from-ico={build_script._ICON}" in flags
         assert any(flag.startswith("--product-version=") for flag in flags)
 
-    def test_linux_does_not(self, build_script, monkeypatch):
-        monkeypatch.setattr(build_script, "_IS_WINDOWS", False)
-        flags = build_script._flags("build/out")
+    def test_linux_does_not(self, accelerated):
+        flags = accelerated._flags("build/out")
         assert not [flag for flag in flags if flag.startswith("--windows-")]
         assert not any(flag.startswith("--product-version=") for flag in flags)
-        assert "--standalone" in flags
+
+    def test_windows_is_standalone_and_linux_is_accelerated(self, build_script):
+        assert build_script._ACCELERATED == (build_script.sys.platform != "win32")
+
+
+class TestAcceleratedBuild:
+    """
+    La forma de Linux: se compila lo nuestro y lo de terceros viaja suelto.
+
+    Cada opción de acá salió de probar el binario en la Jetson, y sin cualquiera de ellas
+    el equipo arranca igual y falla después, en la planta.
+    """
+
+    def test_it_compiles_our_packages_and_nothing_else(self, accelerated):
+        flags = accelerated._flags("build/out")
+        for package in ("system", "tools", "ui"):
+            assert f"--follow-import-to={package}" in flags
+            assert f"--include-package={package}" in flags
+        assert "--standalone" not in flags
+        assert not [flag for flag in flags if flag.startswith("--include-data-dir=")]
+
+    def test_cryptography_stays_loose(self, accelerated):
+        """
+        Compilada, su extensión de Rust carga vacía y ninguna licencia valida nunca. El
+        autocontrol de `verify.py` es lo que la cubre suelta.
+        """
+        assert not [flag for flag in accelerated._flags("build/out") if "cryptography" in flag]
+
+    def test_files_are_found_next_to_the_binary(self, accelerated):
+        """Con las rutas del equipo de build, en la planta faltan los QSS y los iconos."""
+        assert "--file-reference-choice=runtime" in accelerated._flags("build/out")
+
+    def test_the_system_python_packages_stay_out(self, accelerated):
+        """Sin `site`, ni el `dist-packages` de JetPack ni `~/.local` entran al proceso."""
+        assert "--python-flag=no_site" in accelerated._flags("build/out")
 
 
 def _place_key_modules(root) -> list:

@@ -55,10 +55,21 @@ copiarlo suelto es una carpeta que se agrega o se saca sin recompilar, útil cua
 no está decidido qué marca de cámara usa cada instalación. Los dos se copian enteros desde
 el venv si están; si al fork no le hace falta soporte para una marca, sencillamente no está
 instalado y esta etapa lo avisa y sigue.
+
+**En Linux el build es acelerado y todo lo de terceros va suelto.** La forma la decide
+`_ACCELERATED` de `build.py`, que este script lee para no tener un segundo lugar que la
+diga. Nuitka deja un `main.bin` que contiene sólo lo nuestro, y `program/` lleva además
+los datos que leen sus módulos (`_DATA_DIRS`) y `program/site-packages/`: el del venv que
+pasó `verify_env.py`, copiado y no reinstalado, para que la planta corra los mismos bytes
+que se probaron sin necesitar internet ni pip. Sin lo de compilar y testear, y con los
+symlinks de los paquetes de apt (`gi`, `tensorrt`) como symlinks: resuelven contra el
+JetPack del equipo, que tiene que ser el mismo. Los lanzadores le apuntan `PYTHONPATH` a
+esa carpeta, y `_LOOSE_PACKAGES` no aplica: `stapipy` y `pypylon` ya viajan ahí.
 """
 
 import argparse
 import glob
+import importlib.metadata
 import importlib.util
 import os
 import re
@@ -75,6 +86,7 @@ sys.path.insert(0, _REPO_ROOT)
 from system.version import APP_VERSION  # noqa: E402
 
 _DEFAULT_DIST = "build/out/main.dist"
+_DEFAULT_ACCELERATED_DIST = "build/out"
 _DEFAULT_OUT = "build/release"
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -84,8 +96,17 @@ _IS_WINDOWS = sys.platform == "win32"
 _EXECUTABLE_NAMES = ("main.exe",) if _IS_WINDOWS else ("main.bin", "main")
 
 # Paquetes que viajan como carpeta al lado del ejecutable en vez de compilados. Ver el
-# docstring del módulo para el motivo de cada uno.
+# docstring del módulo para el motivo de cada uno. Sólo en standalone.
 _LOOSE_PACKAGES = ("stapipy", "pypylon")
+
+# Dónde viaja lo de terceros en el build acelerado, adentro de `program/`.
+_SITE_PACKAGES_DIR = "site-packages"
+
+# Distribuciones del venv que son de compilar o de testear y no viajan. Se sacan por su
+# metadata y no por nombre de carpeta, que no siempre coincide: pytest deja además un
+# `py.py` suelto en la raíz.
+_BUILD_ONLY_DISTRIBUTIONS = ("nuitka", "ordered-set", "zstandard", "pytest", "pluggy",
+                             "iniconfig")
 
 # Archivos con nombre fijo, propios de la maquinaria y no de la instalación: van siempre,
 # si están. Los pesos del modelo NO están acá a propósito — un fork no tiene un nombre de
@@ -438,7 +459,14 @@ _LINUX_LAUNCHER_BODY = r"""#!/bin/bash
 # no llega a abrir la ventana deja el motivo en installation/data/logs.
 BASE="$(dirname "$(readlink -f "$0")")"
 source "$BASE/@ENV_NAME@"
-exec "$BASE/program/@EXECUTABLE@"@ARGUMENTS@ "$@"
+@PYTHON_ENV@exec "$BASE/program/@EXECUTABLE@"@ARGUMENTS@ "$@"
+"""
+
+# Lo que el lanzador agrega en el build acelerado, antes del `exec`.
+_LINUX_PYTHON_ENV = r"""# Lo de terceros viaja suelto en program/@SITE_PACKAGES@ y es lo único que el programa
+# importa: ni el PYTHONPATH de quien lo lanza ni el ~/.local de la sesión.
+export PYTHONPATH="$BASE/program/@SITE_PACKAGES@"
+export PYTHONNOUSERSITE=1
 """
 
 # El acceso se crea **en el equipo y contra el lugar donde quedó instalado**, igual que en
@@ -519,7 +547,7 @@ _LINUX_CHECK_BODY = r"""#!/bin/bash
 #
 # Lo que necesita cada fabricante NO es lo mismo, y esa es la diferencia que importa:
 #
-#   Sentech  el paquete viaja adentro de program/, pero sus bibliotecas nativas salen del
+#   Sentech  el paquete viaja con el programa, pero sus bibliotecas nativas salen del
 #            SentechSDK, que tiene que estar INSTALADO en este equipo, junto con la
 #            variable GENICAM_GENTL64_PATH que deja su instalador.
 #   Basler   pypylon trae su propio runtime de pylon, así que no hay que instalar nada;
@@ -529,15 +557,21 @@ _LINUX_CHECK_BODY = r"""#!/bin/bash
 # extensiones que viajan. Sus nombres llevan la versión del SDK adentro.
 BASE="$(dirname "$(readlink -f "$0")")"
 PROGRAM="$BASE/program"
+PACKAGES="$BASE/@PACKAGES@"
 MISSING=0
 
 # Lo que Nuitka dejó en program/ lo carga el ejecutable antes que nadie: sin esto, `ldd`
 # daría por faltante una biblioteca que sí viaja.
 export LD_LIBRARY_PATH="$PROGRAM${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# Un paquete puede ser una carpeta o una sola extensión (stapipy.cpython-310-*.so).
+has_package() {
+    compgen -G "$PACKAGES/$1*" > /dev/null
+}
+
 check_libs() {
     local libs
-    libs="$(find "$PROGRAM/$1" -name '*.so*' -type f -exec ldd {} \; 2>/dev/null \
+    libs="$(find "$PACKAGES"/$1* -name '*.so*' -type f -exec ldd {} \; 2>/dev/null \
             | awk '/not found/ {print $1}' | sort -u)"
     if [ -z "$libs" ]; then
         echo "    ok      ldd encuentra todas sus bibliotecas"
@@ -554,8 +588,8 @@ echo "  Verificación de soporte de cámaras"
 echo "  ----------------------------------"
 echo
 echo "  [Sentech / Omron]"
-if [ -d "$PROGRAM/stapipy" ]; then
-    echo "    ok      el paquete stapipy viaja en program/"
+if has_package stapipy; then
+    echo "    ok      el paquete stapipy viaja con el programa"
     check_libs stapipy
     if [ -n "$GENICAM_GENTL64_PATH" ]; then
         echo "    ok      GENICAM_GENTL64_PATH=$GENICAM_GENTL64_PATH"
@@ -569,8 +603,8 @@ else
 fi
 echo
 echo "  [Basler]"
-if [ -d "$PROGRAM/pypylon" ]; then
-    echo "    ok      pypylon viaja en program/ - no hace falta instalar el SDK de Basler"
+if has_package pypylon; then
+    echo "    ok      pypylon viaja con el programa - no hace falta instalar el SDK de Basler"
     check_libs pypylon
 else
     echo "    n/a     pypylon no viaja: esta compilación no soporta Basler"
@@ -616,28 +650,37 @@ def _desktop_entry_id(app_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-") or "app"
 
 
-def _program_icon() -> str:
+def _build_script():
     """
-    El icono del programa, relativo a la raíz del repo y a `program/`.
+    `build.py` cargado como módulo: de ahí salen el icono, la forma del build y los datos.
 
-    Es el `_ICON` de `build.py`, el mismo que compila en el `.exe`: se lee de ahí para que
-    un fork que cambia el icono no tenga que acordarse de cambiarlo en dos archivos.
+    Se lee y no se copia para que un fork que cambia cualquiera de los tres no tenga que
+    acordarse de cambiarlo en dos archivos.
     """
     spec = importlib.util.spec_from_file_location(
         "build_script", os.path.join(_BUILD_DIR, "build.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module._ICON
+    return module
 
 
-def _write_linux_scripts(release: str, program: str, executable: str, app_name: str):
+def _program_icon() -> str:
+    """El icono del programa —el que compila en el `.exe`—, relativo al repo y a `program/`."""
+    return _build_script()._ICON
+
+
+def _write_linux_scripts(release: str, program: str, executable: str, app_name: str, *,
+                         accelerated: bool):
     """Lanzadores, accesos directos y verificador de cámara, en bash."""
     _write_script(os.path.join(release, _LINUX_ENV_NAME), _LINUX_ENV_BODY)
     print(f"    {_LINUX_ENV_NAME}     la ruta de datos, y nada más")
+    python_env = (_fill(_LINUX_PYTHON_ENV, site_packages=_SITE_PACKAGES_DIR)
+                  if accelerated else "")
     for launcher_name, description, arguments, _ in _launchers(app_name, ".sh"):
         _write_script(os.path.join(release, launcher_name), _fill(
             _LINUX_LAUNCHER_BODY, description=description, env_name=_LINUX_ENV_NAME,
-            executable=executable, arguments=f" {arguments}" if arguments else ""))
+            python_env=python_env, executable=executable,
+            arguments=f" {arguments}" if arguments else ""))
         print(f"    {launcher_name}")
 
     # El icono lo pide el `.desktop` por ruta; si el fork lo puso fuera de los datos que
@@ -651,7 +694,9 @@ def _write_linux_scripts(release: str, program: str, executable: str, app_name: 
     print(f"    {shortcuts_name}   se corre una vez, ya instalado")
 
     check_name = "Verificar camara.sh"
-    _write_script(os.path.join(release, check_name), _LINUX_CHECK_BODY)
+    packages = f"program/{_SITE_PACKAGES_DIR}" if accelerated else "program"
+    _write_script(os.path.join(release, check_name), _fill(_LINUX_CHECK_BODY,
+                                                           packages=packages))
     print(f"    {check_name}         pregunta a ldd qué falta, en el equipo")
 
 
@@ -704,6 +749,56 @@ def _site_packages() -> str:
     return matches[0] if matches else os.path.join(venv, "lib", "site-packages")
 
 
+def _copy_site_packages(source: str, target: str) -> list:
+    """
+    Copia el `site-packages` del venv sin lo de compilar y testear. Devuelve lo que dejó.
+
+    Los symlinks se copian como symlinks: los de `gi` y `tensorrt` apuntan a apt y tienen
+    que resolver contra el JetPack del equipo de la planta, no viajar duplicados. Los
+    `__pycache__` viajan: sin ellos el primer arranque compila miles de módulos, y si
+    `program/` no se puede escribir, todos los arranques.
+    """
+    left_out = _build_only_entries(source)
+
+    def ignore(directory: str, names: list) -> set:
+        return left_out.intersection(names) if directory == source else set()
+
+    shutil.copytree(source, target, symlinks=True, ignore=ignore)
+    return sorted(left_out)
+
+
+def _build_only_entries(site_packages: str) -> set:
+    """
+    Lo que dejan en la raíz del `site-packages` las distribuciones de compilar y testear.
+
+    Una que otra distribución del venv declara como dependencia se queda: sacarla rompería
+    en la planta un import que acá anduvo. Las de un extra (`pytest; extra == "test"`) no
+    cuentan: pip las instala sólo si alguien pidió el extra, y casi cada paquete declara
+    su suite de tests así.
+    """
+    distributions = list(importlib.metadata.distributions(path=[site_packages]))
+    build_only = {_normalize_distribution(name) for name in _BUILD_ONLY_DISTRIBUTIONS}
+    required = {_normalize_distribution(re.match(r"[A-Za-z0-9._-]*", requirement).group())
+                for distribution in distributions
+                if _normalize_distribution(distribution.metadata["Name"]) not in build_only
+                for requirement in distribution.requires or ()
+                if not re.search(r"\bextra\b", requirement.partition(";")[2])}
+    entries = set()
+    for distribution in distributions:
+        name = _normalize_distribution(distribution.metadata["Name"])
+        if name not in build_only or name in required:
+            continue
+        for file in distribution.files or ():
+            if file.parts[0] not in ("..", "__pycache__"):
+                entries.add(file.parts[0])
+    return entries
+
+
+def _normalize_distribution(name: str | None) -> str:
+    """El nombre de una distribución como lo compara pip: `Ordered_Set` es `ordered-set`."""
+    return re.sub(r"[-_.]+", "-", name or "").lower()
+
+
 def _find_executable(dist: str) -> str:
     """El nombre del ejecutable que dejó Nuitka en `dist`, o vacío si no hay ninguno."""
     for name in _EXECUTABLE_NAMES:
@@ -753,7 +848,9 @@ def _app_name(config_path: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Arma el entregable.")
-    parser.add_argument("--dist", default=_DEFAULT_DIST, help="el main.dist de Nuitka")
+    parser.add_argument("--dist", default="",
+                        help="lo que dejó Nuitka: el main.dist, o la carpeta del main.bin "
+                             "en el build acelerado; vacío = el de build.py por defecto")
     parser.add_argument("--out", default=_DEFAULT_OUT, help="dónde dejar el entregable")
     parser.add_argument("--name", default="", help="nombre de la carpeta; vacío = automático")
     parser.add_argument("--no-archive", action="store_true", dest="no_archive",
@@ -762,7 +859,9 @@ def main() -> int:
 
     if not _IS_WINDOWS and not sys.platform.startswith("linux"):
         raise SystemExit(f"Sin entregable para {sys.platform}: sólo Windows y Linux.")
-    dist = os.path.join(_REPO_ROOT, args.dist) if not os.path.isabs(args.dist) else args.dist
+    accelerated = _build_script()._ACCELERATED
+    dist = args.dist or (_DEFAULT_ACCELERATED_DIST if accelerated else _DEFAULT_DIST)
+    dist = os.path.join(_REPO_ROOT, dist) if not os.path.isabs(dist) else dist
     executable = _find_executable(dist)
     if not executable:
         raise SystemExit(f"No hay {' ni '.join(_EXECUTABLE_NAMES)} en {dist}. "
@@ -777,6 +876,42 @@ def main() -> int:
         shutil.rmtree(release)
 
     print(f"  {name}")
+    if accelerated:
+        _assemble_accelerated(dist, executable, program)
+    else:
+        _assemble_standalone(dist, program)
+
+    missing = []
+    for source_rel, target_rel in _INSTALLATION_FILES:
+        if not _copy_into(os.path.join(_REPO_ROOT, source_rel),
+                          os.path.join(installation, target_rel)):
+            missing.append(source_rel)
+    # Sin modelo todavía no hay nada que copiar, y no es un faltante: no entra a
+    # `missing`. El tamaño de lo que sí haya ya entra en el total que se imprime abajo.
+    _copy_into(os.path.join(_REPO_ROOT, _MODELS_DIR),
+               os.path.join(installation, _MODELS_DIR))
+    print(f"    installation/   {_size_mb(installation):6.1f} MB")
+
+    if _IS_WINDOWS:
+        _write_windows_scripts(release, program, app_name)
+    else:
+        _write_linux_scripts(release, program, executable, app_name, accelerated=accelerated)
+
+    if missing:
+        print("\n  FALTAN, hay que ponerlos a mano en installation/:")
+        for item in missing:
+            print(f"    {item}")
+
+    print(f"\n  Total: {_size_mb(release):.1f} MB en {release}")
+    if not _IS_WINDOWS and not args.no_archive:
+        archive = _archive(release)
+        print(f"  Para copiar al equipo: {archive} "
+              f"({os.path.getsize(archive) / 1e6:.0f} MB)")
+    return 0
+
+
+def _assemble_standalone(dist: str, program: str):
+    """El `main.dist` de Nuitka entero, y al lado lo que no se compila."""
     shutil.copytree(dist, program, ignore=shutil.ignore_patterns("__pycache__"))
     print(f"    program/        {_size_mb(program):6.1f} MB, {_count(program)} archivos")
 
@@ -797,33 +932,26 @@ def main() -> int:
     if _IS_WINDOWS and _copy_stable_abi_dll(program):
         print(f"    program/{_STABLE_ABI_DLL}   lo pide un paquete suelto; Nuitka no lo copia")
 
-    missing = []
-    for source_rel, target_rel in _INSTALLATION_FILES:
-        if not _copy_into(os.path.join(_REPO_ROOT, source_rel),
-                          os.path.join(installation, target_rel)):
-            missing.append(source_rel)
-    # Sin modelo todavía no hay nada que copiar, y no es un faltante: no entra a
-    # `missing`. El tamaño de lo que sí haya ya entra en el total que se imprime abajo.
-    _copy_into(os.path.join(_REPO_ROOT, _MODELS_DIR),
-               os.path.join(installation, _MODELS_DIR))
-    print(f"    installation/   {_size_mb(installation):6.1f} MB")
 
-    if _IS_WINDOWS:
-        _write_windows_scripts(release, program, app_name)
-    else:
-        _write_linux_scripts(release, program, executable, app_name)
+def _assemble_accelerated(dist: str, executable: str, program: str):
+    """
+    El binario, los datos que leen sus módulos y lo de terceros suelto.
 
-    if missing:
-        print("\n  FALTAN, hay que ponerlos a mano en installation/:")
-        for item in missing:
-            print(f"    {item}")
+    De la carpeta de Nuitka sale sólo el ejecutable: al lado queda `main.build/`, con los
+    `.c` de la compilación, que no son parte del programa.
+    """
+    os.makedirs(program)
+    shutil.copy2(os.path.join(dist, executable), os.path.join(program, executable))
+    data_dirs = _build_script()._DATA_DIRS
+    for directory in data_dirs:
+        _copy_into(os.path.join(_REPO_ROOT, directory), os.path.join(program, directory))
+    print(f"    program/        {executable} ({_size_mb(program):.1f} MB con "
+          f"{', '.join(data_dirs)})")
 
-    print(f"\n  Total: {_size_mb(release):.1f} MB en {release}")
-    if not _IS_WINDOWS and not args.no_archive:
-        archive = _archive(release)
-        print(f"  Para copiar al equipo: {archive} "
-              f"({os.path.getsize(archive) / 1e6:.0f} MB)")
-    return 0
+    target = os.path.join(program, _SITE_PACKAGES_DIR)
+    left_out = _copy_site_packages(_site_packages(), target)
+    print(f"    program/{_SITE_PACKAGES_DIR}/  {_size_mb(target):.0f} MB; quedan afuera: "
+          f"{', '.join(left_out) or 'nada'}")
 
 
 def _size_mb(path: str) -> float:
