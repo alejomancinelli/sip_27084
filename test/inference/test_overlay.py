@@ -294,6 +294,49 @@ class TestTextPanelColours:
         assert np.array_equal(frame, plain)
 
 
+class TestTextPanelLayout:
+    """
+    Los pares `(etiqueta, valor)` van en dos columnas con los valores alineados a la
+    derecha, y el aire entre líneas crece con el texto.
+
+    El texto se pinta de rojo puro sobre un frame gris: así cada píxel de texto se distingue
+    del fondo del panel y del frame aunque el antialiasing lo mezcle con el negro.
+    """
+
+    _RED_BGR = (0, 0, 255)
+
+    def _text_bands(self, frame_bgr: np.ndarray) -> list[np.ndarray]:
+        """Filas con texto agrupadas por línea: cada grupo es una línea del panel."""
+        is_text = ((frame_bgr[..., 2] > 64) & (frame_bgr[..., 0] == 0)
+                   & (frame_bgr[..., 1] == 0))
+        rows = np.flatnonzero(is_text.any(axis=1))
+        bands = np.split(rows, np.flatnonzero(np.diff(rows) > 1) + 1)
+        return [is_text[band] for band in bands]
+
+    def test_the_values_end_in_the_same_column(self):
+        frame = np.full((200, 600, 3), 128, np.uint8)
+        overlay.draw_text_panel(frame, [("A:", "1.0%"), ("LONGER LABEL:", "100.0%")],
+                                options=overlay.OverlayOptions(font_scale=1.0),
+                                text_bgr=self._RED_BGR)
+        bands = self._text_bands(frame)
+        assert len(bands) == 2
+        right_edges = [int(np.flatnonzero(band.any(axis=0)).max()) for band in bands]
+        assert abs(right_edges[0] - right_edges[1]) <= 1
+
+    def test_the_space_between_lines_grows_with_the_text(self):
+        def gap_px(font_scale: float) -> int:
+            frame = np.full((300, 600, 3), 128, np.uint8)
+            overlay.draw_text_panel(frame, ["AB", "CD"],
+                                    options=overlay.OverlayOptions(font_scale=font_scale),
+                                    text_bgr=self._RED_BGR)
+            rows = np.flatnonzero(np.any(
+                (frame[..., 2] > 64) & (frame[..., 0] == 0) & (frame[..., 1] == 0), axis=1))
+            return int(np.diff(rows).max()) - 1
+
+        assert gap_px(2.0) > gap_px(0.5)
+        assert gap_px(2.0) > overlay._LINE_PAD_PX
+
+
 class TestTextThickness:
     """El grosor del trazo acompaña al tamaño: un texto grande con trazo de 1 px se ve
     pálido y roto, que es lo que pasaba después de escalarlo con el ancho del frame."""
