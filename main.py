@@ -128,21 +128,19 @@ _SERVER_STOP_TIMEOUT_S = 5.0      # espera al hilo del servidor Modbus al cerrar
 
 _HEARTBEAT_MAX = 65535            # el registro es uint16: el contador da la vuelta ahí
 
-# Métricas que además de publicarse al instante llevan su media de la hora. La clave es la
-# del analyzer y el registro de la media se llama igual con `_1h` al final, que es como ya
-# lo lee el PLC.
 # El slot del modelo de este proyecto: de su sección salen los nombres de clase, que
 # son los que deciden cómo se llaman las métricas y qué registro las transporta.
 _SEGMENTER_SLOT = "segmenter"
 
-_ROLLING_METRIC_NAMES = ("pct_pellet_norm", "pct_desmenuzado_norm", "pct_carga")
+# Métricas que además de publicarse al instante llevan su media de la hora. La clave es la
+# del analyzer y el registro de la media se llama igual con `_1h` al final, que es como ya
+# lo lee el PLC. La composición se pesa con la carga, así que las dos van siempre juntas.
+_ROLLING_COMPOSITION_NAMES = ("pct_pellet_norm", "pct_desmenuzado_norm")
+_LOAD_NAME = metrics.LOAD_KEY
 _ROLLING_SUFFIX = "_1h"
-# Cuál de las tres es la carga —promedia todas las mediciones, así que su ventana dice
-# cuánto se midió— y cuál representa a la composición, que sólo promedia con material.
-_ROLLING_LOAD_NAME = "pct_carga"
-# Sufijo de las métricas normalizadas: son las que sólo promedian con material en la cinta.
+# Sufijo de las métricas de composición: entre las clases detectadas, suman 100.
 _NORMALIZED_SUFFIX = "_norm"
-_ROLLING_COMPOSITION_NAME = "pct_pellet_norm"
+_PCT = 100.0
 
 # Las dos claves que dicen si se puede confiar en esas medias. Sin ellas, una media de tres
 # muestras sobre una hora se lee igual que una hora entera bien medida.
@@ -660,8 +658,13 @@ class Application(QObject):
         # con el último promedio bueno. El analyzer corre sólo cuando hay resultado, así
         # que ahí la ventana se congelaría; además así sigue sin estado entre llamadas.
         window_s = float(config.get("process.rolling_window_s", 3600) or 3600)
-        self._rolling = {name: rolling.RollingMean(window_s)
-                         for name in _ROLLING_METRIC_NAMES}
+        self._rolling_load = rolling.RollingMean(window_s)
+        # Por clase, la media de `composición × carga`: dividida por la de la carga da la
+        # composición de la hora pesada por cuánto material pasó (`_rolling_values()`).
+        self._rolling_weighted = {name: rolling.RollingMean(window_s)
+                                  for name in _ROLLING_COMPOSITION_NAMES}
+        # 1 en un tick con material y 0 sin: su media es `material_present_pct`.
+        self._rolling_material = rolling.RollingMean(window_s)
 
 
         # ── GPIO ─────────────────────────────────────────────────────────────
@@ -1008,11 +1011,17 @@ class Application(QObject):
         frames de cada segundo esa cuenta daría siempre llena aunque la inferencia se
         hubiera caído media hora. Por eso lo que entra es el promedio del segundo.
 
-        **La composición sólo promedia lo que tenía material y la carga promedia todo.** En
-        una cinta vacía la composición no es 50/50 ni 0/0: no existe, y meterla en el
-        promedio lo corre hacia donde no hay proceso. La carga sí: ahí el 0 es una medición
-        legítima, y es justamente el dato de que la cinta estuvo parada. Lo mismo vale
-        adentro del segundo, y eso lo resuelve `_average_tick_metrics()`.
+        **La composición de la hora es un cociente de sumas, no una media de cocientes.** Lo
+        que se pregunta es qué parte del material que pasó fue cada clase —Σ píxeles de la
+        clase sobre Σ píxeles detectados—, y promediar la composición de cada muestra haría
+        pesar igual un segundo con cuatro partículas que uno con la cinta llena. Como la
+        carga es lo detectado sobre el ROI de cinta, `composición × carga` es la clase sobre
+        el ROI, y el cociente de las medias de las dos ventanas es el de sus sumas: entran
+        juntas en cada tick, así que tienen las mismas muestras. Un segundo sin material
+        entra con 0 a las dos y no corre nada, así que no hace falta filtrarlo.
+
+        La carga es una media simple: ahí el 0 es una medición, el dato de que la cinta
+        estuvo parada.
 
         Envejecer va aparte y en cada tick, en `_build_rolling_registers()`: si se hiciera
         sólo acá, una inferencia caída dejaría la ventana congelada con su último promedio.
@@ -1022,19 +1031,19 @@ class Application(QObject):
         cámara, igual que necesita una fila de registro por cámara.
         """
         averaged = _average_tick_metrics(results)
-        if not averaged:
+        load_pct = averaged.get(_LOAD_NAME)
+        if load_pct is None:
             return
         self._rolling_camera_slot = results[-1].camera_slot
         now_s = time.monotonic()
         self._last_inference_s = now_s
+        self._rolling_load.add(now_s, load_pct)
+        # La composición del tick ya viene pesada por la carga de sus frames, así que este
+        # producto es la media del tick de `composición × carga`, frame por frame.
+        for name, window in self._rolling_weighted.items():
+            window.add(now_s, averaged.get(name, 0.0) * load_pct / _PCT)
         has_material = rolling.has_composition(_composition_pct(averaged))
-        for name, window in self._rolling.items():
-            value = averaged.get(name)
-            if value is None:
-                continue
-            if name.endswith(_NORMALIZED_SUFFIX) and not has_material:
-                continue
-            window.add(now_s, float(value))
+        self._rolling_material.add(now_s, 1.0 if has_material else 0.0)
 
     def _build_rolling_registers(self) -> dict:
         """
@@ -1049,17 +1058,27 @@ class Application(QObject):
         hay algo detrás de ese cero es `window_coverage_pct`.
         """
         now_s = time.monotonic()
-        for window in self._rolling.values():
+        for window in (self._rolling_load, self._rolling_material,
+                       *self._rolling_weighted.values()):
             window.tick(now_s)
+        return self._rolling_values()
 
-        values = {f"{name}{_ROLLING_SUFFIX}": window.mean() or 0.0
-                  for name, window in self._rolling.items()}
-        # La cobertura se mide sobre la carga, que es la que promedia todas las mediciones:
-        # es la ventana que representa cuánto se midió de verdad.
-        load = self._rolling[_ROLLING_LOAD_NAME]
-        values[_WINDOW_COVERAGE_KEY] = load.fill_pct(expected_hz=_SAMPLES_PER_S)
-        values[_MATERIAL_PRESENT_KEY] = rolling.ratio_pct(
-            self._rolling[_ROLLING_COMPOSITION_NAME].count(), load.count())
+    def _rolling_values(self) -> dict:
+        """
+        Las medias de la hora, con los nombres de registro, sin envejecer las ventanas.
+
+        La composición es la media de `composición × carga` sobre la media de la carga
+        —ver `_update_rolling()`—. Sin carga en la ventana no pasó material y sale 0.
+        """
+        load_mean = self._rolling_load.mean() or 0.0
+        values = {f"{_LOAD_NAME}{_ROLLING_SUFFIX}": load_mean}
+        for name, window in self._rolling_weighted.items():
+            values[f"{name}{_ROLLING_SUFFIX}"] = (
+                (window.mean() or 0.0) * _PCT / load_mean if load_mean > 0 else 0.0)
+        # La cobertura se mide sobre la carga, que entra en cada tick con medición: es la
+        # ventana que representa cuánto se midió de verdad.
+        values[_WINDOW_COVERAGE_KEY] = self._rolling_load.fill_pct(expected_hz=_SAMPLES_PER_S)
+        values[_MATERIAL_PRESENT_KEY] = int(round((self._rolling_material.mean() or 0.0) * _PCT))
         return values
 
     def _annotate_cycle(self, result: InferenceResult) -> np.ndarray | None:
@@ -1407,12 +1426,11 @@ class Application(QObject):
         en la misma serie en la que el dashboard ya las venía leyendo. Con una segunda
         cámara esto deja de tener sentido y las ventanas pasan a ser por cámara.
         """
-        fields = {f"{name}{_ROLLING_SUFFIX}": float(window.mean() or 0.0)
-                  for name, window in self._rolling.items()}
-        load = self._rolling[_ROLLING_LOAD_NAME]
-        fields["cobertura_pct"] = load.fill_pct(expected_hz=_SAMPLES_PER_S)
-        fields["material_presente_pct"] = rolling.ratio_pct(
-            self._rolling[_ROLLING_COMPOSITION_NAME].count(), load.count())
+        values = self._rolling_values()
+        fields = {name: float(value) for name, value in values.items()
+                  if name.endswith(_ROLLING_SUFFIX)}
+        fields["cobertura_pct"] = values[_WINDOW_COVERAGE_KEY]
+        fields["material_presente_pct"] = values[_MATERIAL_PRESENT_KEY]
         fields["inference_age_s"] = self._inference_age_s()
         self._telemetry.push_data(_MEASUREMENT_INFERENCE, fields,
                                   tags=self._camera_tags(self._rolling_camera_slot))
@@ -1870,18 +1888,24 @@ def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:
 
 def _average_tick_metrics(results: list) -> dict:
     """
-    Media de las métricas de los resultados de un tick, con la composición sólo sobre los
-    frames que tenían material.
+    Media de las métricas de los resultados de un tick, con la composición pesada por la
+    carga de cada frame.
 
-    Un frame vacío aporta 0 a cada `pct_<clase>_norm`, así que mezclado con los cargados
-    la composición del segundo sumaría menos de 100 aunque la cinta no haya cambiado. El
-    resto —la carga incluida— promedia todos, porque ahí el 0 es una medición. Un tick sin
-    ningún frame con material deja la composición en la media de todos, que es 0.
+    La composición del tick es Σ píxeles de la clase sobre Σ píxeles detectados en sus
+    frames, no la media de la composición de cada uno: un frame con cuatro partículas no
+    puede pesar lo mismo que uno con la cinta llena. Como `pct_carga` es lo detectado sobre
+    el ROI de cinta, pesar cada `pct_<clase>_norm` por su carga da exactamente ese cociente,
+    y un frame vacío pesa 0 sin que haga falta filtrarlo. El resto —la carga incluida— es la
+    media simple, porque ahí el 0 es una medición. Sin material en ningún frame la
+    composición queda en 0. Sólo entran los resultados confiables, como en el resto.
     """
     averaged = analysis.average_metrics(results)
-    with_material = analysis.average_metrics(
-        [r for r in results if rolling.has_composition(_composition_pct(r.metrics))])
-    averaged.update(_composition_pct(with_material))
+    loads = [(r.metrics, float(r.metrics.get(_LOAD_NAME, 0.0) or 0.0))
+             for r in results if r.is_valid]
+    total_load = sum(load for _, load in loads)
+    for name in _composition_pct(averaged):
+        weighted = sum(float(m.get(name, 0.0) or 0.0) * load for m, load in loads)
+        averaged[name] = round(weighted / total_load, 2) if total_load > 0 else 0.0
     return averaged
 
 

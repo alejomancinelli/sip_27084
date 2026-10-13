@@ -276,12 +276,18 @@ siguen vienen del template.
   inferencia se hubiera caído media hora. Entra el promedio del segundo. Y viven en
   `main.py` y no en el analyzer porque hay que envejecerlas en cada tick, haya medición o
   no: el analyzer corre sólo cuando hay resultado y ahí la ventana se congelaría.
-- **La composición sólo promedia con material y la carga promedia todo.** En una cinta vacía
-  la composición no es 50/50 ni 0/0: no existe, y meterla en el promedio lo corre hacia
-  donde no hay proceso. La carga sí: ahí el 0 es una medición legítima, y es el dato de que
-  la cinta estuvo parada. Por eso hay dos registros que validan las medias —cuánto de la
-  hora se midió y cuánto de lo medido tenía material—: sin ellos, una media de tres muestras
-  sobre una hora se lee igual que una hora entera bien medida.
+- **La composición es un cociente de sumas y la carga es una media.** Lo que se pregunta es
+  qué parte del material que pasó fue cada clase: Σ píxeles de la clase sobre Σ píxeles
+  detectados, en el segundo y en la hora. Promediar la composición de cada frame hacía pesar
+  igual cuatro partículas que la cinta llena, y un frame vacío le metía un 0 a cada clase.
+  Como `pct_carga` es lo detectado sobre el ROI de cinta, pesar cada composición por su
+  carga da exactamente ese cociente sin publicar píxeles, y un momento sin material pesa 0
+  sin que haga falta filtrarlo. La carga sí es una media simple: ahí el 0 es una medición
+  legítima, y es el dato de que la cinta estuvo parada. Los registros 6 y 7 conservaron su
+  dirección y su nombre al pasar de la media de cocientes a esto. Y siguen los dos registros
+  que validan las medias —cuánto de la hora se midió y cuánto de lo medido tenía
+  material—: sin ellos, una media de tres muestras sobre una hora se lee igual que una hora
+  entera bien medida.
 - **El refinamiento de fondo oscuro lo aplica el pipeline sobre las máscaras del
   segmentador.** El contorno del modelo es aproximadamente convexo y se traga la cinta que
   se ve *entre* partículas sueltas, así que una pila dispersa mediría como una compacta.

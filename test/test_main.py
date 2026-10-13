@@ -7,6 +7,7 @@ import asyncio
 import signal
 
 import numpy as np
+import pytest
 
 import main
 from system.camera.lens_health import (
@@ -263,7 +264,7 @@ class TestInferenceFields:
     def test_the_composition_is_an_integer_too(self):
         """La versión anterior redondeaba también la composición y la carga."""
         results = [InferenceResult(camera_slot="camera_1",
-                                   metrics={"pct_pellet_norm": 33.7})]
+                                   metrics={"pct_pellet_norm": 33.7, "pct_carga": 50.0})]
         assert main._build_inference_fields(results)["pct_pellet_norm"] == 34
 
     def test_the_composition_of_a_second_adds_up_to_100_with_empty_frames(self):
@@ -275,6 +276,12 @@ class TestInferenceFields:
     def test_the_load_of_a_second_still_counts_the_empty_frames(self):
         results = [_belt_result(0.0, 0.0, 0.0)] * 5 + [_belt_result(70.0, 30.0, 60.0)] * 10
         assert main._build_inference_fields(results)["pct_carga"] == 40
+
+    def test_the_composition_of_a_second_is_weighted_by_load(self):
+        """Σ píxeles por clase sobre Σ detectados: un frame casi vacío no pesa como uno lleno."""
+        results = [_belt_result(100.0, 0.0, 10.0), _belt_result(0.0, 100.0, 90.0)]
+        fields = main._build_inference_fields(results)
+        assert (fields["pct_pellet_norm"], fields["pct_desmenuzado_norm"]) == (10, 90)
 
     def test_a_second_without_material_publishes_the_composition_as_zero(self):
         """Como la versión anterior: el que dice que no hubo material es `pct_carga`."""
@@ -311,7 +318,10 @@ class TestInferenceFields:
 def _build_rolling_application():
     """`Application` sin `__init__`, con sólo las ventanas de la hora."""
     app = main.Application.__new__(main.Application)
-    app._rolling = {name: rolling.RollingMean(3600.0) for name in main._ROLLING_METRIC_NAMES}
+    app._rolling_load = rolling.RollingMean(3600.0)
+    app._rolling_weighted = {name: rolling.RollingMean(3600.0)
+                             for name in main._ROLLING_COMPOSITION_NAMES}
+    app._rolling_material = rolling.RollingMean(3600.0)
     return app
 
 
@@ -327,6 +337,37 @@ class TestHourlyMeans:
         values = app._build_rolling_registers()
 
         assert (values["pct_pellet_norm_1h"], values["pct_desmenuzado_norm_1h"]) == (70.0, 30.0)
+
+    def test_the_composition_of_the_hour_is_a_ratio_of_sums(self):
+        """Un segundo con poco material no pesa lo mismo que uno con la cinta llena."""
+        app = _build_rolling_application()
+        app._update_rolling([_belt_result(100.0, 0.0, 10.0)])
+        app._update_rolling([_belt_result(0.0, 100.0, 90.0)])
+
+        values = app._build_rolling_registers()
+
+        assert values["pct_pellet_norm_1h"] == pytest.approx(10.0)
+        assert values["pct_desmenuzado_norm_1h"] == pytest.approx(90.0)
+
+    def test_the_composition_of_the_hour_adds_up_to_100(self):
+        app = _build_rolling_application()
+        for pellet_pct, load_pct in ((80.0, 25.0), (55.0, 70.0), (0.0, 0.0), (91.0, 12.0)):
+            app._update_rolling([_belt_result(pellet_pct, 100.0 - pellet_pct, load_pct)
+                                 if load_pct else _belt_result(0.0, 0.0, 0.0)])
+
+        values = app._build_rolling_registers()
+
+        total = values["pct_pellet_norm_1h"] + values["pct_desmenuzado_norm_1h"]
+        assert total == pytest.approx(100.0)
+
+    def test_an_hour_without_material_publishes_zero(self):
+        app = _build_rolling_application()
+        app._update_rolling([_belt_result(0.0, 0.0, 0.0)])
+
+        values = app._build_rolling_registers()
+
+        assert (values["pct_pellet_norm_1h"], values["pct_carga_1h"]) == (0.0, 0.0)
+        assert values[main._MATERIAL_PRESENT_KEY] == 0
 
     def test_the_load_still_averages_the_empty_frames(self):
         """En la carga el 0 es una medición: dice que la cinta estuvo vacía ese rato."""

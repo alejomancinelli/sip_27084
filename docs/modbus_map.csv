@@ -4,8 +4,8 @@
 3;40003;pct_pellet_norm;Composición — pellet entero, sobre el total detectado;%;x10;inference
 4;40004;pct_desmenuzado_norm;Composición — desmenuzado, sobre el total detectado;%;x10;inference
 5;40005;pct_carga;"Carga de la cinta respecto del ROI; pasa de 100 % si hay desborde";%;x10;inference
-6;40006;pct_pellet_norm_1h;Pellet — media de la última hora, sólo con material en la cinta;%;x10;health
-7;40007;pct_desmenuzado_norm_1h;Desmenuzado — media de la última hora, sólo con material en la cinta;%;x10;health
+6;40006;pct_pellet_norm_1h;Pellet — composición de la última hora, pesada por la carga;%;x10;health
+7;40007;pct_desmenuzado_norm_1h;Desmenuzado — composición de la última hora, pesada por la carga;%;x10;health
 8;40008;pct_carga_1h;Carga — media de la última hora, sobre todas las mediciones;%;x10;health
 9;40009;window_coverage_pct;Cuánto de la última hora se llegó a medir — valida el registro 8;%;-;health
 10;40010;material_present_pct;Cuánto de lo medido tenía material — valida los registros 6 y 7;%;-;health

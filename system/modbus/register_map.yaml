@@ -74,14 +74,14 @@
 # hora se lee igual que una hora entera bien medida.
 - addr: 6
   name: pct_pellet_norm_1h
-  desc: Pellet — media de la última hora, sólo con material en la cinta
+  desc: Pellet — composición de la última hora, pesada por la carga
   producer: health
   unit: '%'
   scale: 10
 
 - addr: 7
   name: pct_desmenuzado_norm_1h
-  desc: Desmenuzado — media de la última hora, sólo con material en la cinta
+  desc: Desmenuzado — composición de la última hora, pesada por la carga
   producer: health
   unit: '%'
   scale: 10

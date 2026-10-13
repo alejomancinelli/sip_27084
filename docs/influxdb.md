@@ -156,7 +156,7 @@ desde la muestra anterior. Tags `proyecto`, `camara_id` y `pipeline`.
 | `pct_pellet`, `pct_desmenuzado` | % del **frame** cubierto por cada clase |
 | `pct_fondo` | % del frame que es cinta a la vista |
 | `pct_carga` | % del **ROI de cinta** cubierto; pasa de 100 si hay desborde |
-| `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición, promediada **sólo sobre los frames con material**: entre las dos suman 100, o 0 si en toda la muestra no hubo material |
+| `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición de la muestra, **pesada por la carga de cada frame**: entre las dos suman 100, o 0 si en toda la muestra no hubo material |
 | `confianza` | confianza media, sólo sobre los resultados confiables |
 | `iluminacion` | brillo medio del frame, 0–100 |
 | `inference_time_ms` | duración media del ciclo de inferencia |
@@ -183,7 +183,7 @@ por campo en `test/test_main.py`.
 
 | Campo | Qué es |
 |---|---|
-| `pct_pellet_norm_1h`, `pct_desmenuzado_norm_1h` | media de la hora, **sólo con material en la cinta** |
+| `pct_pellet_norm_1h`, `pct_desmenuzado_norm_1h` | composición de la hora, **pesada por la carga**: qué parte de lo que pasó fue cada clase |
 | `pct_carga_1h` | media de la hora, sobre **todas** las mediciones |
 | `cobertura_pct` | cuánto de la hora se llegó a medir — valida `pct_carga_1h` |
 | `material_presente_pct` | cuánto de lo medido tenía material — valida los otros dos |
@@ -195,10 +195,14 @@ dejarían de llegar los dos y el dashboard mostraría el último valor bueno par
 lo que cuenta la historia es el desplome de `cobertura_pct` y la subida de
 `inference_age_s`.
 
-**Por qué la composición sólo promedia con material.** En una cinta vacía la composición no
-es 50/50 ni 0/0: no existe. Meterla en el promedio lo corre hacia donde no hay proceso. La
-carga sí promedia todo: ahí el 0 es una medición legítima, y es justamente el dato de que la
-cinta estuvo parada.
+**Por qué la composición se pesa por la carga.** Lo que se pregunta es qué parte del
+material que pasó fue cada clase, y eso es un cociente de sumas —Σ píxeles de la clase sobre
+Σ píxeles detectados—, no una media de la composición de cada momento, que haría pesar igual
+cuatro partículas que la cinta llena. Un momento sin material pesa 0 y no corre nada: en una
+cinta vacía la composición no es 50/50 ni 0/0, no existe. La carga sí es una media simple:
+ahí el 0 es una medición legítima, y es justamente el dato de que la cinta estuvo parada.
+Hasta la versión 1.0.0 estos campos eran la media de la composición sólo con material; el
+nombre no cambió, así que la historia del panel sigue en la misma serie.
 
 Las claves de la medición son las del analyzer, sin renombrar: el nombre de la métrica es el
 mismo en el panel del anotado, en el JSON del dataset, en los fields de acá y —cuando tiene
