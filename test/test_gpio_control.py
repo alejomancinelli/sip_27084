@@ -198,6 +198,27 @@ class TestWithHardware:
         with_gpiod.requests[1]._fails = True
         assert gpio.read_input(1) == READ_ERROR
 
+    def test_a_failing_read_is_logged_once(self, with_gpiod, caplog):
+        """El polling la repite varias veces por segundo: una línea por lectura tapa el log."""
+        gpio = GpioController(_MockConfig())
+        with_gpiod.requests[1]._fails = True
+        with caplog.at_level("ERROR"):
+            for _ in range(5):
+                gpio.read_input(1)
+        assert caplog.text.count("No se pudo leer la entrada 1") == 1
+
+    def test_a_recovered_read_is_logged_and_fails_loudly_again(self, with_gpiod, caplog):
+        gpio = GpioController(_MockConfig())
+        with_gpiod.requests[1]._fails = True
+        gpio.read_input(1)
+        with_gpiod.requests[1]._fails = False
+        with caplog.at_level("INFO"):
+            gpio.read_input(1)
+            with_gpiod.requests[1]._fails = True
+            gpio.read_input(1)
+        assert "volvió a leerse" in caplog.text
+        assert caplog.text.count("No se pudo leer la entrada 1") == 2
+
     def test_closing_puts_the_outputs_at_rest_and_releases(self, with_gpiod):
         gpio = GpioController(_MockConfig())
         gpio.set_output(1, 1)
@@ -235,6 +256,33 @@ class TestPollingThread:
             thread.requestInterruption()
             assert thread.wait(2000)
         assert seen and set(seen[0]) == {1, 2}
+
+    def _poll_for(self, interval_ms: int, duration_ms: int) -> tuple[list, int]:
+        """Corre el polling `duration_ms` y devuelve lo emitido y cuánto tardó en parar."""
+        import time
+
+        from PySide6.QtCore import Qt
+
+        gpio = GpioController(_MockConfig())
+        thread = GpioPollingThread(gpio, _MockConfig(**{
+            "gpio.polling_interval_ms": interval_ms}))
+        seen = []
+        thread.inputs_updated.connect(seen.append, Qt.ConnectionType.DirectConnection)
+        thread.start()
+        thread.msleep(duration_ms)
+        started_s = time.monotonic()
+        thread.requestInterruption()
+        assert thread.wait(5000)
+        return seen, int((time.monotonic() - started_s) * 1000)
+
+    def test_an_interval_above_the_stop_check_is_respected(self, with_gpiod):
+        """Con 1000 ms se leía cada 200: el intervalo se recortaba al tramo de espera."""
+        seen, _ = self._poll_for(interval_ms=1000, duration_ms=700)
+        assert len(seen) == 1
+
+    def test_a_long_interval_does_not_delay_the_stop(self, with_gpiod):
+        _, stop_ms = self._poll_for(interval_ms=10_000, duration_ms=100)
+        assert stop_ms < 1000
 
     def test_the_interval_has_a_floor(self, with_gpiod):
         """Un intervalo de 0 en el config dejaría el hilo girando sin ceder el CPU."""

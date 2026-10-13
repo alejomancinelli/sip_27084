@@ -25,6 +25,7 @@ Los canales se numeran desde 1, como en el borne: las claves del config pueden v
 """
 
 import threading
+import time
 
 from PySide6.QtCore import QThread, Signal
 
@@ -36,6 +37,7 @@ READ_ERROR = -1
 
 _DEFAULT_POLLING_INTERVAL_MS = 200
 _MIN_POLLING_INTERVAL_MS = 20
+_STOP_CHECK_MS = 200              # cada cuánto el polling mira si le pidieron parar
 _CONSUMER_OUTPUTS = "sip_gpio_outputs"
 _CONSUMER_INPUTS = "sip_gpio_inputs"
 
@@ -69,6 +71,8 @@ class GpioController:
         self._input_states = {channel: 0 for channel in self._offset_by_input}
         self._lock = threading.Lock()
         self._error: str | None = None
+        # Entradas cuya lectura viene fallando: se avisa al entrar y al salir, no por poll.
+        self._failing_inputs: set[int] = set()
 
         self._output_request = None
         self._input_request = None
@@ -162,7 +166,13 @@ class GpioController:
     # ── Entradas ─────────────────────────────────────────────────────────────
 
     def read_input(self, channel: int) -> int:
-        """Lee una entrada: 1, 0, o READ_ERROR si el canal no existe o falló la lectura."""
+        """
+        Lee una entrada: 1, 0, o READ_ERROR si el canal no existe o falló la lectura.
+
+        Una lectura que falla se avisa una vez, cuando empieza a fallar, y otra cuando se
+        recupera: el polling la repite varias veces por segundo, y un error por lectura
+        tapaba el log entero con la misma línea.
+        """
         if channel not in self._offset_by_input:
             logger.error(f"[GPIO] La entrada {channel} no está declarada en 'gpio.inputs'.")
             return READ_ERROR
@@ -173,8 +183,14 @@ class GpioController:
             try:
                 raw = self._input_request.get_value(self._offset_by_input[channel])
             except Exception as e:
-                logger.error(f"[GPIO] No se pudo leer la entrada {channel}: {e}")
+                if channel not in self._failing_inputs:
+                    self._failing_inputs.add(channel)
+                    logger.error(f"[GPIO] No se pudo leer la entrada {channel}: {e}. "
+                                 f"No se vuelve a avisar hasta que se recupere.")
                 return READ_ERROR
+            if channel in self._failing_inputs:
+                self._failing_inputs.discard(channel)
+                logger.info(f"[GPIO] La entrada {channel} volvió a leerse.")
             value = 1 if raw == self._value.ACTIVE else 0
             self._input_states[channel] = value
             return value
@@ -292,9 +308,22 @@ class GpioPollingThread(QThread):
         logger.info(f"[GPIO] Polling de entradas cada {self._interval_ms} ms.")
         while not self.isInterruptionRequested():
             self.inputs_updated.emit(self._gpio.read_all_inputs())
-            # Troceado: con un intervalo largo, un wait entero retrasaría la parada.
-            self.msleep(min(self._interval_ms, _DEFAULT_POLLING_INTERVAL_MS))
+            self._wait_interval()
         logger.info("[GPIO] Polling de entradas detenido.")
+
+    def _wait_interval(self):
+        """
+        Espera el intervalo entero, en tramos de `_STOP_CHECK_MS`.
+
+        Troceado para que un intervalo largo no retrase la parada, y contra un reloj
+        monotónico para que los tramos sumen el intervalo y no uno solo de ellos.
+        """
+        deadline_s = time.monotonic() + self._interval_ms / 1000
+        while not self.isInterruptionRequested():
+            remaining_ms = int((deadline_s - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                return
+            self.msleep(min(remaining_ms, _STOP_CHECK_MS))
 
 
 # ── Helpers del módulo ───────────────────────────────────────────────────────
