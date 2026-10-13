@@ -19,6 +19,7 @@ from system.config_manager import ConfigManager
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from system.modbus.registers import SCHEMA
+from system.modbus.schema import to_plc_address
 
 from ui.widgets.form import (
     add_check_row, add_form_row, add_hint_row, build_combo_box, build_group_box,
@@ -96,11 +97,14 @@ class ModbusTab(AbstractConfigTab):
         """Muestra los registros expuestos y hasta dónde llega el mapa cargado."""
         count = int(self._config.get("modbus.register_count", 100))
         max_addr = SCHEMA.max_addr()
-        self._register_count.setText(str(count))
+        # Con las dos numeraciones: adentro del repo la dirección es base-1, pero quien
+        # mira esta pantalla suele tener el PLC al lado, donde el registro 1 es el 40001.
+        self._register_count.setText(
+            f"{count}   ({to_plc_address(1)}–{to_plc_address(count)})")
         is_overflow = max_addr > count
         self._map_extent.setText(
             tr("mb_map_overflow" if is_overflow else "mb_map_extent").format(
-                max_addr=max_addr, count=count)
+                max_addr=max_addr, count=count, plc_addr=to_plc_address(max_addr))
         )
         # El aviso de desborde se pinta como advertencia; el informativo, como nota.
         self._map_extent.setObjectName("warningBanner" if is_overflow else "hintLabel")

@@ -111,11 +111,11 @@ def _build_part_header(jpeg_size: int) -> bytes:
     ).encode()
 
 
-def _build_info_html(slots: tuple[str, ...]) -> bytes:
+def _build_info_html(names: tuple[str, ...]) -> bytes:
     """Página con un link por stream disponible."""
     links = "\n".join(
-        f'<a href="/{slot}/{mode}">/{slot}/{mode}</a>'
-        for slot in slots for mode in MODES
+        f'<a href="/{name}/{mode}">/{name}/{mode}</a>'
+        for name in names for mode in MODES
     ) or "<p>No hay cámaras configuradas.</p>"
     return f"""\
 <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -250,8 +250,10 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             self._send_info()
             return
         parts = self.path.strip("/").split("/")
-        if len(parts) == 2 and parts[0] in self.server.slots and parts[1] in MODES:
-            self._send_stream((parts[0], parts[1]))
+        # La ruta puede traer el nombre público de la cámara; el frame se guarda por slot.
+        camera_slot = self.server.slot_by_name.get(parts[0]) if len(parts) == 2 else None
+        if camera_slot is not None and parts[1] in MODES:
+            self._send_stream((camera_slot, parts[1]))
         else:
             self.send_error(404)
 
@@ -332,12 +334,12 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, address: tuple[str, int], frame_store: _FrameStore,
-                 subscribers: _Subscribers, slots: tuple[str, ...],
+                 subscribers: _Subscribers, slot_by_name: dict,
                  config_manager: ConfigManager):
         self.frame_store = frame_store
         self.subscribers = subscribers
-        self.slots = slots
-        self.info_html = _build_info_html(slots)
+        self.slot_by_name = slot_by_name
+        self.info_html = _build_info_html(tuple(slot_by_name))
         self._config = config_manager
         super().__init__(address, _StreamingHandler)
 
@@ -374,13 +376,31 @@ class HttpVideoServer(AbstractVideoServer):
     y la codificación, que la paga el hilo que empuja el frame.
     """
 
+    CONFIG_KEY = "http"
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
+        self._names_by_slot: dict = {}
+        self._slot_by_name: dict = {}
         self._store = _FrameStore()
         self._subs = _Subscribers()
         self._server: _ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._is_active = False
+
+    def get_stream_urls(self) -> list[str]:
+        """
+        URLs de los streams, con la forma de ruta que este servidor sirve.
+
+        Las arma el servidor y no quien cablea: la ruta puede llevar el nombre público de
+        la cámara en vez del slot, y componerla afuera la dejaría definida en dos lugares
+        —que es como quedan desincronizadas—.
+        """
+        if self._status != STATUS_ACTIVE:
+            return []
+        port = int(self._config.get(f"video.{self.CONFIG_KEY}.port", _DEFAULT_PORT))
+        return [f"http://127.0.0.1:{port}/{name}/{mode}"
+                for name in self._names_by_slot.values() for mode in MODES]
 
     def get_client_count(self) -> int:
         """Clientes conectados, sumando todos los streams."""
@@ -419,6 +439,9 @@ class HttpVideoServer(AbstractVideoServer):
             return
 
         self._slots = self._read_camera_slots()
+        stream_names = self._read_stream_names()
+        self._names_by_slot = {slot: stream_names.get(slot, slot) for slot in self._slots}
+        self._slot_by_name = {name: slot for slot, name in self._names_by_slot.items()}
         if not self._slots:
             logger.warning("[HttpVideo] No hay cámaras en el config: no hay streams que servir.")
 
@@ -430,7 +453,7 @@ class HttpVideoServer(AbstractVideoServer):
         port = self._config.get("video.http.port", _DEFAULT_PORT)
         try:
             server = _ThreadingHTTPServer((_HOST, port), self._store, self._subs,
-                                          self._slots, self._config)
+                                          self._slot_by_name, self._config)
         except OSError as e:
             self._status = STATUS_ERROR
             logger.error(f"[HttpVideo] No se pudo iniciar en puerto {port}: {e}")
@@ -446,8 +469,10 @@ class HttpVideoServer(AbstractVideoServer):
         self._is_active = True
         self._status = STATUS_ACTIVE
         logger.info(f"[HttpVideo] Servidor activo en http://{_HOST}:{port}")
-        for slot in self._slots:
-            logger.info(f"[HttpVideo]   /{slot}/{MODE_RAW} y /{slot}/{MODE_ANNOTATED}")
+        for slot, name in self._names_by_slot.items():
+            renamed = f"   (slot {slot})" if name != slot else ""
+            logger.info(f"[HttpVideo]   /{name}/{MODE_RAW} y /{name}/{MODE_ANNOTATED}"
+                        f"{renamed}")
 
     def stop(self):
         """Detiene el servidor, corta los streams abiertos y libera el puerto. Idempotente."""

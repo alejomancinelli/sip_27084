@@ -129,7 +129,7 @@ ui/
       abstract_tab.py   el contrato: TITLE_KEY, load(), save()
       cameras_tab.py video_tab.py inference_tab.py collector_tab.py
       telemetry_tab.py modbus_tab.py system_tab.py
-      process_tab.py    VACÍA en el template: la llena cada fork
+      process_tab.py    rectángulo de cinta, umbrales y ventana de las medias
     diagnostics/        una pestaña por tema de diagnóstico
       abstract_tab.py   el contrato: TITLE_KEY, apply_theme()
       hardware_tab.py modbus_tab.py video_tab.py logs_tab.py
@@ -382,19 +382,15 @@ lo que el operador eligió en el selector.
 
 ## Lo que falta
 
-- **`main.py`**: no existe todavía. Hasta que exista, quien construye esta ventana es
-  `manual_test/ui/ui_app.py`, que hace de cableado.
-- **El módulo de GPIO.** `ui/dialogs/gpio_dialog.py` es la mitad de UI de un subsistema
-  que el template no tiene: espera un controlador con la interfaz que documenta su
-  docstring, y el botón del header aparece sólo cuando se lo inyecta.
+- **El área central del monitor** es la grilla de cámaras genérica. La versión anterior del
+  equipo tenía además un gráfico de áreas apiladas con la composición; si se lo quiere de
+  vuelta, entra por `_build_monitor_content()` de `main.py` sin tocar nada más de la UI.
 - **Los intrínsecos del lente** se muestran pero no se editan: una matriz 3x3 y hasta 14
-  coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las
-  coordenadas del proyecto. Se editan en el `config.yaml`.
-- **La pestaña de proceso llega vacía**, y es a propósito: `process:` es la única sección
-  cuya *forma* cambia entre proyectos, así que el template no puede declarar sus campos.
-  La pestaña existe para que el punto de extensión se vea, y su docstring trae los dos
-  patrones que cubren casi todo —un valor suelto y un mapa por cámara—. La validación de
-  lo obligatorio no va ahí: un valor cuya ausencia corrompe una medición tiene que frenar
-  el arranque, y eso lo chequea `main.py`, que es quien lee la sección y la inyecta.
-- **No hay tests de `ui/`.** La suite del repo corre sin GUI, y así se queda. Lo que sí
-  se puede testear sin Qt es `service_status.describe()`, que devuelve strings.
+  coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las coordenadas
+  del proyecto. Se editan en el `config.yaml`.
+- **Casi no hay tests de `ui/`.** La suite corre sin GUI y así se queda, con dos
+  excepciones que se ganaron el lugar: `theme.py`, que no necesita widgets, y la pestaña de
+  proceso, que sí los construye con la plataforma `offscreen` de Qt. Esa última está
+  testeada porque su forma de fallar es cara y silenciosa: abrir el panel y guardar sin
+  tocar nada tiene que dejar el `config.yaml` igual, y lo que se pierde cuando no lo deja
+  es la calibración del proceso.

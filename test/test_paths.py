@@ -8,6 +8,7 @@ y qué archivo cuelga de cuál, que es lo que cambia al compilar.
 
 import importlib
 import os
+from types import SimpleNamespace
 
 import system.paths as paths
 
@@ -50,6 +51,33 @@ class TestRoots:
             assert reloaded.DATA_DIR == reloaded.APP_DIR
         finally:
             _reloaded(monkeypatch, **{paths.DATA_DIR_ENV: None})
+
+
+class TestProgramLocation:
+    """
+    De dónde sale `APP_DIR` compilado. `__compiled__` sólo existe adentro de un binario,
+    así que acá se le pasa uno armado con los dos campos que se leen.
+    """
+
+    def test_from_sources_it_is_the_repo(self):
+        module_file = os.path.join(os.sep, "repo", "system", "paths.py")
+        assert paths._locate_program(None, "/usr/bin/python3", module_file) == os.path.abspath(
+            os.path.join(os.sep, "repo"))
+
+    def test_standalone_it_is_the_executable_folder(self):
+        compiled = SimpleNamespace(standalone=True, containing_dir="/planta")
+        executable = os.path.join(os.sep, "planta", "program", "main.bin")
+        assert paths._locate_program(compiled, executable, "x") == os.path.dirname(executable)
+
+    def test_accelerated_it_ignores_the_build_interpreter(self):
+        """
+        Acelerado, `sys.executable` es el intérprete del equipo donde se compiló: seguirlo
+        buscaría el config en un venv que en la planta no existe.
+        """
+        program = os.path.join(os.sep, "planta", "program")
+        compiled = SimpleNamespace(standalone=False, containing_dir=program)
+        build_interpreter = os.path.join(os.sep, "home", "dev", ".venv", "bin", "python")
+        assert paths._locate_program(compiled, build_interpreter, "x") == program
 
 
 class TestResolve:

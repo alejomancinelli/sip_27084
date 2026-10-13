@@ -9,9 +9,9 @@
 
     Two things it deliberately does NOT do:
 
-      - No --system-site-packages. On Linux that flag exists to expose apt-installed
-        native bindings (python3-gi, python3-libgpiod); on Windows nothing useful
-        comes from the OS.
+      - No system modules. On Linux a few native bindings come from apt (gi,
+        tensorrt) and venv-setup.sh links them into the venv; on Windows nothing
+        useful comes from the OS.
       - It never touches Activate.ps1. That file ends with an Authenticode signature
         block, and any code appended after it makes PowerShell refuse to parse the
         whole script. Environment variables a framework needs before it is imported
@@ -117,7 +117,7 @@ if ($SkipInstall) {
 }
 
 # --- 3/5  PyPI dependencies --------------------------------------------------
-Write-Step "3/5  Installing dependencies (large download: TensorFlow is ~250 MB)"
+Write-Step "3/5  Installing dependencies"
 
 & $VenvPython -m pip install --upgrade pip setuptools wheel
 if (-not $?) { throw "Failed to upgrade pip." }

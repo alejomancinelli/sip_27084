@@ -294,6 +294,49 @@ class TestTextPanelColours:
         assert np.array_equal(frame, plain)
 
 
+class TestTextPanelLayout:
+    """
+    Los pares `(etiqueta, valor)` van en dos columnas con los valores alineados a la
+    derecha, y el aire entre líneas crece con el texto.
+
+    El texto se pinta de rojo puro sobre un frame gris: así cada píxel de texto se distingue
+    del fondo del panel y del frame aunque el antialiasing lo mezcle con el negro.
+    """
+
+    _RED_BGR = (0, 0, 255)
+
+    def _text_bands(self, frame_bgr: np.ndarray) -> list[np.ndarray]:
+        """Filas con texto agrupadas por línea: cada grupo es una línea del panel."""
+        is_text = ((frame_bgr[..., 2] > 64) & (frame_bgr[..., 0] == 0)
+                   & (frame_bgr[..., 1] == 0))
+        rows = np.flatnonzero(is_text.any(axis=1))
+        bands = np.split(rows, np.flatnonzero(np.diff(rows) > 1) + 1)
+        return [is_text[band] for band in bands]
+
+    def test_the_values_end_in_the_same_column(self):
+        frame = np.full((200, 600, 3), 128, np.uint8)
+        overlay.draw_text_panel(frame, [("A:", "1.0%"), ("LONGER LABEL:", "100.0%")],
+                                options=overlay.OverlayOptions(font_scale=1.0),
+                                text_bgr=self._RED_BGR)
+        bands = self._text_bands(frame)
+        assert len(bands) == 2
+        right_edges = [int(np.flatnonzero(band.any(axis=0)).max()) for band in bands]
+        assert abs(right_edges[0] - right_edges[1]) <= 1
+
+    def test_the_space_between_lines_grows_with_the_text(self):
+        def gap_px(font_scale: float) -> int:
+            frame = np.full((300, 600, 3), 128, np.uint8)
+            overlay.draw_text_panel(frame, ["AB", "CD"],
+                                    options=overlay.OverlayOptions(font_scale=font_scale),
+                                    text_bgr=self._RED_BGR)
+            rows = np.flatnonzero(np.any(
+                (frame[..., 2] > 64) & (frame[..., 0] == 0) & (frame[..., 1] == 0), axis=1))
+            return int(np.diff(rows).max()) - 1
+
+        assert gap_px(2.0) > gap_px(0.5)
+        assert gap_px(2.0) > overlay._LINE_PAD_PX
+
+
 class TestTextThickness:
     """El grosor del trazo acompaña al tamaño: un texto grande con trazo de 1 px se ve
     pálido y roto, que es lo que pasaba después de escalarlo con el ancho del frame."""
@@ -308,3 +351,58 @@ class TestTextThickness:
     def test_the_default_scale_keeps_the_stroke_it_always_had(self):
         """Un fork con `font_scale` fijo tiene que seguir viéndose igual."""
         assert overlay.text_thickness(overlay.OverlayOptions().font_scale) == 1
+
+
+class TestOverlappingFill:
+    """
+    El relleno se pinta por unión de la clase, no por instancia.
+
+    Teñir cada máscara por separado mezcla el color tantas veces como instancias se
+    superpongan: una zona con muchas detecciones encimadas sale más saturada que otra
+    igual de cubierta pero con pocas, así que el color deja de decir qué clase es. Y lo
+    que se ve deja de coincidir con lo que se mide, que cuenta cada píxel una sola vez.
+    """
+
+    _BOX = (40, 40, 90, 90)
+
+    def _filled(self, class_index: int = 0):
+        return _detection(class_index=class_index,
+                          mask=np.ones((50, 50), np.uint8), bbox_px=self._BOX)
+
+    def _painted(self, detections: list) -> np.ndarray:
+        frame = _frame()
+        overlay.draw_detections(frame, detections, options=overlay.OverlayOptions(
+            draw_boxes=False, draw_labels=False,
+            class_colors_bgr=((0, 0, 255), (0, 255, 0))))
+        return frame
+
+    def test_ten_stacked_instances_look_like_one(self):
+        assert np.array_equal(self._painted([self._filled()]),
+                              self._painted([self._filled()] * 10))
+
+    def test_where_two_classes_overlap_the_last_one_wins(self):
+        """El mismo criterio con el que se cuentan los píxeles en `metrics`."""
+        both = self._painted([self._filled(0), self._filled(1)])
+        alone = self._painted([self._filled(1)])
+        assert np.array_equal(both, alone)
+
+    def test_the_tint_still_reaches_the_frame(self):
+        frame = self._painted([self._filled()])
+        assert _changed_pixels(_frame(), frame) > 0
+
+    def test_two_classes_side_by_side_keep_their_own_colour(self):
+        left = _detection(class_index=0, mask=np.ones((20, 20), np.uint8),
+                          bbox_px=(10, 10, 30, 30))
+        right = _detection(class_index=1, mask=np.ones((20, 20), np.uint8),
+                           bbox_px=(60, 10, 80, 30))
+        frame = self._painted([left, right])
+        assert frame[20, 20, 2] > frame[20, 20, 1]    # rojo a la izquierda
+        assert frame[20, 70, 1] > frame[20, 70, 2]    # verde a la derecha
+
+    def test_an_outline_is_still_drawn_per_instance(self):
+        """El contorno es lo que deja ver cada instancia por separado."""
+        frame = _frame()
+        overlay.draw_detections(frame, [self._filled()], options=overlay.OverlayOptions(
+            draw_boxes=False, draw_labels=False,
+            mask_style=overlay.MASK_STYLE_OUTLINE))
+        assert _changed_pixels(_frame(), frame) > 0

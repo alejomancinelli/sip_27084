@@ -77,7 +77,7 @@ class _FakePipeline(AbstractPipeline):
     def unload(self):
         self.unload_calls += 1
 
-    def _run(self, frame_bgr: np.ndarray) -> list[Detection]:
+    def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         self.frames.append(frame_bgr)
         for name, value in self._labels_to_set.items():
             self._set_label(name, value)
@@ -219,15 +219,14 @@ class TestQueue:
         status = engine.get_status()
         assert (status["queued"], status["dropped"]) == (2, 0)
 
-    def test_the_frame_is_copied_on_push(self):
-        """El driver reusa su buffer en cuanto la llamada vuelve."""
+    def test_the_frame_is_kept_without_a_copy(self):
+        """El driver entrega un array propio: copiarlo es memoria que se tira por frame."""
         pipeline = _FakePipeline()
         engine = _engine(pipeline)
         frame = _frame(level=10)
         engine.push_frame(frame, _SLOT)
-        frame[:] = 200
         _run_frames(engine, [])
-        assert int(pipeline.frames[0][0, 0, 0]) == 10
+        assert np.shares_memory(pipeline.frames[0], frame)
 
     def test_the_turn_rotates_between_cameras(self):
         """Con el modelo más lento que la captura, una cámara no puede tapar a la otra."""
@@ -615,6 +614,23 @@ class TestAnnotation:
         result = _process_one(_engine(_FakePipeline(), annotator=annotator), _frame())
         assert seen == [((240, 320, 3), _SLOT)]
         assert tuple(result.annotated_bgr[0, 0]) == (0, 0, 255)
+
+    def test_the_timestamp_is_drawn_over_the_annotator(self):
+        """Va abajo a la derecha, con fondo opaco: una referencia del proyecto no lo tapa."""
+        def paint_everything(frame_bgr, result):
+            frame_bgr[:] = (0, 0, 255)
+
+        result = _process_one(_engine(_FakePipeline(), annotator=paint_everything), _frame())
+        assert tuple(int(c) for c in result.annotated_bgr[-1, -1]) == (0, 0, 0)
+
+    def test_without_a_timestamp_the_annotator_has_the_last_word(self):
+        def paint_everything(frame_bgr, result):
+            frame_bgr[:] = (0, 0, 255)
+
+        config = _MockConfig(**{"inference.overlay.draw_timestamp": False})
+        result = _process_one(_engine(_FakePipeline(), config, annotator=paint_everything),
+                              _frame())
+        assert tuple(int(c) for c in result.annotated_bgr[-1, -1]) == (0, 0, 255)
 
     def test_the_annotator_does_not_run_when_nothing_is_drawn(self):
         """Sin frame anotado no hay dónde dibujar, y el gate ya dijo que nadie mira."""

@@ -25,9 +25,9 @@ De qué se ocupa, en este orden, por cada frame:
   3. Descarta lo que no vale una pasada del modelo: sin modelo cargado, o iluminación por
      debajo de `cameras.<slot>.illumination_min`.
   4. Corre el pipeline y devuelve las detecciones al espacio del frame de referencia.
-  5. Le pasa las detecciones al `classifier`, si hay uno: es donde se filtra y se etiqueta
-     con lo que depende de la cámara, que el modelo no puede saber porque es uno solo para
-     todas las del pipeline.
+  5. Le pasa las detecciones al `classifier`, si hay uno: ya están en el espacio del frame
+     de referencia, así que es donde se filtra y se etiqueta por posición absoluta —una
+     zona a ignorar, una regla por dónde cae la detección—.
   6. Promedia la confianza y decide si el resultado es confiable
      (`min_result_confidence_pct`, `min_detections`).
   7. Llama al analyzer —sólo si el resultado es confiable— y dibuja el frame anotado.
@@ -51,11 +51,13 @@ orden), el `classifier` (qué detecciones cuentan y qué clase les toca), el `an
 significan las detecciones) y el `annotator` (qué se dibuja además de lo que salió de la
 inferencia). Todas son opcionales salvo el pipeline, y sin ellas el ciclo funciona igual.
 
-El `classifier` existe porque `predict()` no recibe identidad de cámara: el modelo es uno
-por slot de pipeline y lo comparten todas sus cámaras, así que no puede aplicar nada
-calibrado por montaje —una escala de píxel, un filtro de tamaño, una clase por medida—. Y
-el analyzer tampoco puede, porque no modifica el resultado. Corre entre el pipeline y el
-promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
+El `classifier` existe para lo que depende de **dónde** cae una detección en el frame de
+referencia: corre después de devolverlas a ese espacio, y el pipeline las ve en el recorte
+del ROI. Lo que depende de la cámara pero alcanza con el recorte —una escala de píxel, un
+filtro de tamaño, una clase por medida— ya lo puede hacer el pipeline, que recibe el
+`camera_slot` en `_run()`. El modelo no, porque es uno por slot y lo comparten todas las
+cámaras del pipeline; y el analyzer tampoco, porque no modifica el resultado. Corre entre
+el pipeline y el promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
 confianza del resultado, y la clase que deja en `class_index` es la que después colorean
 el overlay y `analysis.count_by_class`.
 """
@@ -63,6 +65,7 @@ el overlay y `analysis.count_by_class`.
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -108,7 +111,8 @@ class InferenceThread(QThread):
                  classifier: Callable[[list, str], list] | None = None,
                  analyzer: Callable[[InferenceResult], dict] | None = None,
                  annotator: Callable[[np.ndarray, InferenceResult], None] | None = None,
-                 annotate_gate: Callable[[str], bool] | None = None):
+                 annotate_gate: Callable[[str], bool] | None = None,
+                 canvas_adjust: Callable[[np.ndarray], np.ndarray] | None = None):
         super().__init__()
         self.pipeline_slot = pipeline.pipeline_slot
         self._config = config_manager
@@ -118,6 +122,11 @@ class InferenceThread(QThread):
         self._analyzer = analyzer
         self._annotator = annotator
         self._annotate_gate = annotate_gate
+        # Cómo tiene que verse el lienzo del anotado. El anotado es de los tres caminos el
+        # único que mira una persona y que además se dibuja acá, así que el ajuste de
+        # visualización tiene que entrar antes del dibujo: aplicado después le correría el
+        # color a las máscaras y a las referencias. La medición no lo ve.
+        self._canvas_adjust = canvas_adjust
 
         # Último frame de cada cámara esperando su turno, y el turno mismo: el índice
         # rota sobre los slots pendientes para que ninguna cámara tape a las otras.
@@ -152,8 +161,9 @@ class InferenceThread(QThread):
         Deja el frame de una cámara para que se infiera. Barata y thread-safe.
 
         Es el slot de `CaptureThread.frame_ready` y respeta el orden de su payload, así
-        que `main.py` las conecta directo. El frame se copia acá, porque el driver reusa
-        su buffer en cuanto la llamada vuelve.
+        que `main.py` las conecta directo. El frame se guarda sin copiar: el driver entrega
+        un array propio y nadie lo modifica después (ver `AbstractCameraDriver.get_frame`),
+        y copiar 3 MP a 15 fps es memoria que se tira cada vez que el frame se reemplaza.
 
         Descarta sin avisar el frame que llega antes de que venza `interval_s`, y cuenta
         en `dropped` el que reemplaza a uno que el hilo todavía no consumió.
@@ -173,7 +183,7 @@ class InferenceThread(QThread):
                 return
             self._last_push_s[camera_slot] = now_s
             replaced = camera_slot in self._pending
-            self._pending[camera_slot] = frame_bgr.copy()
+            self._pending[camera_slot] = frame_bgr
         if replaced:
             self._count("dropped")
         self._frame_available.set()
@@ -323,7 +333,7 @@ class InferenceThread(QThread):
         reason = self._gate_frame(result, camera_slot)
         if not reason:
             try:
-                detections = self._pipeline.run(region_bgr)
+                detections = self._pipeline.run(region_bgr, camera_slot)
             except Exception as e:
                 logger.error(
                     f"[Inference/{self.pipeline_slot}] Fallo en el pipeline para "
@@ -465,27 +475,39 @@ class InferenceThread(QThread):
         `respect_gate` en False lo saltea: lo usa `annotate()`, que dibuja una vez por
         medición y no una vez por frame. Lo que apaga el config no se saltea nunca.
 
-        Primero el anotado estándar y después el annotator del proyecto, que dibuja encima
-        sus referencias. Un annotator que falla no se lleva puesto el frame: queda lo que
-        haya alcanzado a dibujar más todo lo estándar.
+        Primero el anotado estándar, después el annotator del proyecto, que dibuja encima
+        sus referencias, y al final el timestamp. El timestamp va último porque es lo único
+        que no puede quedar tapado: una referencia que cruza el borde del frame —el
+        rectángulo de una cinta, un límite de carga— le pasaría por encima. Un annotator que
+        falla no se lleva puesto el frame: queda lo que haya alcanzado a dibujar más todo lo
+        estándar.
         """
         if not self._config.get("inference.overlay.enabled", True):
             return None
         if (respect_gate and self._annotate_gate is not None
                 and not self._annotate_gate(result.camera_slot)):
             return None
+        options = self._read_overlay_options()
         try:
-            annotated = overlay.annotate(result, self._read_overlay_options())
+            annotated = overlay.annotate(result, replace(options, draw_timestamp=False),
+                                         canvas_adjust=self._canvas_adjust)
         except Exception as e:
             self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
             return None
+        if annotated is None:
+            return None
 
-        if annotated is not None and self._annotator is not None:
+        if self._annotator is not None:
             name = getattr(self._annotator, "__name__", repr(self._annotator))
             try:
                 self._annotator(annotated, result)
             except Exception as e:
                 self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
+        if options.draw_timestamp:
+            try:
+                overlay.draw_timestamp(annotated, result.timestamp_s, options=options)
+            except Exception as e:
+                self._warn_throttled("timestamp", f"No se pudo dibujar la hora: {e}.")
         return annotated
 
     # ── Lectura de config ────────────────────────────────────────────────────

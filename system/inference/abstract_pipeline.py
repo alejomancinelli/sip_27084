@@ -6,6 +6,16 @@ Maquinaria genérica: reutilizable entre proyectos. Acá está la maquinaria de 
 etapas —crear los modelos por slot, cargarlos, medirle el tiempo a cada una— y no
 ninguna secuencia concreta.
 
+**El pipeline sí sabe de qué cámara es el frame; el modelo no.** `_run()` recibe el
+`camera_slot` y `predict()` no, y la diferencia es de responsabilidad: un modelo es un
+envoltorio de framework —corré estos pesos— y se reusa entre proyectos, mientras que el
+pipeline es código del fork y encadenar etapas ya es lógica del proceso. Lo que esté
+calibrado por montaje —un umbral de luz, una escala, un recorte propio de esa cámara— es
+lógica del proceso y va acá.
+
+Que la instancia sea una sola para todas las cámaras no cambia: lo que dependa de la
+cámara se resuelve por frame, no se guarda en el objeto.
+
 **El orden de las etapas es código, no configuración.** Vive en la implementación
 concreta —`pipeline.py` en el template—, porque encadenar dos modelos es lógica del
 proceso: qué recorta el segundo, qué hace con lo que encontró el primero, cuándo no
@@ -135,9 +145,9 @@ class AbstractPipeline(ABC):
 
     # ── Corrida ──────────────────────────────────────────────────────────────
 
-    def run(self, frame_bgr: np.ndarray) -> list[Detection]:
+    def run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         """
-        Corre el pipeline sobre el frame y devuelve las detecciones finales.
+        Corre el pipeline sobre el frame de una cámara y devuelve las detecciones finales.
 
         Reinicia los tiempos por etapa y los labels antes de llamar a `_run()`, así que
         los dos corresponden siempre a la última corrida y un veredicto viejo no
@@ -145,14 +155,18 @@ class AbstractPipeline(ABC):
         """
         self._stage_times_ms = {}
         self._labels = {}
-        return self._run(frame_bgr)
+        return self._run(frame_bgr, camera_slot)
 
     @abstractmethod
-    def _run(self, frame_bgr: np.ndarray) -> list[Detection]:
+    def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         """
         Encadena las etapas. Acá va el orden, que es específico del proyecto.
 
         Se llama desde el hilo del motor, un frame a la vez.
+
+        `camera_slot` es de qué cámara viene este frame. La instancia sigue siendo una
+        sola para todas las del pipeline —los pesos se cargan una vez—, así que lo que
+        dependa de la cámara se resuelve por frame y no se guarda entre corridas.
         """
 
     def _run_stage(self, model_slot: str, frame_bgr: np.ndarray,
@@ -162,6 +176,9 @@ class AbstractPipeline(ABC):
 
         `previous` es lo que trajo la etapa anterior: el modelo decide si recorta por
         ahí o si lo ignora y mira el frame completo.
+
+        **No se le pasa el `camera_slot` al modelo, y es a propósito**: lo comparten todas
+        las cámaras del pipeline y lo que dependa del montaje lo resuelve `_run()`.
         """
         model = self._models.get(model_slot)
         if model is None or not model.is_loaded:

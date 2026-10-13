@@ -7,8 +7,11 @@ y vive en RAM, así que no necesita nada de afuera.
 """
 
 import asyncio
+import dataclasses
+import threading
 
 import pytest
+from pymodbus.datastore.simulator import Cell
 
 from system.modbus import server as modbus_server
 from system.modbus.server import (
@@ -204,6 +207,73 @@ class TestReadOnlyContext:
     def test_writes_are_rejected(self, func_code):
         """El mapa es de sólo lectura: la app escribe desde adentro, el PLC no."""
         assert not self.simulator.validate(func_code, 0, 1)
+
+
+class _ReadMidWrite(Cell):
+    """Registro que, al escribirse, deja leer al PLC desde otro hilo antes de seguir."""
+
+    on_write = None
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name == "value" and self.on_write is not None:
+            self.on_write()
+
+
+def _read_from_the_plc(server: SharedModbusServer, address: int, count: int):
+    """Una FC03 por la misma entrada que usan los transportes de pymodbus."""
+    return asyncio.run(server._context.async_getValues(
+        server.slave_id, _FC_READ_HOLDING, address, count))
+
+
+class TestAtomicBlock:
+    """
+    Un `update_block()` se lee entero de antes o entero de después.
+
+    El caso que importa es el reloj en dos palabras: leído a medias cuando la palabra baja
+    da la vuelta, el PLC ve un salto de 18 h, que es la señal que se le pide enclavar.
+    """
+
+    def test_a_plc_read_never_sees_half_a_block(self):
+        server = _server()
+        index = server._hr_offset
+        server._simulator.registers[index] = _ReadMidWrite(
+            **dataclasses.asdict(server._simulator.registers[index]))
+        seen = []
+        reader = threading.Thread(
+            target=lambda: seen.append(_read_from_the_plc(server, 0, 2)))
+
+        def let_the_plc_read():
+            reader.start()
+            reader.join(timeout=0.2)    # con el lock tomado no puede terminar
+
+        server._simulator.registers[index].on_write = let_the_plc_read
+        server.update_block({1: 1, 2: 1})
+        reader.join()
+
+        assert seen == [[1, 1]]
+
+    def test_a_plc_read_waits_for_the_write_lock(self):
+        server = _server()
+        seen = []
+        reader = threading.Thread(
+            target=lambda: seen.append(_read_from_the_plc(server, 0, 1)))
+        with server._lock:
+            reader.start()
+            reader.join(timeout=0.2)
+            assert seen == []
+        reader.join()
+        assert seen == [[0]]
+
+    def test_the_plc_reads_what_the_block_wrote(self):
+        server = _server()
+        server.update_block({1: 10, 2: 20, 3: 30})
+        assert _read_from_the_plc(server, 0, 3) == [10, 20, 30]
+
+    def test_a_read_past_the_map_still_gets_its_exception(self):
+        """La validación sigue en la base: no se contesta una lista que parezca medición."""
+        result = _read_from_the_plc(_server(), DEFAULT_REGISTER_COUNT - 1, 2)
+        assert not isinstance(result, list)
 
 
 class TestDisabledTransports:

@@ -26,6 +26,7 @@ CAMERA_CATALOG: dict[str, dict] = {
         "driver": "st_gige",
         "models": [
             "STC-MCA503POE-HS",
+            "STC-MCS312POE",
         ],
     },
     "rtsp": {

@@ -34,8 +34,8 @@ Tres puntos del contrato que no se ven en las firmas:
   - Los backends los toca solo este hilo: se abren en `run()` y se cierran ahí
     mismo. Uno que levante excepción no baja al hilo ni a los otros.
   - Lo que quedó encolado al pedir la interrupción se escribe antes de cerrar. Lo
-    que falle en esa escritura se pierde, con el motivo en el log: acá no hay
-    reintento ni buffer en disco.
+    que falle en esa escritura se pierde, con el motivo en el log: el reintento, si lo
+    hay, es del backend y vive en memoria, y acá no hay buffer en disco.
 """
 
 import queue
@@ -58,7 +58,7 @@ _DEFAULT_BACKEND_CLASSES = (InfluxDBBackend, MqttBackend)
 
 _QUEUE_MAXSIZE = 100      # puntos en vuelo; llena, se descarta el que llega
 _QUEUE_POLL_S = 0.5       # espera por punto, y latencia máxima de la parada
-_PUBLISH_INTERVAL_S = 10  # ventana de acumulación; con _QUEUE_MAXSIZE, tope de 10 puntos/s
+_PUBLISH_INTERVAL_S = 10  # ventana de acumulación; el hilo drena la cola de continuo
 
 
 class PersistenceThread(QThread):

@@ -91,6 +91,12 @@ _POWER_GLOBS = (
     ("/sys/bus/i2c/drivers/ina3221/*/hwmon/hwmon*/power1_input", 1_000_000.0),
 )
 
+# JetPack 6 no publica potencia en el hwmon del INA3221, sólo tensión y corriente por
+# canal: la del canal 1 sale de su producto.
+_POWER_HWMON_GLOB = "/sys/bus/i2c/drivers/ina3221/*/hwmon/hwmon*"
+_POWER_VOLTAGE_FILE = "in1_input"     # mV
+_POWER_CURRENT_FILE = "curr1_input"   # mA
+
 # ── Sondas externas ──────────────────────────────────────────────────────────
 
 # Cada sonda cuesta un proceso: tras esta cantidad de fallos seguidos se
@@ -396,6 +402,11 @@ class SystemMonitor:
                 raw = _read_int_file(path)
                 if raw is not None:
                     return round(raw / scale, 1)
+        for hwmon_dir in sorted(glob.glob(_POWER_HWMON_GLOB)):
+            voltage_mv = _read_int_file(os.path.join(hwmon_dir, _POWER_VOLTAGE_FILE))
+            current_ma = _read_int_file(os.path.join(hwmon_dir, _POWER_CURRENT_FILE))
+            if voltage_mv is not None and current_ma is not None:
+                return round(voltage_mv * current_ma / 1_000_000.0, 1)
         return None
 
     def _read_nvidia_smi(self) -> dict:

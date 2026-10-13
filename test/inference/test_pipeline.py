@@ -1,5 +1,5 @@
 """Tests de la maquinaria del pipeline: carga de las etapas por slot, tiempos por etapa,
-encadenado en cascada y el pipeline de una etapa del template.
+encadenado en cascada y el pipeline de una etapa de este proyecto.
 
 Los modelos son dobles: acá se verifica el andamio de las etapas, no un framework.
 """
@@ -9,10 +9,11 @@ import pytest
 
 from system.inference.models.abstract_model import AbstractModel
 from system.inference.abstract_pipeline import AbstractPipeline
-from system.inference.pipeline import Pipeline
+from system.inference.pipeline import CLASS_NAMES, BeltPipeline
 from system.inference.result import Detection
 
 _PIPELINE = "pipeline_1"
+_SLOT = "camera_1"
 
 
 class _MockConfig:
@@ -36,6 +37,9 @@ class _FakeModel(AbstractModel):
         super().__init__(config_manager, model_slot)
         self._loads = loads
         self.calls: list[tuple] = []
+        # Lo que devuelve `predict()`. None = una detección por defecto, que es lo que
+        # necesitan los tests del andamio; los del postproceso la programan.
+        self.detections: list | None = None
 
     def load(self):
         if self._loads:
@@ -45,6 +49,8 @@ class _FakeModel(AbstractModel):
 
     def predict(self, frame_bgr, previous=None) -> list[Detection]:
         self.calls.append((frame_bgr.shape, list(previous or [])))
+        if self.detections is not None:
+            return list(self.detections)
         return [Detection(class_index=0, class_name=self.model_slot,
                           confidence_pct=90.0, bbox_px=(0, 0, 10, 10))]
 
@@ -67,7 +73,7 @@ class _LabellingPipeline(AbstractPipeline):
 
     model_slots = ("classifier", "segmenter")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         verdict = self._run_stage("classifier", frame_bgr)
         self._set_label("belt", "full" if verdict else "empty")
         if not verdict:
@@ -80,43 +86,43 @@ class _TwoStagePipeline(AbstractPipeline):
 
     model_slots = ("detector", "classifier")
 
-    def _run(self, frame_bgr):
+    def _run(self, frame_bgr, camera_slot):
         detections = self._run_stage("detector", frame_bgr)
         return self._run_stage("classifier", frame_bgr, detections)
 
 
 class TestLoading:
     def test_it_loads_one_model_per_declared_slot(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        models = {"model_1": _FakeModel(config, "model_1")}
+        config = _MockConfig(segmenter={"type": "mock"})
+        models = {"segmenter": _FakeModel(config, "segmenter")}
         _install_models(monkeypatch, models)
-        pipeline = Pipeline(config, _PIPELINE)
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is True
-        assert set(pipeline.get_status()["models"]) == {"model_1"}
+        assert set(pipeline.get_status()["models"]) == {"segmenter"}
 
     def test_loading_twice_does_not_reload(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
+        config = _MockConfig(segmenter={"type": "mock"})
         created = []
         import system.inference.abstract_pipeline as ap
         monkeypatch.setattr(ap, "create_model", lambda config, model_slot:
                             created.append(model_slot) or _FakeModel(config, model_slot))
-        pipeline = Pipeline(config, _PIPELINE)
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.load()
-        assert created == ["model_1"]
+        assert created == ["segmenter"]
 
     def test_a_stage_that_could_not_load_leaves_the_pipeline_unloaded(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1", loads=False)})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is False
-        assert pipeline.get_status()["models"]["model_1"]["error"] == "pesos ausentes"
+        assert pipeline.get_status()["models"]["segmenter"]["error"] == "pesos ausentes"
 
     def test_a_pipeline_without_stages_is_never_loaded(self):
         class _EmptyPipeline(AbstractPipeline):
-            def _run(self, frame_bgr):
+            def _run(self, frame_bgr, camera_slot):
                 return []
 
         pipeline = _EmptyPipeline(_MockConfig(), _PIPELINE)
@@ -124,11 +130,11 @@ class TestLoading:
         assert pipeline.is_loaded is False
 
     def test_unload_releases_every_stage(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1")})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter")})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline.unload()
         assert pipeline.get_status()["models"] == {}
         assert (pipeline.stage_times_ms, pipeline.labels) == ({}, {})
@@ -136,21 +142,21 @@ class TestLoading:
 
 class TestRunning:
     def test_the_template_pipeline_runs_its_single_stage(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
-        detections = pipeline.run(_frame())
-        assert [d.class_name for d in detections] == ["model_1"]
+        detections = pipeline.run(_frame(), _SLOT)
+        assert [d.class_index for d in detections] == [0]
         assert len(model.calls) == 1
 
     def test_a_stage_without_a_model_returns_nothing(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        _install_models(monkeypatch, {"model_1": _FakeModel(config, "model_1", loads=False)})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
-        assert pipeline.run(_frame()) == []
+        assert pipeline.run(_frame(), _SLOT) == []
 
     def test_each_stage_gets_its_own_time(self, monkeypatch):
         config = _MockConfig(detector={"type": "mock"}, classifier={"type": "mock"})
@@ -158,7 +164,7 @@ class TestRunning:
                                       "classifier": _FakeModel(config, "classifier")})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert set(pipeline.stage_times_ms) == {"detector", "classifier"}
 
     def test_the_times_are_those_of_the_last_run(self, monkeypatch):
@@ -167,9 +173,9 @@ class TestRunning:
                                       "classifier": _FakeModel(config, "classifier")})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline._models.pop("classifier")
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert set(pipeline.stage_times_ms) == {"detector"}
 
     def test_a_cascade_hands_the_previous_detections_over(self, monkeypatch):
@@ -180,30 +186,30 @@ class TestRunning:
                                       "classifier": classifier})
         pipeline = _TwoStagePipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         _, previous = classifier.calls[0]
         assert [d.class_name for d in previous] == ["detector"]
 
     def test_the_first_stage_gets_no_previous_detections(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert model.calls[0][1] == []
 
     def test_a_failing_stage_propagates_to_the_caller(self, monkeypatch):
         """El motor es el que decide qué hacer con el error, no el pipeline."""
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
         model.predict = lambda frame_bgr, previous=None: (_ for _ in ()).throw(RuntimeError("cuda"))
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         with pytest.raises(RuntimeError):
-            pipeline.run(_frame())
-        assert "model_1" in pipeline.stage_times_ms
+            pipeline.run(_frame(), _SLOT)
+        assert "segmenter" in pipeline.stage_times_ms
 
     def test_a_stage_can_leave_a_frame_verdict(self, monkeypatch):
         config = _MockConfig(classifier={"type": "mock"}, segmenter={"type": "mock"})
@@ -211,7 +217,7 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert pipeline.labels == {"belt": "full"}
 
     def test_a_skipped_stage_leaves_the_verdict_that_skipped_it(self, monkeypatch):
@@ -223,7 +229,7 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        assert pipeline.run(_frame()) == []
+        assert pipeline.run(_frame(), _SLOT) == []
         assert pipeline.labels == {"belt": "empty"}
         assert set(pipeline.stage_times_ms) == {"classifier"}
 
@@ -234,9 +240,9 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         classifier.predict = lambda frame_bgr, previous=None: []
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         assert pipeline.labels == {"belt": "empty"}
 
     def test_the_labels_are_a_copy(self, monkeypatch):
@@ -245,15 +251,176 @@ class TestRunning:
                                       "segmenter": _FakeModel(config, "segmenter")})
         pipeline = _LabellingPipeline(config, _PIPELINE)
         pipeline.load()
-        pipeline.run(_frame())
+        pipeline.run(_frame(), _SLOT)
         pipeline.labels["belt"] = "empty"
         assert pipeline.labels == {"belt": "full"}
 
     def test_a_synthetic_stage_marks_the_pipeline(self, monkeypatch):
-        config = _MockConfig(model_1={"type": "mock"})
-        model = _FakeModel(config, "model_1")
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
         model.is_synthetic = True
-        _install_models(monkeypatch, {"model_1": model})
-        pipeline = Pipeline(config, _PIPELINE)
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_synthetic is True
+
+
+# ── Descarte de fondo oscuro ─────────────────────────────────────────────────
+
+class TestDarkBackground:
+    """
+    El postproceso del proyecto: sacar de cada máscara la cinta que el contorno se tragó.
+
+    Corre acá y no en el modelo porque el umbral depende de la iluminación, que es de cada
+    cámara; y no en el analyzer porque ahí el overlay seguiría pintando lo que se descartó.
+    """
+
+    _OTHER_SLOT = "camera_2"
+
+    def _detection(self, class_name: str = "desmenuzado") -> Detection:
+        """Detección que cubre el frame entero, para que el recorte por luma se vea solo."""
+        mask = np.ones((40, 40), np.uint8)
+        return Detection(class_index=CLASS_NAMES.index(class_name), class_name=class_name,
+                         confidence_pct=90.0,
+                         bbox_px=(0, 0, 40, 40), area_px=int(mask.sum()), mask=mask)
+
+    def _frame(self) -> np.ndarray:
+        """Mitad de arriba clara, mitad de abajo oscura."""
+        frame = np.full((40, 40, 3), 200, np.uint8)
+        frame[20:, :, :] = 10
+        return frame
+
+    def _pipeline(self, monkeypatch, thresholds: dict, *,
+                  class_name: str = "desmenuzado") -> BeltPipeline:
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        model.detections = [self._detection(class_name)]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE, dark_background_threshold=thresholds)
+        pipeline.load()
+        return pipeline
+
+    def test_dark_pixels_leave_the_mask(self, monkeypatch):
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 60}})
+        assert pipeline.run(self._frame(), _SLOT)[0].area_px == 20 * 40
+
+    def test_the_threshold_is_per_camera(self, monkeypatch):
+        """Dos cámaras con distinta luz son dos umbrales: es la razón de estar acá."""
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 60}})
+        assert pipeline.run(self._frame(), self._OTHER_SLOT)[0].area_px == 40 * 40
+
+    def test_a_class_without_a_threshold_is_untouched(self, monkeypatch):
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 60}},
+                                  class_name="pellet")
+        assert pipeline.run(self._frame(), _SLOT)[0].area_px == 40 * 40
+
+    def test_a_zero_threshold_disables_it(self, monkeypatch):
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 0}})
+        assert pipeline.run(self._frame(), _SLOT)[0].area_px == 40 * 40
+
+    def test_without_thresholds_nothing_is_refined(self, monkeypatch):
+        pipeline = self._pipeline(monkeypatch, {})
+        assert pipeline.run(self._frame(), _SLOT)[0].area_px == 40 * 40
+
+    def test_a_mask_left_empty_is_dropped(self, monkeypatch):
+        """Una instancia que ya no cubre nada inflaría el conteo y la confianza."""
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 255}})
+        assert pipeline.run(self._frame(), _SLOT) == []
+
+    def test_the_area_matches_the_refined_mask(self, monkeypatch):
+        pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 60}})
+        detection = pipeline.run(self._frame(), _SLOT)[0]
+        assert detection.area_px == int(detection.mask.sum())
+
+
+# ── Píxeles disputados entre clases ──────────────────────────────────────────
+
+class TestOverlapGoesToTheMostConfident:
+    """
+    Donde dos máscaras se pisan, el píxel es de la detección más confiable.
+
+    El conteo y el overlay se lo dan a la última que lo reclama, y ultralytics las entrega
+    de mayor a menor confianza: el orden de salida del pipeline es lo que decide la frontera.
+    """
+
+    def _detection(self, class_index: int, class_name: str, confidence_pct: float,
+                   x1_px: int, x2_px: int) -> Detection:
+        mask = np.ones((40, x2_px - x1_px), np.uint8)
+        return Detection(class_index=class_index, class_name=class_name,
+                         confidence_pct=confidence_pct, bbox_px=(x1_px, 0, x2_px, 40),
+                         area_px=int(mask.sum()), mask=mask)
+
+    def _run(self, monkeypatch) -> list[Detection]:
+        """Pellet (95 %) en x 0–30 y desmenuzado (40 %) en x 10–40, como los da ultralytics."""
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        model.detections = [self._detection(1, "pellet", 95.0, 0, 30),
+                            self._detection(0, "desmenuzado", 40.0, 10, 40)]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline.load()
+        return pipeline.run(np.full((40, 40, 3), 200, np.uint8), _SLOT)
+
+    def test_the_detections_leave_from_least_to_most_confident(self, monkeypatch):
+        assert [d.confidence_pct for d in self._run(monkeypatch)] == [40.0, 95.0]
+
+    def test_the_count_gives_the_overlap_to_the_most_confident(self, monkeypatch):
+        from system.inference import metrics
+        from system.inference.result import InferenceResult
+
+        result = InferenceResult(camera_slot=_SLOT, detections=self._run(monkeypatch),
+                                 source_bgr=np.full((40, 40, 3), 200, np.uint8))
+        analyzer = metrics.build_analyzer(class_names=["desmenuzado", "pellet"],
+                                          belt_roi_px={})
+
+        computed = analyzer(result)
+
+        assert (computed["pct_pellet_norm"], computed["pct_desmenuzado_norm"]) == (75.0, 25.0)
+
+
+# ── Las clases de esta cinta ─────────────────────────────────────────────────
+
+class TestClassNames:
+    """
+    Las clases son las de `CLASS_NAMES`, y el modelo tiene que declarar las mismas.
+
+    Un modelo con las clases en otro orden no da un error: da todos los porcentajes
+    invertidos. Por eso el pipeline no arranca con él.
+    """
+
+    def _pipeline(self, monkeypatch, declared: list | None) -> BeltPipeline:
+        section = {"type": "mock"}
+        if declared is not None:
+            section["class_names"] = declared
+        config = _MockConfig(segmenter=section)
+        model = _FakeModel(config, "segmenter")
+        model.detections = [Detection(class_index=index, class_name="cualquiera",
+                                      confidence_pct=90.0, bbox_px=(0, 0, 10, 10))
+                            for index in range(len(CLASS_NAMES))]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline.load()
+        return pipeline
+
+    def test_each_detection_is_named_by_its_index(self, monkeypatch):
+        """El nombre no lo decide el modelo ni el config: sale de `CLASS_NAMES`."""
+        detections = self._pipeline(monkeypatch, None).run(_frame(), _SLOT)
+        assert {d.class_index: d.class_name for d in detections} == dict(enumerate(CLASS_NAMES))
+
+    def test_a_model_that_declares_the_same_classes_loads(self, monkeypatch):
+        assert self._pipeline(monkeypatch, list(CLASS_NAMES)).is_loaded
+
+    def test_a_model_with_the_classes_swapped_does_not_load(self, monkeypatch, caplog):
+        with caplog.at_level("ERROR"):
+            pipeline = self._pipeline(monkeypatch, list(reversed(CLASS_NAMES)))
+        assert not pipeline.is_loaded
+        assert pipeline.get_status()["class_error"]
+        assert "invertiría los porcentajes" in caplog.text
+
+    def test_a_model_with_other_classes_does_not_load(self, monkeypatch):
+        assert not self._pipeline(monkeypatch, ["pellet", "polvo", "piedra"]).is_loaded
+
+    def test_a_model_that_declares_nothing_loads(self, monkeypatch):
+        """El mock no declara nombres: no hay contra qué confrontarlo, y se nombra igual."""
+        pipeline = self._pipeline(monkeypatch, None)
+        assert pipeline.is_loaded and pipeline.get_status()["class_error"] is None

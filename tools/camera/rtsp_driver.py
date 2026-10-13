@@ -203,8 +203,8 @@ class RtspDriver(AbstractCameraDriver):
         )
         self._grab_thread.start()
 
-        deadline = time.time() + _CONNECT_TIMEOUT_S
-        while not self.is_connected and time.time() < deadline:
+        deadline = time.monotonic() + _CONNECT_TIMEOUT_S
+        while not self.is_connected and time.monotonic() < deadline:
             time.sleep(_CONNECT_POLL_S)
 
         if not self.is_connected:
@@ -302,7 +302,7 @@ class RtspDriver(AbstractCameraDriver):
             read_fails = 0
             # El frame que sobra se descarta sin decodificarlo: decodificar H.264 es lo
             # más caro del driver, y `grab()` deja el paquete leído sin pagarlo.
-            now_s = time.time()
+            now_s = time.monotonic()
             if not self._take_frame_credit(now_s):
                 continue
 

@@ -1,0 +1,13 @@
+# Lo que hace falta para compilar, además del venv del proyecto. No es de runtime: el
+# entregable acelerado lo deja afuera de program/site-packages.
+#
+#     .venv/bin/python -m pip install -r build/requirements.txt -c setup/jetson/constraints.txt
+#
+# En Windows, lo mismo con .venv\Scripts\python.exe y sin el -c.
+#
+# Nuitka va fijo porque el entregable depende de su versión y no sólo de sus opciones: con
+# 4.2.2 se verificó en la Jetson qué se compila y qué no —`cryptography` compilada no
+# valida licencias— y subirla obliga a repetir esa prueba. Ver build/README.md.
+nuitka==4.2.2
+ordered-set==4.1.0
+zstandard==0.25.0

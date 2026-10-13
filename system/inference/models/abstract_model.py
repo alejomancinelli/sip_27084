@@ -46,7 +46,9 @@ Qué fija el contrato:
   - **`predict()` no sabe de qué cámara es el frame**, y es a propósito: el modelo es uno
     por slot y lo comparten todas las cámaras del pipeline, así que nada calibrado por
     montaje —una escala de píxel, un filtro de tamaño, una clase que sale de la medida—
-    puede resolverse acá. Eso va en el `classifier` del motor, que sí recibe el slot.
+    puede resolverse acá. Eso va en el pipeline, que recibe el `camera_slot` en `_run()`,
+    o en el `classifier` del motor si depende de dónde cae la detección en el frame
+    completo.
 
 Cada modelo lee su sección `inference.models.<slot>` del config.yaml. El slot es su
 identidad: es el nombre con el que el pipeline lo pide y con el que aparece en
@@ -204,6 +206,17 @@ class AbstractModel(ABC):
     def min_confidence_pct(self) -> float:
         """Confianza mínima de una detección para salir de `predict()`, 0–100."""
         return float(self._get_option("min_confidence_pct", _DEFAULT_MIN_CONFIDENCE_PCT))
+
+    @property
+    def class_names(self) -> tuple[str, ...]:
+        """
+        Nombres de clase por índice: los de los pesos si los declaran, si no los del config.
+
+        Vacío si nadie los declara. Es lo que un pipeline que sabe qué clases espera
+        confronta después de `load()`: un modelo con las clases en otro orden no falla, da
+        todos los porcentajes invertidos.
+        """
+        return tuple(str(name) for name in (self._get_option("class_names", []) or []))
 
     def _get_option(self, key: str, default: object = None) -> object:
         """

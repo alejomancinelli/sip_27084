@@ -5,38 +5,44 @@ Módulo puro: sin Qt, sin ConfigManager y sin I/O. Cada factory devuelve un anno
 función que recibe el frame ya anotado y el resultado, y dibuja in-place— y `main.py` los
 compone y se los pasa al motor:
 
-    engine = InferenceThread(config, pipeline, analyzer=compute_metrics,
+    engine = InferenceThread(config, pipeline, analyzer=analyzer,
                              annotator=chain(
-                                 max_load_line_annotator({"camera_1": 430}),
-                                 ...))
+                                 belt_roi_annotator({"camera_1": {...}}),
+                                 composition_panel_annotator(["desmenuzado", "pellet"])))
 
 **Específico del proyecto — no cross-portar tal cual.** Lo que sale de la inferencia lo
 dibuja `overlay`, que es genérico; acá van las referencias que sólo existen en esta
-planta: un límite de carga, el borde de una zona de rechazo, un eje de calibración.
+planta: el rectángulo de la cinta y el panel con el que el operador lee la composición.
 Separado de `overlay` porque ese archivo se copia al próximo proyecto sin cambios, y esto
 no.
 
-Las factories reciben la geometría en píxeles y no leen el config: quién lee la sección
-`process` es `main.py`, igual que con las condiciones de guardado del recolector. El mismo
-valor alimenta al annotator que dibuja el límite y al analyzer que calcula el porcentaje
-contra ese límite, así que se lee una vez y no pueden discrepar. Así un annotator se
-testea con tres números y sin archivo, y la misma función sirve para una cámara o para
-diez.
+Las factories reciben la geometría en píxeles y los nombres de clase ya leídos, y no tocan
+el config: quién lee la sección `process` es `main.py`. El mismo valor alimenta al
+annotator que dibuja el rectángulo de cinta y al analyzer que calcula la carga contra ese
+rectángulo, así que se lee una vez y no pueden discrepar. Así un annotator se testea con
+tres números y sin archivo, y la misma función sirve para una cámara o para diez.
 
 Cada annotator lleva su `__name__` armado con los valores que recibió, así el aviso del
 motor dice cuál falló.
+
+De `metrics` sólo se importa el **nombre** de la clave de carga, que es una constante con
+dueño único: el panel lee de `result.metrics` y tiene que pedir la misma clave que el
+analyzer escribió. Repetir el literal acá sería el bug que este límite evita.
 """
 
 from collections.abc import Callable
 
 import numpy as np
 
-from . import overlay
+from . import metrics, overlay
 from .result import InferenceResult
 
 Annotator = Callable[[np.ndarray, InferenceResult], None]
 
-_MAX_LOAD_BGR = (60, 60, 230)   # rojo: es un límite, no una referencia neutra
+_BELT_ROI_BGR = (0, 220, 220)   # amarillo: no se confunde con ninguna clase de la cinta
+_BELT_ROI_THICKNESS = 2
+
+_PANEL_NEUTRAL_BGR = (210, 210, 210)   # encabezado y carga: no son de ninguna clase
 
 
 def chain(*annotators: Annotator) -> Annotator:
@@ -56,25 +62,83 @@ def chain(*annotators: Annotator) -> Annotator:
     return draw
 
 
-def max_load_line_annotator(y_px_by_camera: dict[str, int], *,
-                            label: str = "MAX LOAD") -> Annotator:
+def belt_roi_annotator(roi_px_by_camera: dict[str, dict]) -> Annotator:
     """
-    Dibuja el límite de carga de la cinta: una línea horizontal a la altura configurada.
+    Marca el rectángulo de cinta: la referencia contra la que se mide la carga.
 
-    La altura es por cámara —cada cinta tiene la suya y el montaje de la cámara la
-    mueve—, y una cámara que no figura en el dict no lleva línea. Se dibuja siempre,
-    haya o no detecciones: es la referencia contra la que el operador mira el material,
-    y una línea que aparece y desaparece no sirve para eso.
+    Es el mismo `process.belt_roi_px` que recibe el analyzer, leído una sola vez en
+    `main.py`, para que el operador no pueda estar mirando un rectángulo distinto del que
+    se usó para calcular el porcentaje que salió al PLC.
+
+    Se dibuja siempre, haya o no detecciones: una referencia que aparece y desaparece no
+    sirve como referencia. Una cámara que no figura en el dict no lleva recuadro.
     """
     def draw(frame_bgr: np.ndarray, result: InferenceResult):
-        y_px = y_px_by_camera.get(result.camera_slot)
-        if y_px is None or frame_bgr is None or frame_bgr.size == 0:
+        roi_px = roi_px_by_camera.get(result.camera_slot)
+        if not roi_px or frame_bgr is None or frame_bgr.size == 0:
             return
-        height_px, width_px = frame_bgr.shape[:2]
-        if not 0 <= int(y_px) < height_px:
+        x1 = int(roi_px.get("x_px", 0))
+        y1 = int(roi_px.get("y_px", 0))
+        x2 = x1 + int(roi_px.get("width_px", 0))
+        y2 = y1 + int(roi_px.get("height_px", 0))
+        if x2 <= x1 or y2 <= y1:
             return
-        overlay.draw_line(frame_bgr, (0, int(y_px)), (width_px, int(y_px)),
-                          _MAX_LOAD_BGR, thickness=2, label=label)
+        for start_px, end_px in (((x1, y1), (x2, y1)), ((x2, y1), (x2, y2)),
+                                 ((x2, y2), (x1, y2)), ((x1, y2), (x1, y1))):
+            overlay.draw_line(frame_bgr, start_px, end_px, _BELT_ROI_BGR,
+                              thickness=_BELT_ROI_THICKNESS)
 
-    draw.__name__ = f"max_load_line({y_px_by_camera})"
+    draw.__name__ = f"belt_roi({sorted(roi_px_by_camera)})"
+    return draw
+
+
+def composition_panel_annotator(class_names: list, class_colors_bgr: tuple = (),
+                                font_scale: float = 0.0) -> Annotator:
+    """
+    Panel con la composición normalizada y la carga de la cinta.
+
+    Es lo que el operador lee mientras la línea trabaja, y por eso va **quemado en el
+    frame** y no en un widget: así viaja igual por los dos streams y queda escrito en la
+    imagen que se guarda en el dataset. Los números salen de `metrics` y no se recalculan
+    acá: dos cuentas del mismo dato terminan discrepando.
+
+    `class_names` es la lista del modelo, en orden: fija qué clases se enumeran, en qué
+    orden y con qué etiqueta. Un resultado sin métricas —una medición no confiable— no
+    dibuja nada.
+
+    `class_colors_bgr` es la paleta de `inference.overlay`, y cada fila sale del color que
+    `overlay` le da a la clase por su índice —vacía, la paleta por defecto de `overlay`—: el
+    panel y las máscaras pintan cada clase igual, y si no coincidieran el operador tendría
+    que leer el nombre para saber qué es cuál.
+
+    `font_scale` es el mismo de `inference.overlay` y llega leído, como todo lo demás. Sin
+    pasarlo, el panel usaba el default del módulo de dibujado —pensado para un recorte— y
+    quedaba ilegible sobre el frame completo de una cámara de varios megapíxeles.
+    """
+    names = [str(name) for name in (class_names or [])]
+    options = overlay.OverlayOptions(font_scale=font_scale)
+    labels = [f"  {name.capitalize()}:" for name in names]
+    class_colors = [overlay.get_class_color_bgr(i, class_colors_bgr) for i in range(len(names))]
+
+    def draw(frame_bgr: np.ndarray, result: InferenceResult):
+        if frame_bgr is None or frame_bgr.size == 0 or not result.metrics:
+            return
+        lines = ["Composicion:"]
+        colors_bgr = [_PANEL_NEUTRAL_BGR]
+        for class_name, label, color_bgr in zip(names, labels, class_colors):
+            value_pct = result.metrics.get(f"pct_{class_name}_norm")
+            if value_pct is None:
+                continue
+            lines.append((label, f"{float(value_pct):.1f}%"))
+            colors_bgr.append(color_bgr)
+        load_pct = result.metrics.get(metrics.LOAD_KEY)
+        if load_pct is not None:
+            lines.append(("Carga cinta:", f"{float(load_pct):.1f}%"))
+            colors_bgr.append(_PANEL_NEUTRAL_BGR)
+        if len(lines) == 1:
+            return
+        overlay.draw_text_panel(frame_bgr, lines, options=options,
+                                line_colors_bgr=tuple(colors_bgr))
+
+    draw.__name__ = f"composition_panel({names})"
     return draw
