@@ -66,6 +66,11 @@ class AbstractCameraDriver(ABC):
         """
         Devuelve el último frame validado, tipo always-fresh, o None.
 
+        **El array es propio y no se vuelve a tocar**: nunca una vista sobre un buffer del
+        SDK que se recicle, ni uno que el driver reescriba en el próximo frame. Es lo que
+        deja a la captura repartir el mismo array a la UI, al video y a la inferencia sin
+        copiarlo, y por eso quien lo recibe tampoco lo modifica in-place.
+
         Con la captura deshabilitada devuelve None sin tocar el hardware.
         """
 

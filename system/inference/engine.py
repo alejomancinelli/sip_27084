@@ -161,8 +161,9 @@ class InferenceThread(QThread):
         Deja el frame de una cámara para que se infiera. Barata y thread-safe.
 
         Es el slot de `CaptureThread.frame_ready` y respeta el orden de su payload, así
-        que `main.py` las conecta directo. El frame se copia acá, porque el driver reusa
-        su buffer en cuanto la llamada vuelve.
+        que `main.py` las conecta directo. El frame se guarda sin copiar: el driver entrega
+        un array propio y nadie lo modifica después (ver `AbstractCameraDriver.get_frame`),
+        y copiar 3 MP a 15 fps es memoria que se tira cada vez que el frame se reemplaza.
 
         Descarta sin avisar el frame que llega antes de que venza `interval_s`, y cuenta
         en `dropped` el que reemplaza a uno que el hilo todavía no consumió.
@@ -182,7 +183,7 @@ class InferenceThread(QThread):
                 return
             self._last_push_s[camera_slot] = now_s
             replaced = camera_slot in self._pending
-            self._pending[camera_slot] = frame_bgr.copy()
+            self._pending[camera_slot] = frame_bgr
         if replaced:
             self._count("dropped")
         self._frame_available.set()

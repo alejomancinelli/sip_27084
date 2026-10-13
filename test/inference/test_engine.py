@@ -219,15 +219,14 @@ class TestQueue:
         status = engine.get_status()
         assert (status["queued"], status["dropped"]) == (2, 0)
 
-    def test_the_frame_is_copied_on_push(self):
-        """El driver reusa su buffer en cuanto la llamada vuelve."""
+    def test_the_frame_is_kept_without_a_copy(self):
+        """El driver entrega un array propio: copiarlo es memoria que se tira por frame."""
         pipeline = _FakePipeline()
         engine = _engine(pipeline)
         frame = _frame(level=10)
         engine.push_frame(frame, _SLOT)
-        frame[:] = 200
         _run_frames(engine, [])
-        assert int(pipeline.frames[0][0, 0, 0]) == 10
+        assert np.shares_memory(pipeline.frames[0], frame)
 
     def test_the_turn_rotates_between_cameras(self):
         """Con el modelo más lento que la captura, una cámara no puede tapar a la otra."""
