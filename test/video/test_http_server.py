@@ -485,6 +485,27 @@ class TestPushGating:
         server.push_annotated("camera_1", _frame())
         assert server._store.get(_ANNOTATED_1)[0] is not None
 
+    def test_an_unwatched_annotated_frame_is_not_encoded_until_asked(self, monkeypatch):
+        """Con la pantalla en anotado llega uno por frame: codificarlo para nadie era caro."""
+        encoded = []
+        real_encode = hvs._encode
+        monkeypatch.setattr(hvs, "_encode",
+                            lambda *args, **kwargs: encoded.append(1) or real_encode(
+                                *args, **kwargs))
+        server = _watched_server()
+        for _ in range(5):
+            server.push_annotated("camera_1", _frame())
+        assert encoded == []
+        assert server._store.get(_ANNOTATED_1)[0] is not None
+        assert encoded == [1]
+
+    def test_a_kept_frame_does_not_replace_a_newer_encoded_one(self):
+        store = _FrameStore()
+        store.keep(_ANNOTATED_1, np.full((120, 160, 3), 10, np.uint8))
+        store.update(_ANNOTATED_1, np.full((120, 160, 3), 200, np.uint8))
+        jpeg, _ = store.get(_ANNOTATED_1)
+        assert cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR).mean() > 150
+
     def test_the_raw_stream_is_still_gated(self):
         """Es el que llega al ritmo de la cámara: ahí el ahorro es real."""
         server = _watched_server(_ANNOTATED_1)
@@ -700,6 +721,16 @@ class TestClientDisconnect:
         assert _wait_until(lambda: server._store.get(_RAW_1)[0] is None)
         server.push_raw("camera_1", _frame())
         assert server._store.get(_RAW_1)[0] is None
+
+    def test_the_last_annotated_frame_survives_the_last_client(self, server):
+        """Es la última medición: el que se conecte después tiene que verla sin esperar."""
+        sock = _open_stream(server, "/camera_1/annotated")
+        assert _wait_until(lambda: server.has_annotated_clients("camera_1"))
+        server.push_annotated("camera_1", _frame())
+        _reset(sock)
+        assert _wait_until(lambda: not server.has_annotated_clients("camera_1"))
+        time.sleep(0.2)
+        assert server._store.get(_ANNOTATED_1)[0] is not None
 
     def test_one_client_leaving_does_not_cut_the_other(self, server):
         leaving = _open_stream(server, "/camera_1/raw")
