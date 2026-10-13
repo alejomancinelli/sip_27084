@@ -962,7 +962,29 @@ class Application(QObject):
 
         # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector. El
         # contexto se arma una vez y vale para los dos modos: es del par (cámara, momento)
-        # y no del camino por el que se guarda.
+        # y no del camino por el que se guarda. Con la recolección apagada no se arma
+        # nada: `to_dict()` recorre cientos de detecciones y el contexto lee el config, y
+        # esto corre por resultado en el hilo de la GUI.
+        if self._collector.is_active:
+            self._send_to_dataset(result)
+
+        content = self._ui.monitor_content
+        if content is not None:
+            setter = getattr(content, "update_cycle", None)
+            if setter is not None:
+                setter(result)
+
+        # Telemetría: al buzón, no a la cola. Lo publica el tick, agregado, porque una
+        # serie por resultado escala con los fps y no agrega información. Los no
+        # confiables entran igual: cuántos se cayeron y por qué es justo lo que se quiere
+        # poder preguntar después.
+        self._pending_results.setdefault(
+            (result.camera_slot, result.pipeline_slot), []
+        ).append(result)
+        self._store_metrics(result)
+
+    def _send_to_dataset(self, result: InferenceResult):
+        """Le pasa la medición al recolector, por el camino de su modo."""
         context = self._build_dataset_context(result.camera_slot)
         if self._collector.mode == _COLLECTOR_MODE_INTERVAL:
             self._collector.push_frame(
@@ -979,21 +1001,6 @@ class Application(QObject):
                 annotated_bgr=result.annotated_bgr, inference=result.to_dict(),
                 context=context,
             )
-
-        content = self._ui.monitor_content
-        if content is not None:
-            setter = getattr(content, "update_cycle", None)
-            if setter is not None:
-                setter(result)
-
-        # Telemetría: al buzón, no a la cola. Lo publica el tick, agregado, porque una
-        # serie por resultado escala con los fps y no agrega información. Los no
-        # confiables entran igual: cuántos se cayeron y por qué es justo lo que se quiere
-        # poder preguntar después.
-        self._pending_results.setdefault(
-            (result.camera_slot, result.pipeline_slot), []
-        ).append(result)
-        self._store_metrics(result)
 
     def _update_rolling(self, results: list):
         """

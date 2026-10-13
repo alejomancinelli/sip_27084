@@ -348,10 +348,10 @@ class ImageCollector:
         """
         Deja el último frame de esa cámara para que el hilo lo guarde. Modo interval.
 
-        Thread-safe y barata: copia los frames y vuelve, sin tocar el disco. Cada
-        llamada reemplaza a la anterior de esa cámara, así que el frame anotado y el
-        JSON son siempre los de la captura que se está guardando, nunca los de una
-        anterior — por eso conviene un solo productor por cámara.
+        Thread-safe y barata: guarda la referencia a los frames y vuelve, sin copiarlos ni
+        tocar el disco. Cada llamada reemplaza a la anterior de esa cámara, así que el
+        frame anotado y el JSON son siempre los de la captura que se está guardando, nunca
+        los de una anterior — por eso conviene un solo productor por cámara.
 
         No guarda nada por sí sola: sin hilo de intervalo corriendo el frame se
         descarta. Para pedir un guardado puntual está `save_now()`.
@@ -385,8 +385,9 @@ class ImageCollector:
 
         `frame_bgr` es el frame de cámara y `annotated_bgr` el mismo frame con las
         anotaciones dibujadas: van en la misma llamada para que original/ y annotated/
-        correspondan siempre a la misma captura. Los frames se copian acá; el dict de
-        inferencia se guarda como vino, así que el llamador no lo modifica después.
+        correspondan siempre a la misma captura. Los frames no se copian, porque nadie los
+        modifica después; el dict de inferencia se guarda como vino, así que el llamador no
+        lo modifica después.
 
         `context` son los parámetros con los que se produjo esa medición —una escala, un
         umbral—: se guardan tal cual en el JSON y el colector no mira adentro. Existen
@@ -756,18 +757,20 @@ class ImageCollector:
                    annotated_bgr: np.ndarray | None, inference: dict | None,
                    context: dict | None) -> _SaveJob | None:
         """
-        Copia la captura en un job propio, o None si no vino nada que guardar.
+        Arma el job de la captura, o None si no vino nada que guardar.
 
-        Los frames se copian acá y no en la escritura: el productor reutiliza sus
-        buffers en cuanto vuelve de la llamada.
+        Los frames no se copian: el driver entrega arrays propios que nadie modifica
+        después (ver `AbstractCameraDriver.get_frame`), y el anotado se dibuja una vez y
+        no se vuelve a tocar. En modo interval esto corre por resultado, y copiar los dos
+        frames eran 18 MB por medición para quedarse sólo con el último.
         """
         if frame_bgr is None and annotated_bgr is None and not inference:
             return None
         return _SaveJob(
             camera_slot=camera_slot,
             captured_at=datetime.now(),
-            frame_bgr=None if frame_bgr is None else frame_bgr.copy(),
-            annotated_bgr=None if annotated_bgr is None else annotated_bgr.copy(),
+            frame_bgr=frame_bgr,
+            annotated_bgr=annotated_bgr,
             inference=dict(inference) if inference else None,
             context=dict(context) if context else None,
         )
