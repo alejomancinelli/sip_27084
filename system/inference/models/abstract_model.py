@@ -46,7 +46,9 @@ Qué fija el contrato:
   - **`predict()` no sabe de qué cámara es el frame**, y es a propósito: el modelo es uno
     por slot y lo comparten todas las cámaras del pipeline, así que nada calibrado por
     montaje —una escala de píxel, un filtro de tamaño, una clase que sale de la medida—
-    puede resolverse acá. Eso va en el `classifier` del motor, que sí recibe el slot.
+    puede resolverse acá. Eso va en el pipeline, que recibe el `camera_slot` en `_run()`,
+    o en el `classifier` del motor si depende de dónde cae la detección en el frame
+    completo.
 
 Cada modelo lee su sección `inference.models.<slot>` del config.yaml. El slot es su
 identidad: es el nombre con el que el pipeline lo pide y con el que aparece en

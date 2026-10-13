@@ -25,9 +25,9 @@ De qué se ocupa, en este orden, por cada frame:
   3. Descarta lo que no vale una pasada del modelo: sin modelo cargado, o iluminación por
      debajo de `cameras.<slot>.illumination_min`.
   4. Corre el pipeline y devuelve las detecciones al espacio del frame de referencia.
-  5. Le pasa las detecciones al `classifier`, si hay uno: es donde se filtra y se etiqueta
-     con lo que depende de la cámara, que el modelo no puede saber porque es uno solo para
-     todas las del pipeline.
+  5. Le pasa las detecciones al `classifier`, si hay uno: ya están en el espacio del frame
+     de referencia, así que es donde se filtra y se etiqueta por posición absoluta —una
+     zona a ignorar, una regla por dónde cae la detección—.
   6. Promedia la confianza y decide si el resultado es confiable
      (`min_result_confidence_pct`, `min_detections`).
   7. Llama al analyzer —sólo si el resultado es confiable— y dibuja el frame anotado.
@@ -51,11 +51,13 @@ orden), el `classifier` (qué detecciones cuentan y qué clase les toca), el `an
 significan las detecciones) y el `annotator` (qué se dibuja además de lo que salió de la
 inferencia). Todas son opcionales salvo el pipeline, y sin ellas el ciclo funciona igual.
 
-El `classifier` existe porque `predict()` no recibe identidad de cámara: el modelo es uno
-por slot de pipeline y lo comparten todas sus cámaras, así que no puede aplicar nada
-calibrado por montaje —una escala de píxel, un filtro de tamaño, una clase por medida—. Y
-el analyzer tampoco puede, porque no modifica el resultado. Corre entre el pipeline y el
-promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
+El `classifier` existe para lo que depende de **dónde** cae una detección en el frame de
+referencia: corre después de devolverlas a ese espacio, y el pipeline las ve en el recorte
+del ROI. Lo que depende de la cámara pero alcanza con el recorte —una escala de píxel, un
+filtro de tamaño, una clase por medida— ya lo puede hacer el pipeline, que recibe el
+`camera_slot` en `_run()`. El modelo no, porque es uno por slot y lo comparten todas las
+cámaras del pipeline; y el analyzer tampoco, porque no modifica el resultado. Corre entre
+el pipeline y el promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
 confianza del resultado, y la clase que deja en `class_index` es la que después colorean
 el overlay y `analysis.count_by_class`.
 """
