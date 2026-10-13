@@ -99,7 +99,31 @@ class _ReadOnlyHoldingRegisters(ModbusSimulatorContext):
     arregla el rango: `validate()` de pymodbus chequea sólo la dirección de ARRANQUE
     (y con `>` en vez de `>=`), así que una lectura que empieza adentro y se pasa del
     final revienta con IndexError → 0x04 más un traceback por cada consulta.
+
+    **La lectura del PLC toma el mismo lock que la escritura de la app.** pymodbus
+    recorre los registros sin lock desde el hilo del servidor, así que una consulta que
+    cae en medio de `update_block()` leería medio bloque nuevo y medio viejo.
     """
+
+    def __init__(self, config: dict, custom_actions, write_lock: threading.Lock):
+        super().__init__(config, custom_actions)
+        self._write_lock = write_lock
+
+    async def async_OLD_getValues(self, func_code, address, count=1):
+        """
+        FC03 bajo el lock de escritura: un bloque se lee entero de antes o entero de después.
+
+        Es el método al que `ModbusServerContext.async_getValues` delega en pymodbus 3.x, y
+        reemplaza la lectura de la base, que además corre las `action` de cada celda; este
+        datastore no declara ninguna. Una consulta inválida sigue en la base, que es la que
+        arma la excepción. Si una versión de pymodbus renombra el método, falla el test de
+        la lectura bajo lock.
+        """
+        if not self.validate(func_code, address, count):
+            return await super().async_OLD_getValues(func_code, address, count)
+        start = self.fc_offset[func_code] + address
+        with self._write_lock:
+            return [cell.value for cell in self.registers[start:start + count]]
 
     def validate(self, func_code, address, count=1):
         if func_code != _FC_READ_HOLDING_REGISTERS:
@@ -117,7 +141,8 @@ class SharedModbusServer:
     Servidor Modbus TCP + RTU compartiendo un datastore en RAM.
 
     Los métodos de escritura y lectura de registros son thread-safe y se pueden
-    llamar desde cualquier hilo, esté el servidor corriendo o no. `run()` bloquea
+    llamar desde cualquier hilo, esté el servidor corriendo o no; un `update_block()`
+    es además atómico frente a las lecturas del PLC. `run()` bloquea
     el hilo que lo llama; todo lo demás se llama desde afuera.
 
     `blocked_reason` lo pone el cableado cuando hay algo por lo que este servidor no
@@ -139,7 +164,7 @@ class SharedModbusServer:
 
         self._register_count = self._read_register_count()
         self._simulator = _ReadOnlyHoldingRegisters(
-            _build_simulator_config(self._register_count), None
+            _build_simulator_config(self._register_count), None, self._lock
         )
         self._hr_offset = self._simulator.fc_offset[_FC_READ_HOLDING_REGISTERS]
 
@@ -177,15 +202,7 @@ class SharedModbusServer:
         Una dirección fuera del mapa se descarta con un warning: es un error del
         mapa, no del PLC, y no vale la pena tirar abajo el ciclo que la escribió.
         """
-        index = self._index_of(address)
-        if index is None:
-            logger.warning(
-                f"[Modbus] Dirección fuera del mapa: {address} "
-                f"(el mapa expone 1-{self._register_count})."
-            )
-            return
-        with self._lock:
-            self._simulator.registers[index].value = int(value) & 0xFFFF
+        self.update_block({address: value})
 
     def get_register(self, address: int) -> int:
         """Lee un holding register (base-1). Devuelve 0 fuera del mapa."""
@@ -196,10 +213,31 @@ class SharedModbusServer:
             return self._simulator.registers[index].value
 
     def update_block(self, items: dict[int, int]):
-        """Escritura en batch: {addr: valor crudo}, tal como lo devuelve
-        `RegisterSchema.encode_batch()`."""
+        """
+        Escritura en batch: {addr: valor crudo}, tal como lo devuelve
+        `RegisterSchema.encode_batch()`.
+
+        **Atómica para el PLC**: el bloque entero se escribe bajo un solo lock, el mismo
+        que toma su lectura, así que una consulta ve el bloque de antes o el de después y
+        nunca la mitad. Importa en los valores de dos palabras: leído a medias, el reloj de
+        `clock_epoch_s_high` / `_low` salta 18 h cuando la palabra baja da la vuelta, y ese
+        salto es justo lo que se le pide al PLC que enclave.
+
+        Una dirección fuera del mapa se descarta con un warning y no frena a las demás.
+        """
+        indexed = []
         for address, value in items.items():
-            self.update_register(address, value)
+            index = self._index_of(address)
+            if index is None:
+                logger.warning(
+                    f"[Modbus] Dirección fuera del mapa: {address} "
+                    f"(el mapa expone 1-{self._register_count})."
+                )
+                continue
+            indexed.append((index, int(value) & 0xFFFF))
+        with self._lock:
+            for index, value in indexed:
+                self._simulator.registers[index].value = value
 
     def _index_of(self, address: int) -> int | None:
         """Índice en el datastore de una dirección base-1, o None si está fuera."""
