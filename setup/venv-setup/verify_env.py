@@ -257,11 +257,15 @@ def _check_qt_platform() -> list[str]:
 
 def _check_pymodbus_api() -> list[str]:
     """
-    The server context takes `devices=`.
+    The server context takes `devices=`, and PLC reads go through the method the
+    Modbus server locks.
 
-    The keyword was `slaves=` up to pymodbus 3.9 and became `devices=` in 3.10, so the
-    range in requirements.txt is not decorative: with an older build the Modbus server
-    fails at construction, long after the install looked successful.
+    The keyword was `slaves=` up to pymodbus 3.9 and became `devices=` in 3.10: with an
+    older build the Modbus server fails at construction, long after the install looked
+    successful. The read is worse, because nothing fails: system/modbus/server.py
+    overrides `async_OLD_getValues` so a PLC read takes the write lock, and a pymodbus
+    that reads through another method skips the lock and can serve half a block. That
+    is why requirements.txt pins the exact version.
     """
     try:
         import inspect
@@ -269,11 +273,18 @@ def _check_pymodbus_api() -> list[str]:
         from pymodbus.datastore import ModbusServerContext
 
         parameters = inspect.signature(ModbusServerContext.__init__).parameters
-        problem = ("" if "devices" in parameters else
-                   "ModbusServerContext does not accept `devices=` (pymodbus < 3.10)")
+        if "devices" not in parameters:
+            problem = "ModbusServerContext does not accept `devices=` (pymodbus < 3.10)"
+        elif "async_OLD_getValues" not in inspect.getsource(
+                ModbusServerContext.async_getValues):
+            problem = ("PLC reads no longer go through async_OLD_getValues - the Modbus "
+                       "read lock is bypassed; install the pymodbus in requirements.txt")
+        else:
+            problem = ""
     except BaseException as exc:
         problem = f"{type(exc).__name__}: {exc}"
-    return _verdict("pymodbus API", problem, True, "ModbusServerContext(devices=...)")
+    return _verdict("pymodbus API", problem, True,
+                    "ModbusServerContext(devices=...), locked reads")
 
 
 def _check_gpio(config: dict) -> list[str]:

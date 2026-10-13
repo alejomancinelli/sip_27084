@@ -47,11 +47,13 @@ pypylon>=2.1.0
 # Se deja asentado acá porque es una dependencia real de la app, aunque pip no la
 # pueda resolver.
 
-# Servidor Modbus esclavo (system/modbus). Por debajo de la 3.8 el contexto del
-# servidor se arma con `slaves=` en vez de `devices=`, y en la 4.0 desaparece
-# ModbusSimulatorContext a favor de SimData/SimDevice: las dos puntas del rango
-# están fijadas por la API que usa system/modbus/server.py.
-pymodbus>=3.8,<4
+# Servidor Modbus esclavo (system/modbus). Versión exacta, la misma en la PC y en la
+# Jetson: system/modbus/server.py reemplaza `async_OLD_getValues`, el método interno por
+# el que pymodbus 3.15 lee el datastore, para que la lectura del PLC tome el lock de
+# escritura y nunca vea medio bloque. Si otra versión lee por otro método, la lectura
+# esquiva el lock sin que nada falle. Subirla es correr test/modbus/test_server.py con
+# la nueva; en la 4.0 además desaparece ModbusSimulatorContext.
+pymodbus==3.15.0
 
 # pymodbus no declara ninguna dependencia dura: el soporte de puerto serie es un
 # extra. Sin pyserial el servidor Modbus RTU falla al arrancar —el TCP no lo
