@@ -43,8 +43,9 @@ se edite en planta: `CLASS_NAMES` es la única declaración, y de acá la leen e
 analyzer, el panel y la pestaña de proceso. El pipeline nombra cada detección por su índice
 con esta tupla, y al cargar la confronta con los nombres que traen los pesos: un modelo con
 las clases en otro orden no da un error, da todos los porcentajes invertidos, y por eso el
-pipeline no arranca y deja el motivo en el log. Un modelo que no declara nombres —el mock—
-no tiene contra qué confrontarse y se nombra igual.
+pipeline no arranca y deja el motivo en el log. Un modelo que no declara nombres —el mock,
+o un `.engine` sin la cabecera de ultralytics— no tiene contra qué confrontarse y se nombra
+igual: los nombres de los pesos sólo confirman el orden, nunca son los que se usan.
 """
 
 import cv2

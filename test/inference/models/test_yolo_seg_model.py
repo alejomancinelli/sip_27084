@@ -245,10 +245,21 @@ class TestLoad:
         fake = _FakeYolo()
         fake.names = {0: "desmenuzado", 1: "pellet"}
         model = YoloSegModel(_MockConfig(**{
+            f"inference.models.{_SLOT}.path": "pesos.pt",
             f"inference.models.{_SLOT}.class_names": []}), _SLOT)
         _install(monkeypatch, fake)
         model.load()
         assert model.class_names == ("desmenuzado", "pellet")
+
+    def test_an_engine_without_a_header_declares_no_names(self, monkeypatch):
+        """Ultralytics le inventa `class0`, `class1`…: confrontarlos frenaría un modelo sano."""
+        fake = _FakeYolo()
+        fake.names = {0: "class0", 1: "class1"}
+        model = YoloSegModel(_MockConfig(**{
+            f"inference.models.{_SLOT}.class_names": []}), _SLOT)
+        _install(monkeypatch, fake, weights=b"motor de trtexec, sin cabecera")
+        model.load()
+        assert model.is_loaded and model.class_names == ()
 
     def test_names_with_a_gap_in_the_indices_are_not_guessed(self, monkeypatch):
         """Un nombre corrido de lugar es la falla que esto existe para detectar."""

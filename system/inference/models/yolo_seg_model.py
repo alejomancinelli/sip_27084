@@ -45,6 +45,7 @@ _PCT_TO_FRACTION = 100.0
 
 _METADATA_LENGTH_BYTES = 4      # cabecera de un .engine de ultralytics: largo del JSON
 _WARMUP_SIDE_PX = 640           # entrada por defecto de YOLO, si el motor no la declara
+_CHECKPOINT_SUFFIX = ".pt"      # pesos de PyTorch: traen sus nombres de clase adentro
 
 
 
@@ -122,8 +123,11 @@ class YoloSegModel(AbstractModel):
         checkpoint_task = str(getattr(model, "task", "") or "")
         if not exported.get("task") and not self._verify_task(checkpoint_task):
             return
-        # Y los nombres de clase, en el mismo checkpoint.
-        if not exported.get("names"):
+        # Y los nombres de clase, en el mismo checkpoint. Sólo de un `.pt`: a un `.engine`
+        # sin cabecera —uno armado con `trtexec`— ultralytics le inventa `class0`,
+        # `class1`…, y confrontar esos nombres frenaría un modelo que está bien. Sin
+        # nombres no hay contra qué confrontar, y el pipeline nombra igual.
+        if not exported.get("names") and path.lower().endswith(_CHECKPOINT_SUFFIX):
             self._adopt_class_names(getattr(model, "names", None))
 
         # Con un `.engine`, `YOLO()` sólo guarda la ruta: TensorRT abre el motor con el
