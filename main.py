@@ -1011,7 +1011,8 @@ class Application(QObject):
         **La composición sólo promedia lo que tenía material y la carga promedia todo.** En
         una cinta vacía la composición no es 50/50 ni 0/0: no existe, y meterla en el
         promedio lo corre hacia donde no hay proceso. La carga sí: ahí el 0 es una medición
-        legítima, y es justamente el dato de que la cinta estuvo parada.
+        legítima, y es justamente el dato de que la cinta estuvo parada. Lo mismo vale
+        adentro del segundo, y eso lo resuelve `_average_tick_metrics()`.
 
         Envejecer va aparte y en cada tick, en `_build_rolling_registers()`: si se hiciera
         sólo acá, una inferencia caída dejaría la ventana congelada con su último promedio.
@@ -1020,15 +1021,13 @@ class Application(QObject):
         cámara del recorrido gana. Una instalación con dos cintas necesita una ventana por
         cámara, igual que necesita una fila de registro por cámara.
         """
-        averaged = analysis.average_metrics(results)
+        averaged = _average_tick_metrics(results)
         if not averaged:
             return
         self._rolling_camera_slot = results[-1].camera_slot
         now_s = time.monotonic()
         self._last_inference_s = now_s
-        composition_pct = {name: averaged[name] for name in _ROLLING_METRIC_NAMES
-                           if name.endswith(_NORMALIZED_SUFFIX) and name in averaged}
-        has_material = rolling.has_composition(composition_pct)
+        has_material = rolling.has_composition(_composition_pct(averaged))
         for name, window in self._rolling.items():
             value = averaged.get(name)
             if value is None:
@@ -1869,6 +1868,29 @@ def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:
     return SharedModbusServer(config, blocked_reason=REGISTER_MAP_ERROR)
 
 
+def _average_tick_metrics(results: list) -> dict:
+    """
+    Media de las métricas de los resultados de un tick, con la composición sólo sobre los
+    frames que tenían material.
+
+    Un frame vacío aporta 0 a cada `pct_<clase>_norm`, así que mezclado con los cargados
+    la composición del segundo sumaría menos de 100 aunque la cinta no haya cambiado. El
+    resto —la carga incluida— promedia todos, porque ahí el 0 es una medición. Un tick sin
+    ningún frame con material deja la composición en la media de todos, que es 0.
+    """
+    averaged = analysis.average_metrics(results)
+    with_material = analysis.average_metrics(
+        [r for r in results if rolling.has_composition(_composition_pct(r.metrics))])
+    averaged.update(_composition_pct(with_material))
+    return averaged
+
+
+def _composition_pct(metrics: dict) -> dict:
+    """El reparto entre clases de unas métricas: las `pct_<clase>_norm`."""
+    return {name: value for name, value in metrics.items()
+            if name.endswith(_NORMALIZED_SUFFIX)}
+
+
 def _build_inference_fields(results: list) -> dict:
     """
     Campos de un punto de inferencia a partir de los resultados de una muestra.
@@ -1880,8 +1902,9 @@ def _build_inference_fields(results: list) -> dict:
 
     Tres grupos:
 
-      - **Las métricas del proceso**, promediadas sobre los resultados. Son las que salen
-        del analyzer, así que la lista no se escribe acá: lo que el analyzer publique
+      - **Las métricas del proceso**, promediadas sobre los resultados —la composición,
+        sólo sobre los que tenían material: ver `_average_tick_metrics()`—. Son las que
+        salen del analyzer, así que la lista no se escribe acá: lo que el analyzer publique
         termina en la serie con su propio nombre. Lo que el ciclo ya resumió —`sample_count`
         y la dispersión por métrica— viaja tal cual y no se vuelve a agregar: derivarlo de
         nuevo sobre una sola muestra daría desvío 0 y taparía el de los N frames.
@@ -1904,7 +1927,7 @@ def _build_inference_fields(results: list) -> dict:
         "invalid_reason": last_invalid.invalid_reason if last_invalid is not None else "",
     }
     fields.update({name: _rounded(name, value)
-                   for name, value in analysis.average_metrics(results).items()
+                   for name, value in _average_tick_metrics(results).items()
                    if name not in _SCALAR_METRIC_NAMES})
 
     if valid:

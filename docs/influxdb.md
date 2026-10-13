@@ -156,7 +156,7 @@ desde la muestra anterior. Tags `proyecto`, `camara_id` y `pipeline`.
 | `pct_pellet`, `pct_desmenuzado` | % del **frame** cubierto por cada clase |
 | `pct_fondo` | % del frame que es cinta a la vista |
 | `pct_carga` | % del **ROI de cinta** cubierto; pasa de 100 si hay desborde |
-| `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición: entre las dos suman 100 |
+| `pct_pellet_norm`, `pct_desmenuzado_norm` | la composición, promediada **sólo sobre los frames con material**: entre las dos suman 100, o 0 si en toda la muestra no hubo material |
 | `confianza` | confianza media, sólo sobre los resultados confiables |
 | `iluminacion` | brillo medio del frame, 0–100 |
 | `inference_time_ms` | duración media del ciclo de inferencia |

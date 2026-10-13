@@ -14,6 +14,7 @@ from system.camera.lens_health import (
 )
 from system import gpio_control
 from system.formats import gpio_status
+from system.inference import rolling
 from system.inference.result import InferenceResult
 from system.modbus import registers
 from system.modbus.server import STATUS_DISABLED, STATUS_ERROR
@@ -207,6 +208,13 @@ class TestModbusServerWiring:
         assert main.REGISTER_MAP_ERROR is registers.LOAD_ERROR
 
 
+def _belt_result(pellet_pct: float, fines_pct: float, load_pct: float) -> InferenceResult:
+    return InferenceResult(camera_slot="camera_1",
+                           metrics={"pct_pellet_norm": pellet_pct,
+                                    "pct_desmenuzado_norm": fines_pct,
+                                    "pct_carga": load_pct})
+
+
 class TestInferenceFields:
     """
     Los fields de un punto de telemetría de inferencia.
@@ -258,6 +266,21 @@ class TestInferenceFields:
                                    metrics={"pct_pellet_norm": 33.7})]
         assert main._build_inference_fields(results)["pct_pellet_norm"] == 34
 
+    def test_the_composition_of_a_second_adds_up_to_100_with_empty_frames(self):
+        """Un frame vacío no aporta un 0 a cada clase: la cinta no cambió en ese segundo."""
+        results = [_belt_result(0.0, 0.0, 0.0)] * 5 + [_belt_result(70.0, 30.0, 60.0)] * 10
+        fields = main._build_inference_fields(results)
+        assert (fields["pct_pellet_norm"], fields["pct_desmenuzado_norm"]) == (70, 30)
+
+    def test_the_load_of_a_second_still_counts_the_empty_frames(self):
+        results = [_belt_result(0.0, 0.0, 0.0)] * 5 + [_belt_result(70.0, 30.0, 60.0)] * 10
+        assert main._build_inference_fields(results)["pct_carga"] == 40
+
+    def test_a_second_without_material_publishes_the_composition_as_zero(self):
+        """Como la versión anterior: el que dice que no hubo material es `pct_carga`."""
+        fields = main._build_inference_fields([_belt_result(0.0, 0.0, 0.0)] * 3)
+        assert (fields["pct_pellet_norm"], fields["pct_desmenuzado_norm"]) == (0, 0)
+
     def test_confidence_and_illumination_use_their_legacy_names(self):
         results = [InferenceResult(camera_slot="camera_1", confidence_pct=87.0,
                                    illumination_pct=42, inference_time_ms=12.5)]
@@ -283,6 +306,58 @@ class TestInferenceFields:
                    InferenceResult(camera_slot="camera_1", confidence_pct=10.0,
                                    is_valid=False)]
         assert main._build_inference_fields(results)["confianza"] == 90
+
+
+def _build_rolling_application():
+    """`Application` sin `__init__`, con sólo las ventanas de la hora."""
+    app = main.Application.__new__(main.Application)
+    app._rolling = {name: rolling.RollingMean(3600.0) for name in main._ROLLING_METRIC_NAMES}
+    return app
+
+
+class TestHourlyMeans:
+    """Lo que entra a las ventanas de la hora con cada tick, y cómo se publica."""
+
+    def test_empty_frames_do_not_dilute_the_composition_of_the_tick(self):
+        """Cinco vacíos de quince no pueden hacer que pellet + desmenuzado sume 67 %."""
+        app = _build_rolling_application()
+        results = [_belt_result(0.0, 0.0, 0.0)] * 5 + [_belt_result(70.0, 30.0, 60.0)] * 10
+
+        app._update_rolling(results)
+        values = app._build_rolling_registers()
+
+        assert (values["pct_pellet_norm_1h"], values["pct_desmenuzado_norm_1h"]) == (70.0, 30.0)
+
+    def test_the_load_still_averages_the_empty_frames(self):
+        """En la carga el 0 es una medición: dice que la cinta estuvo vacía ese rato."""
+        app = _build_rolling_application()
+        results = [_belt_result(0.0, 0.0, 0.0)] * 5 + [_belt_result(70.0, 30.0, 60.0)] * 10
+
+        app._update_rolling(results)
+
+        assert app._build_rolling_registers()["pct_carga_1h"] == 40.0
+
+    def test_an_empty_tick_counts_as_measured_but_without_material(self):
+        app = _build_rolling_application()
+        app._update_rolling([_belt_result(70.0, 30.0, 60.0)])
+        app._update_rolling([_belt_result(0.0, 0.0, 0.0)])
+
+        values = app._build_rolling_registers()
+
+        assert values["pct_pellet_norm_1h"] == 70.0
+        assert values[main._MATERIAL_PRESENT_KEY] == 50
+
+    def test_unreliable_frames_feed_neither_window(self):
+        app = _build_rolling_application()
+        unreliable = InferenceResult(camera_slot="camera_1", is_valid=False,
+                                     metrics={"pct_pellet_norm": 10.0,
+                                              "pct_desmenuzado_norm": 90.0,
+                                              "pct_carga": 5.0})
+        app._update_rolling([unreliable, _belt_result(70.0, 30.0, 60.0)])
+
+        values = app._build_rolling_registers()
+
+        assert (values["pct_pellet_norm_1h"], values["pct_carga_1h"]) == (70.0, 60.0)
 
 
 class _WritableMockConfig(_MockConfig):
