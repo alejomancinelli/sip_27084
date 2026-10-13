@@ -28,6 +28,12 @@ Por qué el postproceso va acá y no en el modelo ni en el analyzer:
 Lo que quede sin un solo píxel se descarta: una instancia que ya no cubre nada no es una
 instancia, y contarla inflaría `detection_count` y el promedio de confianza.
 
+**Las detecciones salen de menor a mayor confianza.** El conteo de `metrics.py` y el relleno
+del overlay le dan un píxel disputado a la última máscara que lo reclama, y ultralytics las
+devuelve de mayor a menor: sin reordenar, donde pellet y desmenuzado se pisan —justo la
+frontera que decide la composición— ganaría la menos confiable. Se ordena una sola vez acá
+para que los dos consumidores, que comparten el orden, sigan diciendo lo mismo.
+
 Los umbrales llegan **leídos**, como los del analyzer y los annotators: los lee `main.py`
 de la sección `process` y esta clase se testea con tres números y sin archivo.
 """
@@ -58,7 +64,8 @@ class BeltPipeline(AbstractPipeline):
 
     def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         detections = self._run_stage(_SEGMENTER_SLOT, frame_bgr)
-        return self._drop_dark_background(detections, frame_bgr, camera_slot)
+        detections = self._drop_dark_background(detections, frame_bgr, camera_slot)
+        return sorted(detections, key=lambda detection: detection.confidence_pct)
 
     def _drop_dark_background(self, detections: list, frame_bgr: np.ndarray,
                               camera_slot: str) -> list[Detection]:

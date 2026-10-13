@@ -140,7 +140,8 @@ def _count_union_px_by_class(detections: list,
 
     Cada máscara se pega en el lienzo en el orden en que llegaron las detecciones, así que
     donde dos se superponen queda la última: el mismo criterio con el que se pintan las
-    máscaras del overlay, para que lo que se ve y lo que se mide no discrepen.
+    máscaras del overlay, para que lo que se ve y lo que se mide no discrepen. El pipeline
+    las entrega de menor a mayor confianza, así que la última es la más confiable.
 
     Las máscaras llegan ya refinadas: lo que el modelo descartó por oscuro no viene en
     ellas, así que acá sólo se cuenta.

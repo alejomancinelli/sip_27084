@@ -330,3 +330,48 @@ class TestDarkBackground:
         pipeline = self._pipeline(monkeypatch, {_SLOT: {"desmenuzado": 60}})
         detection = pipeline.run(self._frame(), _SLOT)[0]
         assert detection.area_px == int(detection.mask.sum())
+
+
+# ── Píxeles disputados entre clases ──────────────────────────────────────────
+
+class TestOverlapGoesToTheMostConfident:
+    """
+    Donde dos máscaras se pisan, el píxel es de la detección más confiable.
+
+    El conteo y el overlay se lo dan a la última que lo reclama, y ultralytics las entrega
+    de mayor a menor confianza: el orden de salida del pipeline es lo que decide la frontera.
+    """
+
+    def _detection(self, class_index: int, class_name: str, confidence_pct: float,
+                   x1_px: int, x2_px: int) -> Detection:
+        mask = np.ones((40, x2_px - x1_px), np.uint8)
+        return Detection(class_index=class_index, class_name=class_name,
+                         confidence_pct=confidence_pct, bbox_px=(x1_px, 0, x2_px, 40),
+                         area_px=int(mask.sum()), mask=mask)
+
+    def _run(self, monkeypatch) -> list[Detection]:
+        """Pellet (95 %) en x 0–30 y desmenuzado (40 %) en x 10–40, como los da ultralytics."""
+        config = _MockConfig(segmenter={"type": "mock"})
+        model = _FakeModel(config, "segmenter")
+        model.detections = [self._detection(1, "pellet", 95.0, 0, 30),
+                            self._detection(0, "desmenuzado", 40.0, 10, 40)]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline.load()
+        return pipeline.run(np.full((40, 40, 3), 200, np.uint8), _SLOT)
+
+    def test_the_detections_leave_from_least_to_most_confident(self, monkeypatch):
+        assert [d.confidence_pct for d in self._run(monkeypatch)] == [40.0, 95.0]
+
+    def test_the_count_gives_the_overlap_to_the_most_confident(self, monkeypatch):
+        from system.inference import metrics
+        from system.inference.result import InferenceResult
+
+        result = InferenceResult(camera_slot=_SLOT, detections=self._run(monkeypatch),
+                                 source_bgr=np.full((40, 40, 3), 200, np.uint8))
+        analyzer = metrics.build_analyzer(class_names=["desmenuzado", "pellet"],
+                                          belt_roi_px={})
+
+        computed = analyzer(result)
+
+        assert (computed["pct_pellet_norm"], computed["pct_desmenuzado_norm"]) == (75.0, 25.0)
