@@ -111,3 +111,8 @@ cameras:
     calibration:
       camera_matrix: []
       dist_coeffs: []
+    image_adjust:
+      # El mismo de la app: el script tiene que medir el frame que mide ella, y el umbral
+      # de fondo oscuro de arriba está calibrado contra la imagen ×4.6.
+      brightness_factor: 4.6
+      clahe_clip: 0.0

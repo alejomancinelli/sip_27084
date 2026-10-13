@@ -7,15 +7,18 @@ Es la prueba que cierra las tres cosas que no se pueden decidir sin el equipo de
      invierte todos los porcentajes sin que nada falle, así que el script imprime el
      reparto por clase y el anotado los pinta: pellet en verde, desmenuzado en rojo. Si
      los colores están cambiados, hay que dar vuelta `class_names` en el config.
-  2. **Que la exposición de la cámara es la correcta.** La versión anterior del equipo
-     amplificaba la imagen por software antes de inferir y eso ya no pasa: el modelo ve el
-     frame crudo. Hay que subir `exposure_time_us` hasta que el nivel coincida con el que
-     el modelo viene trabajando, y `luma` —que este script imprime— es el número con el
-     que comparar.
+  2. **Que la imagen que se mide es la de la versión anterior.** Como la app, el script
+     corrige el lente y aplica `cameras.<slot>.image_adjust` —el ×4.6 a 800 µs— antes de
+     inferir, así que `luma` es el nivel del frame ajustado: el mismo contra el que se
+     compara `dark_background_threshold`. Al lado sale `luma_cruda`, la del sensor, que es
+     la que mueve la exposición. Cambiar la exposición o el factor obliga a recalibrar el
+     umbral, y los percentiles que imprime el diagnóstico son para eso.
   3. **Que los porcentajes siguen dando lo mismo que antes de migrar.** Con `--frames` se
      corre sobre imágenes guardadas en vez de la cámara, así que se pueden pasar las
      mismas capturas por el equipo viejo y por éste y comparar número contra número. Es la
-     única forma de saber que la migración no movió la medición.
+     única forma de saber que la migración no movió la medición. Las imágenes se toman
+     como crudas, que es como las guarda la tecla `g`; las del dataset de la app ya vienen
+     ajustadas y van con `--adjusted`, para no ajustarlas dos veces.
 
 Uso — hay que invocarlo con el intérprete del venv, no con el `.py` a secas:
 
@@ -24,9 +27,9 @@ Uso — hay que invocarlo con el intérprete del venv, no con el `.py` a secas:
               .venv/bin/python manual_test/belt/belt_measure.py --frames capturas/
               .venv/bin/python manual_test/belt/belt_measure.py --json medicion.json
 
-Lee el `config.yaml` que tiene al lado —no el de la app— y arma la cámara, el modelo, el
-pipeline y el analyzer con las mismas fábricas que usa el sistema: lo que se prueba es el
-camino real y no una instancia a mano.
+Lee el `config.yaml` que tiene al lado —no el de la app— y arma la cámara, el preprocessor,
+el modelo, el pipeline y el analyzer con las mismas fábricas que usa el sistema: lo que se
+prueba es el camino real y no una instancia a mano.
 
 Teclas, con ventana:
     q / ESC   salir (también sirve cerrar la ventana)
@@ -56,6 +59,8 @@ from system.inference import annotations, metrics, overlay              # noqa: 
 from system.inference.pipeline import BeltPipeline                      # noqa: E402
 from system.inference.result import InferenceResult                     # noqa: E402
 from tools.camera.camera_factory import create_camera                   # noqa: E402
+from tools.image.enhance import build_image_adjust                      # noqa: E402
+from tools.image.undistort import build_undistorter                     # noqa: E402
 
 _CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _WINDOW_NAME = "Cinta - medicion"
@@ -81,6 +86,9 @@ def main(argv: list | None = None) -> int:
                             dark_background_threshold=dark_background_threshold)
     pipeline.load()
     _report_pipeline(pipeline, config)
+    preprocess = _build_preprocessor(config)
+    print(f"Preprocessor: {preprocess.__name__ if preprocess else 'ninguno, se mide el crudo'}"
+          f"{' (no se aplica a --frames: vienen ajustadas)' if args.adjusted else ''}")
     if not pipeline.is_loaded:
         print("\nNingún modelo cargó: lo que salga no es una medición. Se sigue igual para "
               "poder ver la imagen.")
@@ -110,10 +118,11 @@ def main(argv: list | None = None) -> int:
     try:
         if args.frames:
             _run_over_files(args, camera_slot, pipeline, analyze, annotate,
-                            overlay_options, measurements, diagnose)
+                            overlay_options, measurements, diagnose,
+                            preprocess=None if args.adjusted else preprocess)
         else:
             _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
-                             overlay_options, measurements, diagnose)
+                             overlay_options, measurements, diagnose, preprocess=preprocess)
     except KeyboardInterrupt:
         print("\nInterrumpido.")
     finally:
@@ -130,7 +139,7 @@ def main(argv: list | None = None) -> int:
 # ── Los dos modos ────────────────────────────────────────────────────────────
 
 def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_options,
-                    measurements: list, diagnose=None):
+                    measurements: list, diagnose=None, preprocess=None):
     """Corre sobre imágenes guardadas: es el modo que permite comparar contra el equipo viejo."""
     paths = sorted(p for p in Path(args.frames).iterdir()
                    if p.suffix.lower() in _IMAGE_SUFFIXES)
@@ -143,9 +152,9 @@ def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_opti
         if frame_bgr is None:
             print(f"  {path.name}: no se pudo leer.")
             continue
-        result = _measure(frame_bgr, camera_slot, pipeline, analyze)
+        result = _measure(frame_bgr, camera_slot, pipeline, analyze, preprocess)
         measurements.append({"source": path.name, **result.metrics})
-        _print_measurement(path.name, result, diagnose)
+        _print_measurement(path.name, result, diagnose, raw_bgr=frame_bgr)
         if not args.no_window:
             _show(result, annotate, overlay_options)
             if _wait_key() == "quit":
@@ -153,7 +162,7 @@ def _run_over_files(args, camera_slot, pipeline, analyze, annotate, overlay_opti
 
 
 def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
-                     overlay_options, measurements: list, diagnose=None):
+                     overlay_options, measurements: list, diagnose=None, preprocess=None):
     """Corre en vivo contra la cámara, que es el modo de calibrar la exposición."""
     driver = create_camera(config.get(f"cameras.{camera_slot}", {}) or {})
     if not driver.connect():
@@ -167,9 +176,9 @@ def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
             if frame_bgr is None:
                 print("  sin frame...")
                 continue
-            result = _measure(frame_bgr, camera_slot, pipeline, analyze)
+            result = _measure(frame_bgr, camera_slot, pipeline, analyze, preprocess)
             measurements.append(dict(result.metrics))
-            _print_measurement(time.strftime("%H:%M:%S"), result, diagnose)
+            _print_measurement(time.strftime("%H:%M:%S"), result, diagnose, raw_bgr=frame_bgr)
             if args.no_window:
                 continue
             _show(result, annotate, overlay_options)
@@ -177,24 +186,55 @@ def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
             if action == "quit":
                 return
             if action == "save":
-                _save(result)
+                _save(result, frame_bgr)
     finally:
         driver.disconnect()
 
 
 # ── Medición y presentación ──────────────────────────────────────────────────
 
+def _build_preprocessor(config: ConfigManager):
+    """
+    Corrector de lente y después ajuste de imagen, como los encadena `main.py`, o None.
+
+    Es lo que hace que este script mida el mismo frame que la app: sin esto el modelo y el
+    umbral de fondo oscuro verían el frame crudo, que no es el que mide el equipo.
+    """
+    camera_slots = tuple(config.get("cameras", {}) or {})
+    steps = [step for step in (
+        build_undistorter({slot: config.get(f"cameras.{slot}.calibration", {}) or {}
+                           for slot in camera_slots}),
+        build_image_adjust({slot: config.get(f"cameras.{slot}.image_adjust", {}) or {}
+                            for slot in camera_slots}),
+    ) if step is not None]
+    if not steps:
+        return None
+
+    def preprocess(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
+        for step in steps:
+            frame_bgr = step(frame_bgr, camera_slot)
+        return frame_bgr
+
+    preprocess.__name__ = " + ".join(getattr(step, "__name__", repr(step)) for step in steps)
+    return preprocess
+
+
 def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: BeltPipeline,
-             analyze) -> InferenceResult:
-    """Un resultado completo, por el mismo camino que el motor: pipeline y después analyzer."""
+             analyze, preprocess=None) -> InferenceResult:
+    """
+    Un resultado completo, por el mismo camino que el motor: preprocessor, pipeline y
+    analyzer. Lo que devuelve el preprocessor es el frame de referencia, y es el que queda
+    en `source_bgr`.
+    """
+    reference_bgr = preprocess(frame_bgr, camera_slot) if preprocess else frame_bgr
     started_s = time.perf_counter()
-    detections = pipeline.run(frame_bgr, camera_slot)
+    detections = pipeline.run(reference_bgr, camera_slot)
     elapsed_ms = (time.perf_counter() - started_s) * 1000
     result = InferenceResult(
         camera_slot=camera_slot,
         pipeline_slot=pipeline.pipeline_slot,
         detections=detections,
-        source_bgr=frame_bgr,
+        source_bgr=reference_bgr,
         inference_time_ms=elapsed_ms,
         stage_times_ms=dict(pipeline.stage_times_ms),
         labels=dict(pipeline.labels),
@@ -207,13 +247,20 @@ def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: BeltPipeline,
     return result
 
 
-def _print_measurement(label: str, result: InferenceResult, diagnose=None):
-    """Una línea por medición, con el luma que sirve para calibrar la exposición."""
+def _print_measurement(label: str, result: InferenceResult, diagnose=None,
+                       raw_bgr: np.ndarray | None = None):
+    """
+    Una línea por medición. `luma` es la del frame que se midió —la que ve el umbral— y
+    `luma_cruda` la del sensor, que sale sólo si el preprocessor cambió la imagen.
+    """
     gray = cv2.cvtColor(result.source_bgr, cv2.COLOR_BGR2GRAY)
     percentages = "  ".join(
         f"{name}={value}" for name, value in sorted(result.metrics.items())
         if name.startswith("pct_"))
-    print(f"  {label}  luma={float(gray.mean()):5.1f}  det={len(result.detections):4d}  "
+    raw_luma = ""
+    if raw_bgr is not None and raw_bgr is not result.source_bgr:
+        raw_luma = f"  luma_cruda={float(cv2.cvtColor(raw_bgr, cv2.COLOR_BGR2GRAY).mean()):5.1f}"
+    print(f"  {label}  luma={float(gray.mean()):5.1f}{raw_luma}  det={len(result.detections):4d}  "
           f"conf={result.confidence_pct:5.1f}  {result.inference_time_ms:6.1f} ms  "
           f"{percentages}")
     if diagnose is not None:
@@ -300,10 +347,11 @@ def _wait_key() -> str:
     return "save" if key == ord("g") else ""
 
 
-def _save(result: InferenceResult):
+def _save(result: InferenceResult, raw_bgr: np.ndarray):
+    """Guarda el frame del sensor, no el ajustado: así vuelve a entrar por `--frames`."""
     stamp = time.strftime("%Y%m%d_%H%M%S")
     folder = Path(__file__).parent
-    cv2.imwrite(str(folder / f"{stamp}_raw.png"), result.source_bgr)
+    cv2.imwrite(str(folder / f"{stamp}_raw.png"), raw_bgr)
     if result.annotated_bgr is not None:
         cv2.imwrite(str(folder / f"{stamp}_annotated.png"), result.annotated_bgr)
     print(f"    guardado {stamp}_raw.png / _annotated.png")
@@ -318,7 +366,9 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--json", default="", help="archivo donde guardar las mediciones")
     parser.add_argument("--no-window", action="store_true", help="sin ventana, sólo consola")
     parser.add_argument("--no-refine", action="store_true",
-                        help="carga el modelo sin umbrales de fondo oscuro, para comparar")
+                        help="arma el pipeline sin umbrales de fondo oscuro, para comparar")
+    parser.add_argument("--adjusted", action="store_true",
+                        help="las imágenes de --frames ya traen image_adjust (las del dataset)")
     return parser.parse_args(argv)
 
 
