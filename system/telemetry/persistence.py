@@ -58,7 +58,7 @@ _DEFAULT_BACKEND_CLASSES = (InfluxDBBackend, MqttBackend)
 
 _QUEUE_MAXSIZE = 100      # puntos en vuelo; llena, se descarta el que llega
 _QUEUE_POLL_S = 0.5       # espera por punto, y latencia máxima de la parada
-_PUBLISH_INTERVAL_S = 10  # ventana de acumulación; con _QUEUE_MAXSIZE, tope de 10 puntos/s
+_PUBLISH_INTERVAL_S = 10  # ventana de acumulación; el hilo drena la cola de continuo
 
 
 class PersistenceThread(QThread):
