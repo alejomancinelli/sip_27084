@@ -71,6 +71,7 @@ se avisa una vez: el nombre de la métrica es el contrato con el integrador.
 """
 
 import argparse
+import dataclasses
 import logging
 import logging.handlers
 import os
@@ -977,10 +978,13 @@ class Application(QObject):
         # Telemetría: al buzón, no a la cola. Lo publica el tick, agregado, porque una
         # serie por resultado escala con los fps y no agrega información. Los no
         # confiables entran igual: cuántos se cayeron y por qué es justo lo que se quiere
-        # poder preguntar después.
+        # poder preguntar después. Entra sin los frames ni las detecciones, que el tick no
+        # lee: guardado entero, cada resultado retenía dos frames de 9 MB y sus máscaras
+        # hasta el tick siguiente.
         self._pending_results.setdefault(
             (result.camera_slot, result.pipeline_slot), []
-        ).append(result)
+        ).append(dataclasses.replace(result, source_bgr=None, annotated_bgr=None,
+                                     detections=[]))
         self._store_metrics(result)
 
     def _send_to_dataset(self, result: InferenceResult):

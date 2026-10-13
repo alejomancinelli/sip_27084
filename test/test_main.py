@@ -351,6 +351,22 @@ class TestDatasetGating:
         app._on_cycle_complete(result)
         assert app.sent == [result]
 
+    def test_the_telemetry_keeps_the_numbers_without_the_frames(self):
+        """Guardado entero, cada resultado retenía dos frames de 9 MB hasta el tick."""
+        from system.inference.result import Detection
+        app = self._application(collector_active=False)
+        result = _belt_result(70.0, 30.0, 60.0)
+        result.source_bgr = np.zeros((8, 8, 3), np.uint8)
+        result.annotated_bgr = np.zeros((8, 8, 3), np.uint8)
+        result.detections = [Detection(class_index=0, class_name="pellet",
+                                       confidence_pct=90.0, bbox_px=(0, 0, 4, 4))]
+        app._on_cycle_complete(result)
+
+        (kept,) = app._pending_results[("camera_1", "")]
+        assert (kept.source_bgr, kept.annotated_bgr, kept.detections) == (None, None, [])
+        assert kept.metrics == result.metrics and kept.timestamp_s == result.timestamp_s
+        assert result.source_bgr is not None, "el resultado original no se toca"
+
 
 class TestHourlyMeans:
     """Lo que entra a las ventanas de la hora con cada tick, y cómo se publica."""
