@@ -113,6 +113,20 @@ class TestProtectedWeights:
         assert model._get_class_name(1) == "tuerca"
         assert model.min_confidence_pct == 30.0
 
+    def test_the_class_names_are_those_of_the_weights(self, tmp_path, with_key):
+        """Lo que un pipeline confronta: los nombres que el modelo de verdad usa."""
+        raw = ew.pack(_WEIGHTS, _KEY, {"class_names": ["tornillo", "tuerca"]})
+        model = _model(_write(tmp_path, "best.pt.enc", raw), class_names=["viejo"])
+        assert model.class_names == ("tornillo", "tuerca")
+
+    def test_without_names_in_the_weights_they_come_from_the_config(self, tmp_path,
+                                                                    without_key):
+        model = _model(_write(tmp_path, "best.pt", _WEIGHTS), class_names=["a", "b"])
+        assert model.class_names == ("a", "b")
+
+    def test_a_model_that_declares_no_names_has_none(self, tmp_path, without_key):
+        assert _model(_write(tmp_path, "best.pt", _WEIGHTS)).class_names == ()
+
     def test_the_config_still_answers_what_the_metadata_does_not_declare(self, tmp_path,
                                                                         with_key):
         raw = ew.pack(_WEIGHTS, _KEY, {"class_names": ["tornillo"]})

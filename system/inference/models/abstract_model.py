@@ -207,6 +207,17 @@ class AbstractModel(ABC):
         """Confianza mínima de una detección para salir de `predict()`, 0–100."""
         return float(self._get_option("min_confidence_pct", _DEFAULT_MIN_CONFIDENCE_PCT))
 
+    @property
+    def class_names(self) -> tuple[str, ...]:
+        """
+        Nombres de clase por índice: los de los pesos si los declaran, si no los del config.
+
+        Vacío si nadie los declara. Es lo que un pipeline que sabe qué clases espera
+        confronta después de `load()`: un modelo con las clases en otro orden no falla, da
+        todos los porcentajes invertidos.
+        """
+        return tuple(str(name) for name in (self._get_option("class_names", []) or []))
+
     def _get_option(self, key: str, default: object = None) -> object:
         """
         Valor de `inference.models.<slot>.<key>`, con su default.
