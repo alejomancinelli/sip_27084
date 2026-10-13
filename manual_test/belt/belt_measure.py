@@ -89,9 +89,9 @@ def main(argv: list | None = None) -> int:
     belt_roi_px = config.get("process.belt_roi_px", {}) or {}
     thresholds = dark_background_threshold.get(camera_slot) or {}
     analyze = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px)
-    # El refinamiento lo aplica el modelo sobre sus máscaras, así que acá no se puede
+    # El refinamiento lo aplica el pipeline sobre las máscaras, así que acá no se puede
     # deshacer: para comparar hay que correr el script otra vez con `--no-refine`, que
-    # carga el modelo sin umbrales. Es lo que separa «el umbral se está comiendo la clase»
+    # arma el pipeline sin umbrales. Es lo que separa «el umbral se está comiendo la clase»
     # de «el modelo no la detecta», que desde el resultado final se ven igual.
     diagnose = _Diagnosis(thresholds) if thresholds else None
     overlay_options = overlay.OverlayOptions(

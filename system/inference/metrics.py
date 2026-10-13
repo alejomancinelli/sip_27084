@@ -58,8 +58,8 @@ def build_analyzer(*, class_names: list, belt_roi_px: dict) -> Callable:
     carga contra el frame entero.
 
     **El refinamiento de fondo oscuro no está acá**, aunque el proyecto lo use: lo aplica el
-    modelo sobre sus propias máscaras, para que la que se mide y la que se dibuja sean la
-    misma. Ver `models/yolo_seg_model.py`.
+    pipeline sobre las máscaras del segmentador, para que la que se mide y la que se dibuja
+    sean la misma. Ver `pipeline.py`.
     """
     ordered_names = [str(name) for name in (class_names or [])]
 
@@ -143,7 +143,7 @@ def _count_union_px_by_class(detections: list,
     máscaras del overlay, para que lo que se ve y lo que se mide no discrepen. El pipeline
     las entrega de menor a mayor confianza, así que la última es la más confiable.
 
-    Las máscaras llegan ya refinadas: lo que el modelo descartó por oscuro no viene en
+    Las máscaras llegan ya refinadas: lo que el pipeline descartó por oscuro no viene en
     ellas, así que acá sólo se cuenta.
     """
     if not detections:
