@@ -53,6 +53,8 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
       gpio_control.py         entradas y salidas digitales sobre libgpiod; sin ella, simulado
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+        capture_scheduler.py  el ciclo de N frames por medición; con `frames_per_cycle: 1`,
+                              un pass-through, que es como corre este proyecto
         lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio

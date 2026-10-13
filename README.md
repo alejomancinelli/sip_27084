@@ -22,11 +22,12 @@ viene del template está en [CLAUDE.md](CLAUDE.md), junto con los contratos entr
 las decisiones vigentes; las convenciones de nombres, comentarios y límites, en
 `.claude/skills/`.
 
-> **Antes de poner esto en producción hay dos cosas que se deciden mirando la cinta**: subir
-> la exposición de la cámara hasta que el frame crudo tenga el nivel con el que el modelo
-> viene trabajando —la versión anterior lo amplificaba por software y eso ya no llega a la
-> inferencia— y recalibrar `process.dark_background_threshold` contra esa imagen. Ver
-> «Qué todavía no existe» en [CLAUDE.md](CLAUDE.md).
+> **La imagen que se mide es la de la versión anterior, y los tres números van juntos**: la
+> exposición de 800 µs, el ajuste de ×4.6 de `cameras.camera_1.image_adjust` y el umbral de
+> fondo oscuro de 60 —sólo para desmenuzado— en `process.dark_background_threshold`, que está
+> calibrado contra la imagen ya ajustada. Cambiar la exposición o el factor obliga a
+> recalibrar el umbral mirando la cinta. Ver «El brillo de la versión anterior se reproduce
+> en la medición» en [CLAUDE.md](CLAUDE.md).
 
 ## Cómo se corre
 

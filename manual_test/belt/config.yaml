@@ -32,7 +32,6 @@ inference:
     draw_masks: true
     draw_labels: false
     draw_roi: true
-    draw_summary: false
     draw_timestamp: true
     font_scale: 0.6
     thickness: 2

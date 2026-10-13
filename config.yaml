@@ -23,8 +23,8 @@ system:
 
 ui:
   # La interfaz. Los textos que ve el operador salen de ui/strings.py, que es la tabla
-  # de idiomas; `language` elige la columna. `language` y `dark_mode` son las únicas dos
-  # claves que la UI aplica sin reiniciar la app.
+  # de idiomas; `language` elige la columna y toma efecto al reiniciar. `dark_mode` es la
+  # única clave que la UI aplica sin reiniciar la app.
   enabled: true                 # false = sin ventana (headless), igual que `main.py --headless`
   language: es                  # es | en | pt
   dark_mode: true
@@ -131,7 +131,6 @@ inference:
     draw_labels: false          # ídem: el reparto ya lo dice el panel de composición
     draw_roi: true
     crop_to_roi: false          # true = anota sólo el recorte analizado, no el frame entero
-    draw_summary: false         # el panel de este proyecto lo dibuja annotations.py
     draw_timestamp: true
     # Tamaño del texto del panel y del timestamp. Está calibrado para el frame completo
     # de esta cámara: el default del template es para un recorte chico y acá se lee con
