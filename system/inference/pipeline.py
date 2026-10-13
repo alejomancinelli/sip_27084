@@ -36,15 +36,29 @@ para que los dos consumidores, que comparten el orden, sigan diciendo lo mismo.
 
 Los umbrales llegan **leídos**, como los del analyzer y los annotators: los lee `main.py`
 de la sección `process` y esta clase se testea con tres números y sin archivo.
+
+**Las clases de esta cinta están en el código, no en el config.** De cada nombre sale el de
+su métrica —`pct_pellet_norm`— y con él el registro que lee el PLC, así que no es algo que
+se edite en planta: `CLASS_NAMES` es la única declaración, y de acá la leen el cableado, el
+analyzer, el panel y la pestaña de proceso. El pipeline nombra cada detección por su índice
+con esta tupla, y al cargar la confronta con los nombres que traen los pesos: un modelo con
+las clases en otro orden no da un error, da todos los porcentajes invertidos, y por eso el
+pipeline no arranca y deja el motivo en el log. Un modelo que no declara nombres —el mock—
+no tiene contra qué confrontarse y se nombra igual.
 """
 
 import cv2
 import numpy as np
 
+from system.logger import logger
+
 from .abstract_pipeline import AbstractPipeline
 from .result import Detection
 
 _SEGMENTER_SLOT = "segmenter"
+
+# Por índice del modelo: 0 = desmenuzado, 1 = pellet, confirmado contra el `.engine`.
+CLASS_NAMES = ("desmenuzado", "pellet")
 
 
 class BeltPipeline(AbstractPipeline):
@@ -61,9 +75,36 @@ class BeltPipeline(AbstractPipeline):
                  dark_background_threshold: dict | None = None):
         super().__init__(config_manager, pipeline_slot)
         self._dark_background_threshold = dark_background_threshold or {}
+        self._class_mismatch = ""
+
+    @property
+    def is_loaded(self) -> bool:
+        """Cargado, y con un modelo cuyas clases son las de `CLASS_NAMES`."""
+        return super().is_loaded and not self._class_mismatch
+
+    def get_status(self) -> dict:
+        """El de la base, más `class_error`: por qué no arranca aunque el modelo cargó."""
+        status = super().get_status()
+        status["class_error"] = self._class_mismatch or None
+        return status
+
+    def load(self):
+        super().load()
+        model = self._models.get(_SEGMENTER_SLOT)
+        declared = model.class_names if model is not None else ()
+        self._class_mismatch = ""
+        if declared and tuple(declared) != CLASS_NAMES:
+            self._class_mismatch = (
+                f"los pesos declaran las clases {list(declared)} y el pipeline espera "
+                f"{list(CLASS_NAMES)}, en ese orden")
+            logger.error(f"[Inference] Pipeline '{self.pipeline_slot}' no arranca: "
+                         f"{self._class_mismatch}. Medir así invertiría los porcentajes.")
 
     def _run(self, frame_bgr: np.ndarray, camera_slot: str) -> list[Detection]:
         detections = self._run_stage(_SEGMENTER_SLOT, frame_bgr)
+        for detection in detections:
+            if 0 <= detection.class_index < len(CLASS_NAMES):
+                detection.class_name = CLASS_NAMES[detection.class_index]
         detections = self._drop_dark_background(detections, frame_bgr, camera_slot)
         return sorted(detections, key=lambda detection: detection.confidence_pct)
 

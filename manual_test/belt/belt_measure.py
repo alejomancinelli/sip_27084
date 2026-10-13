@@ -4,9 +4,9 @@ Mide la cinta con el modelo real y muestra los números, para la puesta en march
 Es la prueba que cierra las tres cosas que no se pueden decidir sin el equipo delante:
 
   1. **Que el `.engine` carga y las clases están en el orden correcto.** Invertirlas
-     invierte todos los porcentajes sin que nada falle, así que el script imprime el
-     reparto por clase y el anotado los pinta: pellet en verde, desmenuzado en rojo. Si
-     los colores están cambiados, hay que dar vuelta `class_names` en el config.
+     invierte todos los porcentajes sin que nada falle. El pipeline confronta las clases
+     que declaran los pesos con `CLASS_NAMES` y no arranca si no coinciden; el script
+     imprime las dos listas, y el anotado pinta pellet en verde y desmenuzado en rojo.
   2. **Que la imagen que se mide es la de la versión anterior.** Como la app, el script
      corrige el lente y aplica `cameras.<slot>.image_adjust` —el ×4.6 a 800 µs— antes de
      inferir, así que `luma` es el nivel del frame ajustado: el mismo contra el que se
@@ -56,7 +56,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from system.config_manager import ConfigManager                         # noqa: E402
 from system.inference import annotations, metrics, overlay              # noqa: E402
-from system.inference.pipeline import BeltPipeline                      # noqa: E402
+from system.inference.pipeline import CLASS_NAMES, BeltPipeline         # noqa: E402
 from system.inference.result import InferenceResult                     # noqa: E402
 from tools.camera.camera_factory import create_camera                   # noqa: E402
 from tools.image.enhance import build_image_adjust                      # noqa: E402
@@ -85,7 +85,7 @@ def main(argv: list | None = None) -> int:
     pipeline = BeltPipeline(config, args.pipeline,
                             dark_background_threshold=dark_background_threshold)
     pipeline.load()
-    _report_pipeline(pipeline, config)
+    _report_pipeline(pipeline)
     preprocess = _build_preprocessor(config)
     print(f"Preprocessor: {preprocess.__name__ if preprocess else 'ninguno, se mide el crudo'}"
           f"{' (no se aplica a --frames: vienen ajustadas)' if args.adjusted else ''}")
@@ -93,10 +93,9 @@ def main(argv: list | None = None) -> int:
         print("\nNingún modelo cargó: lo que salga no es una medición. Se sigue igual para "
               "poder ver la imagen.")
 
-    class_names = config.get(f"inference.models.{args.model}.class_names", []) or []
     belt_roi_px = config.get("process.belt_roi_px", {}) or {}
     thresholds = dark_background_threshold.get(camera_slot) or {}
-    analyze = metrics.build_analyzer(class_names=class_names, belt_roi_px=belt_roi_px)
+    analyze = metrics.build_analyzer(class_names=list(CLASS_NAMES), belt_roi_px=belt_roi_px)
     # El refinamiento lo aplica el pipeline sobre las máscaras, así que acá no se puede
     # deshacer: para comparar hay que correr el script otra vez con `--no-refine`, que
     # arma el pipeline sin umbrales. Es lo que separa «el umbral se está comiendo la clase»
@@ -110,7 +109,7 @@ def main(argv: list | None = None) -> int:
     annotate = annotations.chain(
         annotations.belt_roi_annotator(config.get("process.belt_roi_px", {}) or {}),
         annotations.composition_panel_annotator(
-            config.get(f"inference.models.{args.model}.class_names", []) or [],
+            list(CLASS_NAMES),
             class_colors_bgr=overlay_options.class_colors_bgr),
     )
 
@@ -292,7 +291,7 @@ class _Diagnosis:
         print(f"      luma p5/p25/p50/p75/p95 = {percentiles}")
 
 
-def _report_pipeline(pipeline: BeltPipeline, config: ConfigManager):
+def _report_pipeline(pipeline: BeltPipeline):
     """Qué cargó y con qué clases: es lo primero que hay que confirmar contra el `.engine`."""
     status = pipeline.get_status()
     print(f"\nPipeline '{status['pipeline_slot']}' - cargado: {status['loaded']}")
@@ -301,12 +300,13 @@ def _report_pipeline(pipeline: BeltPipeline, config: ConfigManager):
               f"{'  SINTETICO' if model_status['synthetic'] else ''}")
         if model_status["error"]:
             print(f"    motivo: {model_status['error']}")
-        names = config.get(f"inference.models.{model_slot}.class_names", []) or []
-        for index, name in enumerate(names):
-            print(f"    clase {index} = {name}")
-    print("\n  El indice de clase lo decide el archivo de pesos; el nombre y el color, el "
-          "config.\n  Si el anotado pinta el pellet de rojo, hay que dar vuelta "
-          "`class_names`.\n")
+    print(f"  clases esperadas: "
+          f"{', '.join(f'{i}={name}' for i, name in enumerate(CLASS_NAMES))}")
+    if status["class_error"]:
+        print(f"  NO ARRANCA: {status['class_error']}.")
+    print("\n  Las clases de los pesos salen en el log, al cargar el modelo. Si el modelo no "
+          "las declara\n  y el anotado pinta el pellet de rojo, tiene las clases en otro "
+          "orden.\n")
 
 
 def _report_summary(measurements: list):

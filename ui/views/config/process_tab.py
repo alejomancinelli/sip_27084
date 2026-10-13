@@ -9,9 +9,8 @@ se mide en la siguiente instalación. Acá están los tres parámetros de este e
     dibuja sobre el anotado. Se puede escribir a mano o dibujar sobre el video en vivo, que
     es como se hace en planta.
   - **El umbral de fondo oscuro**, por cámara y por clase. Depende de la iluminación y de
-    la exposición, que son de cada montaje. Sólo aparecen las clases que los modelos
-    declaran en `class_names`: son datos de configuración y no identificadores, así que la
-    pestaña las lee en vez de nombrarlas.
+    la exposición, que son de cada montaje. Las clases son las de `CLASS_NAMES` del
+    pipeline, que es su única declaración: la pestaña las lee de ahí en vez de nombrarlas.
   - **La ventana de las medias**, que es sobre cuánto tiempo se promedian las tendencias
     que lee el PLC.
 
@@ -33,6 +32,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
+from system.inference.pipeline import CLASS_NAMES
 
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
@@ -55,9 +55,6 @@ _BELT_ROI_FIELDS = (
 
 _BELT_ROI_PREFIX = "process.belt_roi_px"
 _DARK_THRESHOLD_PREFIX = "process.dark_background_threshold"
-# De dónde salen las clases que se ofrecen: el umbral es de `process:`, pero qué clases hay
-# lo declara cada modelo y no esta pestaña.
-_MODELS_PREFIX = "inference.models"
 _WINDOW_KEY = "process.rolling_window_s"
 
 
@@ -202,15 +199,14 @@ class _CameraProcessForm(QWidget):
 
     def _build_dark_background_box(self) -> QWidget:
         """
-        Un umbral por clase de cada modelo declarado.
+        Un umbral por cada clase de `CLASS_NAMES`.
 
-        Las clases se leen del modelo y no se escriben acá: son datos de configuración, y
-        una lista propia en la interfaz es una que puede discrepar con la que de verdad
-        usa la inferencia.
+        Las clases se leen del pipeline y no se escriben acá: una lista propia en la
+        interfaz es una que puede discrepar con la que de verdad usa la inferencia.
         """
         box, form = build_group_box(tr("process_box_dark"))
         self._threshold_spins = {}
-        for class_name in self._get_class_names():
+        for class_name in CLASS_NAMES:
             spin = build_spin_box(0, _MAX_LUMA, 0)
             spin.setSpecialValueText(tr("process_dark_off"))
             self._threshold_spins[class_name] = add_form_row(
@@ -221,21 +217,6 @@ class _CameraProcessForm(QWidget):
     def _get_thresholds(self) -> dict:
         return (self._config.get(_DARK_THRESHOLD_PREFIX, {})
                 or {}).get(self._camera_slot, {}) or {}
-
-    def _get_class_names(self) -> list:
-        """
-        Clases de todos los modelos declarados, sin repetir y en orden.
-
-        Se recorren todos porque la pestaña no tiene por qué saber cómo se llama el modelo
-        de este proyecto: un pipeline de dos etapas tiene dos, y las dos pueden refinar.
-        """
-        names = []
-        for model_slot in (self._config.get(_MODELS_PREFIX, {}) or {}):
-            for class_name in (self._config.get(
-                    f"{_MODELS_PREFIX}.{model_slot}.class_names", []) or []):
-                if str(class_name) not in names:
-                    names.append(str(class_name))
-        return names
 
     def _get_belt_roi(self) -> dict:
         return (self._config.get(_BELT_ROI_PREFIX, {}) or {}).get(self._camera_slot, {}) or {}

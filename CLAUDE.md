@@ -319,12 +319,18 @@ siguen vienen del template.
   son los `name:`, que son el contrato con el código y no con el PLC. Dos excepciones: el
   registro 51 pasó del enum 0-5 al bitfield del template —que es lo que transporta el bit de
   lente sucio— y se agregaron 97-99 sobre direcciones que estaban libres.
-- **El nombre de una clase es dato de configuración y decide el nombre de su métrica.** De
-  `inference.models.segmenter.class_names` salen `pct_pellet` y `pct_pellet_norm`; invertir
-  ese orden invierte en silencio todos los porcentajes. El orden está confirmado contra el
-  `.engine`: 0 = desmenuzado, 1 = pellet. Se declara una sola vez, ahí: el analyzer y el
-  annotator lo reciben leído por `main.py`, y el refinamiento de fondo oscuro lo nombra
-  desde `process:`.
+- **Las clases de esta cinta están en el código y no en el config, y deciden el nombre de
+  sus métricas.** De `CLASS_NAMES` en `system/inference/pipeline.py` salen `pct_pellet` y
+  `pct_pellet_norm`, y con ellos los registros que lee el PLC: no es algo que se edite en
+  planta, y un orden invertido invierte en silencio todos los porcentajes. Se declaran una
+  sola vez, ahí: el pipeline nombra cada detección por su índice, el cableado se los pasa al
+  analyzer, al panel y a las medias de la hora, y la pestaña de proceso los lee para los
+  umbrales de fondo oscuro. Al cargar, el pipeline los confronta con los que traen los
+  pesos —el `.engine` los guarda en su cabecera— y con otros no arranca, con el motivo en el
+  log: 0 = desmenuzado, 1 = pellet. El template sigue leyendo `class_names` del config para
+  los forks que no declaran sus clases; en este la clave no está, y lo que se escriba en la
+  pestaña de inferencia no cambia ninguna medición: los nombres de los pesos le ganan, y si
+  los pesos no traen, el pipeline lo confronta igual y no arranca con otros.
 - **El color de una clase va por índice y tiene un solo dueño:
   `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo. Con
   esa paleta el motor pinta las máscaras y el panel de composición pinta sus filas —`main.py`

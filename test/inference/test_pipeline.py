@@ -9,7 +9,7 @@ import pytest
 
 from system.inference.models.abstract_model import AbstractModel
 from system.inference.abstract_pipeline import AbstractPipeline
-from system.inference.pipeline import BeltPipeline
+from system.inference.pipeline import CLASS_NAMES, BeltPipeline
 from system.inference.result import Detection
 
 _PIPELINE = "pipeline_1"
@@ -148,7 +148,7 @@ class TestRunning:
         pipeline = BeltPipeline(config, _PIPELINE)
         pipeline.load()
         detections = pipeline.run(_frame(), _SLOT)
-        assert [d.class_name for d in detections] == ["segmenter"]
+        assert [d.class_index for d in detections] == [0]
         assert len(model.calls) == 1
 
     def test_a_stage_without_a_model_returns_nothing(self, monkeypatch):
@@ -280,7 +280,8 @@ class TestDarkBackground:
     def _detection(self, class_name: str = "desmenuzado") -> Detection:
         """Detección que cubre el frame entero, para que el recorte por luma se vea solo."""
         mask = np.ones((40, 40), np.uint8)
-        return Detection(class_index=0, class_name=class_name, confidence_pct=90.0,
+        return Detection(class_index=CLASS_NAMES.index(class_name), class_name=class_name,
+                         confidence_pct=90.0,
                          bbox_px=(0, 0, 40, 40), area_px=int(mask.sum()), mask=mask)
 
     def _frame(self) -> np.ndarray:
@@ -375,3 +376,51 @@ class TestOverlapGoesToTheMostConfident:
         computed = analyzer(result)
 
         assert (computed["pct_pellet_norm"], computed["pct_desmenuzado_norm"]) == (75.0, 25.0)
+
+
+# ── Las clases de esta cinta ─────────────────────────────────────────────────
+
+class TestClassNames:
+    """
+    Las clases son las de `CLASS_NAMES`, y el modelo tiene que declarar las mismas.
+
+    Un modelo con las clases en otro orden no da un error: da todos los porcentajes
+    invertidos. Por eso el pipeline no arranca con él.
+    """
+
+    def _pipeline(self, monkeypatch, declared: list | None) -> BeltPipeline:
+        section = {"type": "mock"}
+        if declared is not None:
+            section["class_names"] = declared
+        config = _MockConfig(segmenter=section)
+        model = _FakeModel(config, "segmenter")
+        model.detections = [Detection(class_index=index, class_name="cualquiera",
+                                      confidence_pct=90.0, bbox_px=(0, 0, 10, 10))
+                            for index in range(len(CLASS_NAMES))]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline.load()
+        return pipeline
+
+    def test_each_detection_is_named_by_its_index(self, monkeypatch):
+        """El nombre no lo decide el modelo ni el config: sale de `CLASS_NAMES`."""
+        detections = self._pipeline(monkeypatch, None).run(_frame(), _SLOT)
+        assert {d.class_index: d.class_name for d in detections} == dict(enumerate(CLASS_NAMES))
+
+    def test_a_model_that_declares_the_same_classes_loads(self, monkeypatch):
+        assert self._pipeline(monkeypatch, list(CLASS_NAMES)).is_loaded
+
+    def test_a_model_with_the_classes_swapped_does_not_load(self, monkeypatch, caplog):
+        with caplog.at_level("ERROR"):
+            pipeline = self._pipeline(monkeypatch, list(reversed(CLASS_NAMES)))
+        assert not pipeline.is_loaded
+        assert pipeline.get_status()["class_error"]
+        assert "invertiría los porcentajes" in caplog.text
+
+    def test_a_model_with_other_classes_does_not_load(self, monkeypatch):
+        assert not self._pipeline(monkeypatch, ["pellet", "polvo", "piedra"]).is_loaded
+
+    def test_a_model_that_declares_nothing_loads(self, monkeypatch):
+        """El mock no declara nombres: no hay contra qué confrontarlo, y se nombra igual."""
+        pipeline = self._pipeline(monkeypatch, None)
+        assert pipeline.is_loaded and pipeline.get_status()["class_error"] is None

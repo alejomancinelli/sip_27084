@@ -61,9 +61,6 @@ inference:
       path: ./models/pellet_20260623_fp16.engine
       min_confidence_pct: 20
       max_side_px: 0
-      class_names:
-      - desmenuzado
-      - pellet
       params: {}
 lens_health:
   enabled: true

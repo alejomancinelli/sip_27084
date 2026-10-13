@@ -78,9 +78,6 @@ inference:
       path: ''
       min_confidence_pct: 40
       max_side_px: 0
-      class_names:
-      - desmenuzado
-      - pellet
       params:
         detection_count: 8
         with_masks: true

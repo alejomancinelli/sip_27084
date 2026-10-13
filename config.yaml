@@ -137,8 +137,8 @@ inference:
     # lupa. Con 0 se calcula del ancho del frame, pero topea en 1.0 y se queda corto.
     font_scale: 1.6
     thickness: 2
-    # Por índice de clase, en el orden de `class_names` del modelo: desmenuzado rojo,
-    # pellet verde. Son los mismos colores con los que el operador viene leyendo la cinta.
+    # Por índice de clase, en el orden de `CLASS_NAMES` de system/inference/pipeline.py:
+    # desmenuzado rojo, pellet verde. Son los mismos colores con los que el operador viene leyendo la cinta.
     class_colors_bgr: [[0, 0, 255], [0, 255, 0]]
   pipelines:
     pipeline_1:
@@ -166,9 +166,9 @@ inference:
       # disponible y cae a CPU con un warning si no.
       min_confidence_pct: 20    # bajo a propósito: se cuentan muchas instancias chicas
       max_side_px: 0            # lado mayor al que se reduce antes de inferir; 0 = nativo
-      # El índice es el que devuelve el framework. El orden de acá decide qué color y qué
-      # nombre de métrica le toca a cada clase: invertirlo invierte todos los porcentajes.
-      class_names: [desmenuzado, pellet]
+      # Sin `class_names` a propósito: las clases de esta cinta están en `CLASS_NAMES` de
+      # system/inference/pipeline.py, porque de ellas salen los nombres de las métricas y
+      # de los registros. El pipeline las confronta con las que traen los pesos al cargar.
       params: {}
 
 image_collector:

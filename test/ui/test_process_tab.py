@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication                              # noqa: E402
 
+from system.inference.pipeline import CLASS_NAMES                       # noqa: E402
 from ui.views.config.process_tab import ProcessTab                      # noqa: E402
 
 _SLOT = "camera_1"
@@ -39,7 +40,6 @@ class _MockConfig:
             "cameras": {_SLOT: {"name": "Cinta"}},
             f"cameras.{_SLOT}.name": "Cinta",
             "inference.models": {"segmenter": {}},
-            "inference.models.segmenter.class_names": ["desmenuzado", "pellet"],
             "process.belt_roi_px": {_SLOT: dict(_BELT_ROI)},
             "process.dark_background_threshold": {_SLOT: {"desmenuzado": 60}},
             "process.rolling_window_s": 3600,
@@ -64,25 +64,18 @@ def _tab(**overrides) -> tuple[ProcessTab, _MockConfig]:
 # ── De dónde salen los campos ────────────────────────────────────────────────
 
 class TestFields:
-    def test_it_shows_one_threshold_per_declared_class(self):
-        """Las clases se leen del modelo: una lista propia acá podría discrepar."""
+    def test_it_shows_one_threshold_per_class_of_the_pipeline(self):
+        """Las clases se leen del pipeline: una lista propia acá podría discrepar."""
         tab, _ = _tab()
-        assert list(tab._forms[_SLOT]._threshold_spins) == ["desmenuzado", "pellet"]
+        assert tuple(tab._forms[_SLOT]._threshold_spins) == CLASS_NAMES
 
-    def test_classes_of_every_model_are_covered(self):
+    def test_a_class_written_in_the_config_is_not_offered(self):
+        """Las clases no se editan en planta: el config no agrega una fila."""
         tab, _ = _tab(**{
-            "inference.models": {"segmenter": {}, "classifier": {}},
-            "inference.models.classifier.class_names": ["polvo"],
+            "inference.models": {"segmenter": {}},
+            "inference.models.segmenter.class_names": ["polvo"],
         })
-        assert "polvo" in tab._forms[_SLOT]._threshold_spins
-
-    def test_a_class_declared_twice_appears_once(self):
-        """El umbral es por cámara y por clase: dos modelos con la misma clase, una fila."""
-        tab, _ = _tab(**{
-            "inference.models": {"segmenter": {}, "other": {}},
-            "inference.models.other.class_names": ["pellet"],
-        })
-        assert list(tab._forms[_SLOT]._threshold_spins).count("pellet") == 1
+        assert "polvo" not in tab._forms[_SLOT]._threshold_spins
 
     def test_one_sub_tab_per_camera(self):
         tab, _ = _tab(**{

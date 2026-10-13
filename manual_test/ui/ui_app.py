@@ -140,7 +140,7 @@ from system.config_manager import ConfigManager                          # noqa:
 from system.formats import camera_health, com_status, system_status       # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
 from system.inference import annotations, metrics                        # noqa: E402
-from system.inference.pipeline import BeltPipeline                       # noqa: E402
+from system.inference.pipeline import CLASS_NAMES, BeltPipeline          # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
@@ -368,14 +368,13 @@ class _DemoApp(QObject):
                              dark_background_threshold=config.get(
                                  "process.dark_background_threshold", {}) or {}),
                 analyzer=metrics.build_analyzer(
-                    class_names=config.get(
-                        "inference.models.segmenter.class_names", []) or [],
+                    class_names=list(CLASS_NAMES),
                     belt_roi_px=config.get("process.belt_roi_px", {}) or {}),
                 annotator=annotations.chain(
                     annotations.belt_roi_annotator(
                         config.get("process.belt_roi_px", {}) or {}),
                     annotations.composition_panel_annotator(
-                        config.get("inference.models.segmenter.class_names", []) or [],
+                        list(CLASS_NAMES),
                         class_colors_bgr=tuple(tuple(color) for color in (config.get(
                             "inference.overlay.class_colors_bgr", []) or [])))),
                 annotate_gate=self._is_annotated_watched,

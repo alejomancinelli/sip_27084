@@ -231,6 +231,34 @@ class TestLoad:
     def test_weights_without_a_header_have_no_metadata(self, weights):
         assert yolo_seg_model._ultralytics_metadata(weights) == {}
 
+    def test_the_class_names_of_an_engine_come_from_its_header(self, monkeypatch):
+        """Ganan sobre el config: son los del entrenamiento, y el config se edita."""
+        model = YoloSegModel(_MockConfig(**{
+            f"inference.models.{_SLOT}.class_names": ["a", "b"]}), _SLOT)
+        _install(monkeypatch, _FakeYolo(), weights=_engine_bytes({
+            "task": "segment", "names": {"0": "desmenuzado", "1": "pellet"}}))
+        model.load()
+        assert model.class_names == ("desmenuzado", "pellet")
+
+    def test_the_class_names_of_a_checkpoint_come_from_the_model(self, monkeypatch):
+        """Un `.pt` no tiene cabecera: los nombres los deja ultralytics en `names`."""
+        fake = _FakeYolo()
+        fake.names = {0: "desmenuzado", 1: "pellet"}
+        model = YoloSegModel(_MockConfig(**{
+            f"inference.models.{_SLOT}.class_names": []}), _SLOT)
+        _install(monkeypatch, fake)
+        model.load()
+        assert model.class_names == ("desmenuzado", "pellet")
+
+    def test_names_with_a_gap_in_the_indices_are_not_guessed(self, monkeypatch):
+        """Un nombre corrido de lugar es la falla que esto existe para detectar."""
+        model = YoloSegModel(_MockConfig(**{
+            f"inference.models.{_SLOT}.class_names": []}), _SLOT)
+        _install(monkeypatch, _FakeYolo(), weights=_engine_bytes({
+            "task": "segment", "names": {"0": "desmenuzado", "2": "pellet"}}))
+        model.load()
+        assert model.class_names == ()
+
     def test_unloading_leaves_it_ready_to_load_again(self, monkeypatch):
         model = _loaded(monkeypatch, None)
         model.unload()

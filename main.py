@@ -98,7 +98,7 @@ from system.gpio_control import GpioController, GpioPollingThread
 from system.image_collector.collector import ImageCollector
 from system.inference import analysis, annotations, metrics, rolling
 from system.inference.engine import InferenceThread
-from system.inference.pipeline import BeltPipeline
+from system.inference.pipeline import CLASS_NAMES, BeltPipeline
 from system.inference.result import InferenceResult
 from system.license.manager import (
     PERPETUAL_DAYS_SENTINEL, RECHECK_INTERVAL_MS, LicenseManager, read_feature,
@@ -128,14 +128,10 @@ _SERVER_STOP_TIMEOUT_S = 5.0      # espera al hilo del servidor Modbus al cerrar
 
 _HEARTBEAT_MAX = 65535            # el registro es uint16: el contador da la vuelta ahí
 
-# El slot del modelo de este proyecto: de su sección salen los nombres de clase, que
-# son los que deciden cómo se llaman las métricas y qué registro las transporta.
-_SEGMENTER_SLOT = "segmenter"
-
 # Métricas que además de publicarse al instante llevan su media de la hora. La clave es la
 # del analyzer y el registro de la media se llama igual con `_1h` al final, que es como ya
 # lo lee el PLC. La composición se pesa con la carga, así que las dos van siempre juntas.
-_ROLLING_COMPOSITION_NAMES = ("pct_pellet_norm", "pct_desmenuzado_norm")
+_ROLLING_COMPOSITION_NAMES = tuple(f"pct_{name}_norm" for name in CLASS_NAMES)
 _LOAD_NAME = metrics.LOAD_KEY
 _ROLLING_SUFFIX = "_1h"
 # Sufijo de las métricas de composición: entre las clases detectadas, suman 100.
@@ -774,14 +770,13 @@ class Application(QObject):
         """
         Qué significan las detecciones: la composición y la carga de la cinta.
 
-        Los nombres de clase salen del modelo y no de `process:` para que haya un solo
-        dueño: son los que deciden cómo se llaman las métricas —`pct_pellet_norm`— y por lo
-        tanto qué registro las transporta. Declararlos dos veces dejaría que el mapa de
-        registros y el modelo hablen de clases distintas sin que nada falle.
+        Los nombres de clase son los de `pipeline.CLASS_NAMES`, que es su única
+        declaración: son los que deciden cómo se llaman las métricas —`pct_pellet_norm`— y
+        por lo tanto qué registro las transporta, así que no salen de un archivo que se
+        edita en planta. El pipeline los confronta con los del modelo al cargar.
         """
         return metrics.build_analyzer(
-            class_names=self._config.get(
-                f"inference.models.{_SEGMENTER_SLOT}.class_names", []) or [],
+            class_names=list(CLASS_NAMES),
             belt_roi_px=self._config.get("process.belt_roi_px", {}) or {},
         )
 
@@ -800,8 +795,7 @@ class Application(QObject):
             annotations.belt_roi_annotator(
                 self._config.get("process.belt_roi_px", {}) or {}),
             annotations.composition_panel_annotator(
-                self._config.get(f"inference.models.{_SEGMENTER_SLOT}.class_names", [])
-                or [],
+                list(CLASS_NAMES),
                 class_colors_bgr=tuple(tuple(color) for color in colors),
                 font_scale=float(self._config.get("inference.overlay.font_scale", 0) or 0)),
         )

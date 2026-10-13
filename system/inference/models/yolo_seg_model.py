@@ -92,6 +92,9 @@ class YoloSegModel(AbstractModel):
         exported = _ultralytics_metadata(weights)
         if exported.get("task") and not self._verify_task(str(exported["task"])):
             return
+        # Los nombres de clase que el motor trae de su entrenamiento ganan sobre el config,
+        # igual que la metadata de unos pesos protegidos: son los del modelo de verdad.
+        self._adopt_class_names(exported.get("names"))
 
         # Exception y no ImportError: importar ultralytics arrastra matplotlib, torch y
         # TensorRT, y cualquiera de ellos puede fallar con otra cosa. Escapada, mata el hilo
@@ -119,6 +122,9 @@ class YoloSegModel(AbstractModel):
         checkpoint_task = str(getattr(model, "task", "") or "")
         if not exported.get("task") and not self._verify_task(checkpoint_task):
             return
+        # Y los nombres de clase, en el mismo checkpoint.
+        if not exported.get("names"):
+            self._adopt_class_names(getattr(model, "names", None))
 
         # Con un `.engine`, `YOLO()` sólo guarda la ruta: TensorRT abre el motor con el
         # primer frame. Se fuerza acá para que un motor que no abre en esta GPU deje el
@@ -166,6 +172,21 @@ class YoloSegModel(AbstractModel):
     def unload(self):
         self._model = None
         self._status = STATUS_UNLOADED
+
+    def _adopt_class_names(self, raw_names: object):
+        """
+        Toma los nombres de clase que declaran los pesos, si los declaran.
+
+        Van a la misma metadata que la de unos pesos protegidos, así que le ganan al
+        config por el mismo camino (`_get_option`). La de unos pesos protegidos, si ya
+        trajo los suyos, no se pisa.
+        """
+        names = _indexed_names(raw_names)
+        if not names or "class_names" in self._weights_metadata:
+            return
+        self._weights_metadata["class_names"] = names
+        logger.info(f"[Inference] Modelo '{self.model_slot}': clases de los pesos: "
+                    f"{', '.join(f'{i}={name}' for i, name in enumerate(names))}.")
 
     # ── Postproceso ──────────────────────────────────────────────────────────
 
@@ -248,6 +269,27 @@ def _ultralytics_metadata(weights: bytes) -> dict:
     except (UnicodeDecodeError, ValueError):
         return {}
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _indexed_names(raw_names: object) -> list:
+    """
+    Los nombres de clase de ultralytics como lista por índice, o [] si no se entienden.
+
+    Ultralytics los guarda como `{índice: nombre}`, y en la cabecera JSON de un `.engine`
+    los índices llegan como texto. Unos índices que no son 0..N-1 no se adivinan: un
+    nombre corrido de lugar es justo la falla que esto existe para detectar.
+    """
+    if isinstance(raw_names, (list, tuple)):
+        return [str(name) for name in raw_names]
+    if not isinstance(raw_names, dict) or not raw_names:
+        return []
+    try:
+        by_index = {int(index): str(name) for index, name in raw_names.items()}
+    except (TypeError, ValueError):
+        return []
+    if sorted(by_index) != list(range(len(by_index))):
+        return []
+    return [by_index[index] for index in range(len(by_index))]
 
 
 def _warn_version_mismatch(model_slot: str, exported_version, installed_version):
