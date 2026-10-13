@@ -2,8 +2,10 @@
 Tabla de eventos: las últimas N líneas de log, la más nueva arriba.
 
 Buffer FIFO propio: la tabla se reconstruye desde él, así que cambiar de tema o de
-filtro no pierde historia. Los colores por nivel salen de `ui/theme.py`, porque el
-QSS no llega a los items de una QTableWidget.
+filtro no pierde historia. Una línea nueva no reconstruye nada: agrega su fila arriba y,
+si el buffer estaba lleno, saca la de abajo. Reconstruir por línea eran cientos de items
+por evento en el hilo de la GUI, justo cuando el log viene en ráfaga. Los colores por
+nivel salen de `ui/theme.py`, porque el QSS no llega a los items de una QTableWidget.
 """
 
 from collections import deque
@@ -54,9 +56,13 @@ class EventLogTable(QTableWidget):
 
     def append(self, level: str, message: str, module: str = ""):
         """Agrega una entrada. `level` es uno de LEVELS; otro se pinta como INFO."""
-        timestamp = datetime.now().strftime(_TIMESTAMP_FORMAT)
-        self._entries.append((timestamp, level.upper(), message, module))
-        self._rebuild()
+        entry = (datetime.now().strftime(_TIMESTAMP_FORMAT), level.upper(), message, module)
+        dropped = self._entries[0] if len(self._entries) == self._entries.maxlen else None
+        self._entries.append(entry)
+        if dropped is not None and self._is_shown(dropped) and self.rowCount() > 0:
+            self.removeRow(self.rowCount() - 1)
+        if self._is_shown(entry):
+            self._insert_entry(0, entry)
 
     def set_filter(self, level: str):
         """Muestra sólo ese nivel. FILTER_ALL o vacío muestra todo."""
@@ -86,17 +92,22 @@ class EventLogTable(QTableWidget):
 
     def _rebuild(self):
         self.setRowCount(0)
-        for timestamp, level, message, module in reversed(self._entries):
-            if self._filter and level != self._filter:
-                continue
-            row = self.rowCount()
-            self.insertRow(row)
-            foreground, background = self._level_colors.get(level, self._level_colors["INFO"])
-            columns = [timestamp, module, level, message] if self._show_module else \
-                      [timestamp, level, message]
-            for column, text in enumerate(columns):
-                item = QTableWidgetItem(text)
-                item.setForeground(foreground)
-                item.setBackground(background)
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                self.setItem(row, column, item)
+        for entry in reversed(self._entries):
+            if self._is_shown(entry):
+                self._insert_entry(self.rowCount(), entry)
+
+    def _is_shown(self, entry: tuple) -> bool:
+        return not self._filter or entry[1] == self._filter
+
+    def _insert_entry(self, row: int, entry: tuple):
+        timestamp, level, message, module = entry
+        self.insertRow(row)
+        foreground, background = self._level_colors.get(level, self._level_colors["INFO"])
+        columns = [timestamp, module, level, message] if self._show_module else \
+                  [timestamp, level, message]
+        for column, text in enumerate(columns):
+            item = QTableWidgetItem(text)
+            item.setForeground(foreground)
+            item.setBackground(background)
+            item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.setItem(row, column, item)
