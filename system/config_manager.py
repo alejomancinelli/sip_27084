@@ -11,9 +11,12 @@ excepción: arma una configuración de rescate en memoria y lo avisa por
 que quien publique estado hacia afuera puede distinguir ese caso de una parada
 normal.
 
-Dos puntos del contrato que no se ven en las firmas:
+Tres puntos del contrato que no se ven en las firmas:
   - `get` devuelve copias de los dict y las list: quien los recibe los puede
     recorrer sin lock y no puede modificar la config sin pasar por `set`.
+  - `revision` cambia con cada `set` y cada `load`: quien lee valores en un camino
+    caliente los guarda y compara ese número, en vez de pagar un `get` —lock y copia—
+    por frame.
   - `save()` reescribe el archivo entero desde el diccionario en memoria; los
     comentarios del YAML original no sobreviven.
 """
@@ -87,6 +90,7 @@ class ConfigManager:
         # Claves ya avisadas: el aviso de clave ausente sale una sola vez, porque
         # hay `get` que corren por frame y llenarían el log.
         self._missing_keys: set[str] = set()
+        self._revision = 0
         self.load()
 
     # ── API pública ──────────────────────────────────────────────────────────
@@ -102,6 +106,16 @@ class ConfigManager:
         avisa que va a cambiar una medición tiene que poder decir en qué archivo.
         """
         return self._config_path
+
+    @property
+    def revision(self) -> int:
+        """
+        Cuántas veces cambió la config en memoria desde que se creó.
+
+        Se lee sin lock —es un entero— y sirve para saber si un valor guardado sigue
+        valiendo: si el número no cambió, ningún `set` ni `load` tocó nada.
+        """
+        return self._revision
 
     @property
     def is_using_fallback(self) -> bool:
@@ -125,6 +139,7 @@ class ConfigManager:
             self._config_data = parsed
             self._is_using_fallback = False
             self._missing_keys.clear()
+            self._revision += 1
             logger.debug(f"{_CONFIG_FILENAME} cargado en memoria desde {self._config_path}")
             return True
 
@@ -182,6 +197,7 @@ class ConfigManager:
             # Copia por el mismo motivo que `get`: la config no comparte objetos
             # con nadie de afuera.
             node[keys[-1]] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+            self._revision += 1
             logger.debug(f"Config: '{key_path}' = {value}")
             return True
 
@@ -280,6 +296,7 @@ class ConfigManager:
         self._is_using_fallback = True
         self._config_data = copy.deepcopy(_FALLBACK_CONFIG)
         self._missing_keys.clear()
+        self._revision += 1
 
     def _warn_missing(self, key_path: str, default: object):
         if key_path in self._missing_keys:

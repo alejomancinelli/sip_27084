@@ -84,6 +84,7 @@ _STATUS_INTERVAL_S = 2.0     # período de la telemetría de `status_updated`
 _WAIT_TICK_S = 0.2           # espera sin frames; período de reacción a la interrupción
 _WARN_PERIOD_S = 10.0        # techo de los avisos que salen del camino por frame
 _DEFAULT_INTERVAL_S = 0.0    # 0 = se infiere cada frame que llega
+_NO_REVISION = object()      # todavía no se leyó nada del config
 
 
 class InferenceThread(QThread):
@@ -136,6 +137,10 @@ class InferenceThread(QThread):
         self._next_slot_index = 0
         self._last_push_s: dict[str, float] = {}
 
+        # Valores del config ya leídos, válidos mientras no cambie su `revision`.
+        self._settings: dict = {}
+        self._settings_revision: object = _NO_REVISION
+
         self._counters = {"processed": 0, "dropped": 0, "invalid": 0}
         self._last_inference_time_ms = 0.0
         self._last_status_time_s = 0.0
@@ -146,14 +151,15 @@ class InferenceThread(QThread):
 
     @property
     def is_enabled(self) -> bool:
-        """True si el pipeline está habilitado en el config. Se lee en cada push."""
-        return bool(self._config.get(f"inference.pipelines.{self.pipeline_slot}.enabled", True))
+        """True si el pipeline está habilitado en el config. Se consulta en cada push."""
+        return bool(self._setting(f"inference.pipelines.{self.pipeline_slot}.enabled", True))
 
     @property
     def camera_slots(self) -> tuple[str, ...]:
         """Cámaras que entran a este pipeline; vacío = todas las que le pusheen."""
-        cameras = self._config.get(f"inference.pipelines.{self.pipeline_slot}.cameras", []) or []
-        return tuple(str(slot) for slot in cameras)
+        key = f"inference.pipelines.{self.pipeline_slot}.cameras"
+        return self._cached(key, lambda: tuple(
+            str(slot) for slot in (self._config.get(key, []) or [])))
 
     def push_frame(self, frame_bgr: np.ndarray | None, camera_slot: str, *,
                    ignore_interval: bool = False):
@@ -375,7 +381,7 @@ class InferenceThread(QThread):
             )
             return REASON_NO_MODEL
 
-        illumination_min = int(self._config.get(f"cameras.{camera_slot}.illumination_min", 0) or 0)
+        illumination_min = int(self._setting(f"cameras.{camera_slot}.illumination_min", 0) or 0)
         if result.illumination_pct < illumination_min:
             # A nivel DEBUG a propósito: con la luz apagada esto pasa en cada frame.
             logger.debug(
@@ -394,8 +400,8 @@ class InferenceThread(QThread):
         como medición.
         """
         section = f"inference.pipelines.{self.pipeline_slot}"
-        min_detections = int(self._config.get(f"{section}.min_detections", 0) or 0)
-        min_confidence_pct = float(self._config.get(f"{section}.min_result_confidence_pct", 0) or 0)
+        min_detections = int(self._setting(f"{section}.min_detections", 0) or 0)
+        min_confidence_pct = float(self._setting(f"{section}.min_result_confidence_pct", 0) or 0)
 
         if result.detection_count < min_detections:
             return REASON_FEW_DETECTIONS
@@ -482,12 +488,12 @@ class InferenceThread(QThread):
         falla no se lleva puesto el frame: queda lo que haya alcanzado a dibujar más todo lo
         estándar.
         """
-        if not self._config.get("inference.overlay.enabled", True):
+        if not self._setting("inference.overlay.enabled", True):
             return None
         if (respect_gate and self._annotate_gate is not None
                 and not self._annotate_gate(result.camera_slot)):
             return None
-        options = self._read_overlay_options()
+        options = self._cached("overlay_options", self._read_overlay_options)
         try:
             annotated = overlay.annotate(result, replace(options, draw_timestamp=False),
                                          canvas_adjust=self._canvas_adjust)
@@ -512,6 +518,36 @@ class InferenceThread(QThread):
 
     # ── Lectura de config ────────────────────────────────────────────────────
 
+    def _setting(self, key_path: str, default: object = None) -> object:
+        """
+        Valor del config, releído sólo cuando la config cambió.
+
+        Esto corre varias veces por frame, en el hilo de captura y en el de inferencia, y
+        cada `get` toma el lock global del config y copia lo que devuelve: unas veinte
+        copias bajo lock por frame, peleando con la GUI. Un cambio desde la pantalla sigue
+        tomando efecto en el frame siguiente, porque mueve `revision`. Lo que devuelve se
+        comparte entre llamadas, así que no se modifica.
+        """
+        return self._cached(key_path, lambda: self._config.get(key_path, default))
+
+    def _cached(self, name: str, compute: Callable[[], object]) -> object:
+        """
+        `compute()` la primera vez y lo guardado después, mientras no cambie `revision`.
+
+        Sin lock a propósito: dos hilos que vean cambiar la revisión a la vez arman cada
+        uno su caché, y el que pierde sólo calculó de más. Un config sin `revision` —un
+        doble de test— se lee una sola vez.
+        """
+        revision = getattr(self._config, "revision", None)
+        settings = self._settings
+        if revision != self._settings_revision:
+            settings = {}
+            self._settings = settings
+            self._settings_revision = revision
+        if name not in settings:
+            settings[name] = compute()
+        return settings[name]
+
     def _get_interval_s(self) -> float:
         """
         Período mínimo entre frames aceptados de una misma cámara. 0 = todos.
@@ -519,7 +555,7 @@ class InferenceThread(QThread):
         Se cuenta desde el push anterior aceptado y no desde el fin de la inferencia: así
         una inferencia lenta no acumula deuda que después se pague con una ráfaga.
         """
-        interval_s = self._config.get(
+        interval_s = self._setting(
             f"inference.pipelines.{self.pipeline_slot}.interval_s", _DEFAULT_INTERVAL_S)
         return max(0.0, float(interval_s or 0.0))
 
@@ -531,7 +567,7 @@ class InferenceThread(QThread):
         Un ancho o alto en 0 llega hasta el borde: es lo que permite recortar sólo de un
         lado sin tener que escribir el tamaño del sensor en el config.
         """
-        roi = self._config.get(f"cameras.{camera_slot}.roi", {}) or {}
+        roi = self._setting(f"cameras.{camera_slot}.roi", {}) or {}
         if not isinstance(roi, dict) or not roi.get("enabled", False):
             return None
 

@@ -256,6 +256,50 @@ class TestQueue:
 
 # ── ROI e iluminación ────────────────────────────────────────────────────────
 
+class _CountingConfig(_MockConfig):
+    """`_MockConfig` con `revision`, como el real, que además cuenta los `get`."""
+
+    def __init__(self, **overrides):
+        super().__init__(**overrides)
+        self.revision = 0
+        self.reads = 0
+
+    def get(self, key: str, default: object = None) -> object:
+        self.reads += 1
+        return super().get(key, default)
+
+    def set(self, key: str, value: object):
+        self._values[key] = value
+        self.revision += 1
+
+
+class TestConfigCache:
+    """
+    El config se lee una vez, no por frame: cada `get` es un lock global y una copia.
+
+    Un cambio desde la pantalla mueve `revision`, y con eso se relee en el frame siguiente.
+    """
+
+    def test_frames_after_the_first_do_not_read_the_config(self):
+        config = _CountingConfig()
+        engine = _engine(_FakePipeline(), config)
+        _process_one(engine, _frame())
+        reads_after_first = config.reads
+        for _ in range(5):
+            _process_one(engine, _frame())
+        assert config.reads == reads_after_first
+
+    def test_a_change_takes_effect_on_the_next_frame(self):
+        config = _CountingConfig()
+        pipeline = _FakePipeline()
+        engine = _engine(pipeline, config)
+        _process_one(engine, _frame())
+        config.set(f"cameras.{_SLOT}.roi", {
+            "enabled": True, "x_px": 20, "y_px": 10, "width_px": 100, "height_px": 50})
+        _process_one(engine, _frame())
+        assert pipeline.frames[-1].shape[:2] == (50, 100)
+
+
 class TestRoiAndIllumination:
     def test_the_pipeline_receives_the_cropped_roi(self):
         config = _MockConfig(**{f"cameras.{_SLOT}.roi": {
