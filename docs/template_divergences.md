@@ -94,9 +94,9 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Las de hoy son
-del build compilado en la Jetson; el detalle de por qué cada una está en
-`.claude/plans/jetson-compilation.md`.
+Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Las primeras son
+del build compilado en la Jetson, con el detalle en `.claude/plans/jetson-compilation.md`;
+las que siguen salieron de la revisión del template y del proyecto del 2026-10-08.
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
@@ -108,10 +108,23 @@ del build compilado en la Jetson; el detalle de por qué cada una está en
 | `system/system_monitor.py` | Potencia del INA3221 desde `in1_input × curr1_input` | JetPack 6 no publica `power1_input`: toda Jetson con JetPack 6 reporta 0 W |
 | `main.py` (fuera del bloque del fork) | El handler de SIGINT/SIGTERM agenda el cierre con `QTimer.singleShot(0, app.quit)` en vez de cerrar (`_build_interrupt_handler()`) | Compilado, el handler corre con el lock del config tomado y Qt 6 emite `aboutToQuit` en el acto: el cierre se trababa y abortaba en cualquier fork |
 | `tools/camera/abstract_driver.py`, `tools/camera/st_driver.py`, `system/camera/capture_thread.py` | `interrupt()` en el contrato del driver; `StDriver` despierta con él `connect()` y los reintentos; `CaptureThread.requestInterruption()` lo llama | Sin cámara, un cierre durante `connect()` dejaba el hilo vivo hasta 20 s y Qt abortaba, también desde fuentes |
+| `system/inference/engine.py`, `system/inference/models/abstract_model.py` | Docstrings: la lógica por cámara va al pipeline, que recibe `camera_slot` en `_run()`; el `classifier` queda para lo que depende de la posición en el frame | Contradecían el contrato del pipeline desde que `_run()` recibe la cámara |
+| `system/inference/engine.py`, `tools/camera/abstract_driver.py` | `push_frame()` guarda el frame sin copiarlo, y el contrato de `get_frame()` declara que el array es propio y que nadie lo modifica in-place | La copia suponía un driver que reusa su buffer, y ninguno lo hace: ~140 MB/s tirados a 3 MP y 15 fps |
+| `system/telemetry/persistence.py` | El comentario de `_PUBLISH_INTERVAL_S` ya no dice que la cola topea el ritmo en 10 puntos/s | El hilo drena la cola de continuo |
+| `system/modbus/server.py` | `update_block()` escribe el bloque entero bajo un solo lock, y la FC03 del PLC toma ese mismo lock | Una lectura en medio del bloque veía medio reloj: un salto de 18 h cada vez que la palabra baja da la vuelta |
+| `requirements.txt`, `setup/venv-setup/verify_env.py` | `pymodbus==3.15.0`, y `verify_env.py` falla si la lectura del PLC deja de pasar por `async_OLD_getValues` | El lock de lectura cuelga de ese método interno de pymodbus |
+| `system/gpio_control.py` | El polling espera el intervalo entero, en tramos; una entrada que falla se avisa al empezar y al recuperarse | Con más de 200 ms se leía igual a 5 Hz, y una línea muerta llenaba el log |
+| `tools/camera/abstract_driver.py`, `mock_driver.py`, `rtsp_driver.py`, `st_driver.py`, `system/camera/capture_thread.py` | Reloj monotónico para intervalos, plazos y fps; el fps medido vuelve a 0 cuando dejan de llegar frames | Un ajuste de NTP al arrancar movía todo, y una cámara trabada seguía informando sus fps |
+| `system/telemetry/backends/influxdb_backend.py`, `abstract_backend.py`, `system/telemetry/persistence.py` | Ante un corte, hasta 6000 puntos en memoria y reintento cada 30 s con timeout de 5 s; un 4xx no se reintenta | Un batch fallido se perdía y cada intento bloqueaba el hilo de telemetría 10 s |
+| `system/inference/models/abstract_model.py` | Propiedad `class_names`: los nombres de los pesos, o los del config | Para que un pipeline confronte las clases que espera con las del modelo |
+| `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
 
 Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
-`test/tools/camera/test_st_driver.py` y `test/build/`.
+`test/tools/camera/test_st_driver.py`, `test/build/`, `test/inference/test_engine.py`,
+`test/modbus/test_server.py`, `test/test_gpio_control.py`,
+`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`
+y `test/inference/models/test_abstract_model.py`.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
