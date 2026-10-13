@@ -219,9 +219,13 @@ Una por muestra, tag `proyecto`, un campo por canal con el estado como 0/1:
 Son los mismos seis de `system/formats/com_status.py` y el 1 significa lo mismo que el bit:
 **levantó y está andando**. Así el panel y la palabra que lee el PLC no pueden discrepar.
 
-Con `influxdb` hay una limitación obvia y vale decirla: si InfluxDB se cae, el punto que dice
-que se cayó no llega. Sirve para ver cortes cortos —el hueco en la serie es el dato— y para
-ver los otros cinco canales, que es lo que interesa.
+Con `influxdb` hay una limitación obvia y vale decirla: mientras InfluxDB está caído, el
+punto que dice que se cayó no llega en el momento. El backend guarda en memoria lo que no
+pudo escribir —hasta 6000 puntos, unos diez minutos— y lo manda cuando el servidor vuelve,
+cada punto con su instante: un corte corto aparece después como `influxdb = 0` en su lugar
+de la serie, y uno más largo deja un hueco donde se descartaron los puntos más viejos. Al
+cerrar la aplicación, lo pendiente se pierde. Para lo que interesa, que son los otros cinco
+canales, alcanza.
 
 ## Lo que NO va a InfluxDB
 

@@ -34,8 +34,8 @@ Tres puntos del contrato que no se ven en las firmas:
   - Los backends los toca solo este hilo: se abren en `run()` y se cierran ahí
     mismo. Uno que levante excepción no baja al hilo ni a los otros.
   - Lo que quedó encolado al pedir la interrupción se escribe antes de cerrar. Lo
-    que falle en esa escritura se pierde, con el motivo en el log: acá no hay
-    reintento ni buffer en disco.
+    que falle en esa escritura se pierde, con el motivo en el log: el reintento, si lo
+    hay, es del backend y vive en memoria, y acá no hay buffer en disco.
 """
 
 import queue
