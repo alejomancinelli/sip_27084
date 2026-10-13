@@ -84,7 +84,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 import numpy as np
-from PySide6.QtCore import QCoreApplication, QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import QApplication, QWidget
 
 from system import paths
@@ -496,7 +496,14 @@ class Application(QObject):
     de captura y de inferencia tienen que ser de un QObject que viva en el hilo de la GUI,
     para que Qt los entregue en cola. Conectar una función suelta los ejecutaría en el
     hilo que emite, tocando widgets desde afuera del hilo de la GUI.
+
+    La excepción es el frame de cámara, que se conecta directo y corre en el hilo de
+    captura: ver `_on_frame_captured`.
     """
+
+    # Hay un frame nuevo de esa cámara para la GUI. Interno: lo emite el hilo de captura,
+    # como mucho uno en vuelo por cámara, y lo atiende `_on_frame_for_gui` en cola.
+    _frame_for_gui = Signal(str)
 
     def __init__(self, config: ConfigManager, ui, license_manager: LicenseManager,
                  parent=None):
@@ -624,7 +631,8 @@ class Application(QObject):
                 self._push_status_to_content(_UNLICENSED_CAMERA_STATUS, camera_slot)
                 continue
             thread = CaptureThread(config, camera_slot)
-            thread.frame_ready.connect(self._on_frame_ready)
+            # Directa a propósito: corre en el hilo de captura. Ver `_on_frame_captured`.
+            thread.frame_ready.connect(self._on_frame_captured, Qt.DirectConnection)
             thread.status_updated.connect(self._on_camera_status)
             self._forward_status_to_content(thread)
             self._capture_threads[camera_slot] = thread
@@ -646,6 +654,11 @@ class Application(QObject):
         # array, no una copia: medir por frame costaría milisegundos por cámara y la
         # ventana es de horas, así que alcanza con el último que haya cuando toque.
         self._last_raw_frame: dict[str, np.ndarray] = {}
+        # Último frame de cada cámara que la GUI todavía no tomó. Que el slot esté acá es
+        # también la marca de que ya hay un `_frame_for_gui` en vuelo para esa cámara.
+        self._gui_frames: dict[str, np.ndarray] = {}
+        self._gui_frames_lock = threading.Lock()
+        self._frame_for_gui.connect(self._on_frame_for_gui)
         # Cámaras calibrando ahora: slot -> (varianzas, lumas). Vacío casi siempre.
         self._lens_calibrations: dict[str, tuple[list, list]] = {}
 
@@ -877,18 +890,67 @@ class Application(QObject):
         return self._display_adjust(frame_bgr)
 
     @Slot(object, str)
-    def _on_frame_ready(self, frame_bgr: np.ndarray | None, camera_slot: str):
+    def _on_frame_captured(self, frame_bgr: np.ndarray | None, camera_slot: str):
         """
-        Un frame nuevo: a la UI, al stream crudo y a la inferencia.
+        Un frame nuevo, **en el hilo de captura**: a la inferencia, al stream crudo y,
+        como mucho uno en vuelo por cámara, a la GUI.
+
+        Corre acá y no en la GUI porque todo lo que hace es thread-safe —`push_frame` del
+        motor y `push_raw` de los servidores— y porque pasar cada frame por la cola de la
+        GUI la hacía cuello de botella: con la GUI ocupada medio segundo en guardar el
+        config o en una ráfaga de log, la cola juntaba frames de 9 MB sin tope y todo lo
+        de atrás —la inferencia incluida— se atrasaba con ella. Ahora la GUI recibe sólo
+        el último frame de cada cámara, cuando puede; uno que llega mientras el anterior
+        espera lo reemplaza.
+
+        Un pipeline que mide de a varios frames sigue pidiendo el suyo desde la GUI: su
+        permiso lo maneja el scheduler, que no es thread-safe.
+        """
+        if frame_bgr is None or frame_bgr.size == 0:
+            return
+        # Para el tick de la óptica, que mide cada varios segundos y no por frame. Se
+        # guarda el crudo: la nitidez se mide sobre lo que entrega el sensor, no sobre la
+        # imagen con gamma, que le cambiaría el contraste y con él la varianza.
+        self._last_raw_frame[camera_slot] = frame_bgr
+        for engine in self._engines:
+            # Sin ciclo el permiso es siempre que sí, y el ritmo lo sigue poniendo el
+            # `interval_s` del motor.
+            if not self._scheduler.is_cycled(engine.pipeline_slot):
+                engine.push_frame(frame_bgr, camera_slot)
+        # Lo que mira una persona puede llevar gamma y contraste local; lo que se mide,
+        # nunca. Sin clientes en el crudo no se ajusta nada: `_for_display` crea un frame.
+        if (self._http_video.has_raw_clients(camera_slot)
+                or self._rtsp_video.has_raw_clients(camera_slot)):
+            display_bgr = self._for_display(frame_bgr)
+            self._http_video.push_raw(camera_slot, display_bgr)
+            self._rtsp_video.push_raw(camera_slot, display_bgr)
+        self._hand_to_gui(frame_bgr, camera_slot)
+
+    def _hand_to_gui(self, frame_bgr: np.ndarray, camera_slot: str):
+        """
+        Deja el frame para la GUI y la avisa, salvo que ya haya un aviso en vuelo.
+
+        Con el aviso pendiente sólo se reemplaza el frame: la GUI toma el último cuando
+        llega a atenderlo, y la cola nunca tiene más de uno por cámara.
+        """
+        with self._gui_frames_lock:
+            is_pending = camera_slot in self._gui_frames
+            self._gui_frames[camera_slot] = frame_bgr
+        if not is_pending:
+            self._frame_for_gui.emit(camera_slot)
+
+    @Slot(str)
+    def _on_frame_for_gui(self, camera_slot: str):
+        """
+        El último frame de esa cámara, en el hilo de la GUI: a la pantalla y a los ciclos.
 
         En modo crudo la UI lo muestra tal cual; en anotado espera el que devuelve el
-        motor, que es el mismo array con el resultado dibujado. Todo lo que se conecte
-        acá tiene que ser barato o descartar: cualquier demora frena la captura.
+        motor, que es el mismo array con el resultado dibujado.
         """
-        # Lo que mira una persona puede llevar gamma y contraste local; lo que se mide,
-        # nunca. `_for_display` devuelve un frame nuevo, así que el que sigue viaje hacia
-        # el motor y el dataset es el de la cámara.
-        display_bgr = self._for_display(frame_bgr)
+        with self._gui_frames_lock:
+            frame_bgr = self._gui_frames.pop(camera_slot, None)
+        if frame_bgr is None:
+            return
         content = self._ui.monitor_content
         if content is not None:
             # El crudo va siempre, mire lo que mire: es el que necesita la herramienta de
@@ -897,24 +959,13 @@ class Application(QObject):
             if setter is not None:
                 setter(frame_bgr, camera_slot)
             if getattr(content, "mode", None) != MODE_ANNOTATED:
-                content.update_frame(display_bgr, camera_slot)
-        self._http_video.push_raw(camera_slot, display_bgr)
-        self._rtsp_video.push_raw(camera_slot, display_bgr)
-        if frame_bgr is None or frame_bgr.size == 0:
-            return
-        # Para el tick de la óptica, que mide cada varios segundos y no por frame. Se
-        # guarda el crudo: la nitidez se mide sobre lo que entrega el sensor, no sobre la
-        # imagen con gamma, que le cambiaría el contraste y con él la varianza.
-        self._last_raw_frame[camera_slot] = frame_bgr
+                content.update_frame(self._for_display(frame_bgr), camera_slot)
         for engine in self._engines:
-            # El ciclo decide si este frame entra: con `frames_per_cycle: 1` siempre
-            # que sí, y el ritmo lo sigue poniendo el `interval_s` del motor. El permiso
-            # se pide último porque se consume: pedirlo por un frame que el motor va a
-            # descartar deja al ciclo esperando un resultado que no llega.
-            if self._scheduler.take_frame(camera_slot, engine.pipeline_slot):
-                engine.push_frame(
-                    frame_bgr, camera_slot,
-                    ignore_interval=self._scheduler.is_cycled(engine.pipeline_slot))
+            # El permiso se pide último porque se consume: pedirlo por un frame que el
+            # motor va a descartar deja al ciclo esperando un resultado que no llega.
+            if (self._scheduler.is_cycled(engine.pipeline_slot)
+                    and self._scheduler.take_frame(camera_slot, engine.pipeline_slot)):
+                engine.push_frame(frame_bgr, camera_slot, ignore_interval=True)
 
     @Slot(object, str)
     def _on_camera_status(self, status: dict, camera_slot: str):
@@ -1248,7 +1299,7 @@ class Application(QObject):
         """
         Mide la nitidez del último frame de cada cámara y sostiene la ventana de todas.
 
-        Se mide acá y no en `_on_frame_ready` porque la ventana es de horas: una pasada del
+        Se mide acá y no en `_on_frame_captured` porque la ventana es de horas: una pasada del
         Laplaciano por cámara cada varios segundos la llena de sobra, y hacerlo por frame
         le comería milisegundos a la captura sin agregar información.
 
