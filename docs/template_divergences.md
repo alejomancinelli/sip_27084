@@ -117,14 +117,23 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `tools/camera/abstract_driver.py`, `mock_driver.py`, `rtsp_driver.py`, `st_driver.py`, `system/camera/capture_thread.py` | Reloj monotónico para intervalos, plazos y fps; el fps medido vuelve a 0 cuando dejan de llegar frames | Un ajuste de NTP al arrancar movía todo, y una cámara trabada seguía informando sus fps |
 | `system/telemetry/backends/influxdb_backend.py`, `abstract_backend.py`, `system/telemetry/persistence.py` | Ante un corte, hasta 6000 puntos en memoria y reintento cada 30 s con timeout de 5 s; un 4xx no se reintenta | Un batch fallido se perdía y cada intento bloqueaba el hilo de telemetría 10 s |
 | `system/inference/models/abstract_model.py` | Propiedad `class_names`: los nombres de los pesos, o los del config | Para que un pipeline confronte las clases que espera con las del modelo |
+| `main.py` (fuera del bloque del fork) | `frame_ready` conectado directo: en el hilo de captura el frame va a los motores sin ciclo y, sólo con clientes, al video crudo; la GUI recibe el último de cada cámara por un buzón con un aviso en vuelo como mucho | Cada frame pasaba por la cola de la GUI sin tope: una GUI ocupada juntaba frames de 9 MB y atrasaba la inferencia |
+| `main.py` (fuera del bloque del fork) | Sin recolección prendida no se arma el JSON ni el contexto del dataset; a la telemetría entra el resultado sin frames ni detecciones | Por resultado y en la GUI: `to_dict()` sobre cientos de detecciones, y dos frames de 9 MB retenidos hasta el tick |
+| `system/image_collector/collector.py` | El job guarda referencias a los frames, no copias | Con el contrato del driver nadie los modifica, y copiar eran 18 MB por medición |
+| `system/config_manager.py`, `system/inference/engine.py` | `ConfigManager.revision`, y el motor relee su config sólo cuando cambia | Unos veinte `get` por frame, cada uno con el lock global y una copia |
+| `system/video/http_server.py` | Un anotado sin clientes se guarda sin codificar y se codifica cuando alguien lo pide; el último sobrevive al último cliente | Con la pantalla en anotado era un resize y un JPEG por frame para nadie |
+| `ui/widgets/camera_panel.py` | No pinta oculto, y achica el frame con OpenCV antes de pasarlo a Qt | Convertía los 3 MP enteros a pixmap por frame en la GUI |
+| `ui/widgets/log_table.py` | Una fila por evento en vez de reconstruir la tabla | 200 × 4 items por línea de log, en ráfaga |
 | `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
 
 Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
 `test/tools/camera/test_st_driver.py`, `test/build/`, `test/inference/test_engine.py`,
 `test/modbus/test_server.py`, `test/test_gpio_control.py`,
-`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`
-y `test/inference/models/test_abstract_model.py`.
+`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`,
+`test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
+`test/video/test_http_server.py`, `test/ui/test_camera_panel.py` y
+`test/ui/test_log_table.py`.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
