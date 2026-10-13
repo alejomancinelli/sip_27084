@@ -12,7 +12,9 @@ _ROTATE_MAP = {
     "180":   cv2.ROTATE_180,
 }
 
-_FPS_WINDOW = 30   # frames sobre los que se promedia fps_estimated
+_FPS_WINDOW = 30         # frames sobre los que se promedia fps_estimated
+_FPS_STALE_PERIODS = 3   # períodos sin frame tras los que el fps medido pasa a 0
+_FPS_STALE_MIN_S = 1.0   # piso de esa espera, para que un tirón no lo haga parpadear
 
 
 class AbstractCameraDriver(ABC):
@@ -82,7 +84,7 @@ class AbstractCameraDriver(ABC):
             connected       : bool — hay sesión abierta con el hardware
             capture_enabled : bool — se están pidiendo frames
             temperature     : °C, 0.0 cuando no hay lectura
-            fps_estimated   : fps medido sobre los frames entregados
+            fps_estimated   : fps medido sobre los frames entregados; 0 si dejaron de llegar
 
         Un driver que no puede operar agrega `error` con el motivo. `connected` y
         `capture_enabled` son independientes: una cámara conectada y deshabilitada
@@ -121,17 +123,29 @@ class AbstractCameraDriver(ABC):
 
     def _deliver(self, frame: np.ndarray) -> np.ndarray:
         """Marca el frame para el cálculo de fps y le aplica la rotación configurada."""
-        self._frame_stamps.append(time.time())
+        self._frame_stamps.append(time.monotonic())
         return self._rotate_frame(frame)
 
     def _measured_fps(self) -> float:
-        """fps real medido sobre las marcas de los últimos frames entregados."""
+        """
+        fps real medido sobre las marcas de los últimos frames entregados.
+
+        **Vuelve a 0 cuando los frames dejan de llegar**: pasados unos períodos sin frame
+        —con un piso de un segundo— la ventana ya no describe a la cámara, y seguir
+        informando los 15 fps de antes hacía que una cámara trabada se leyera sana. Las
+        marcas son de reloj monotónico: un ajuste de NTP al arrancar, en un equipo sin RTC,
+        no puede inventar ni borrar frames.
+        """
         if len(self._frame_stamps) < 2:
             return 0.0
         span_s = self._frame_stamps[-1] - self._frame_stamps[0]
         if span_s <= 0:
             return 0.0
-        return round((len(self._frame_stamps) - 1) / span_s, 1)
+        period_s = span_s / (len(self._frame_stamps) - 1)
+        stale_s = max(_FPS_STALE_PERIODS * period_s, _FPS_STALE_MIN_S)
+        if time.monotonic() - self._frame_stamps[-1] > stale_s:
+            return 0.0
+        return round(1.0 / period_s, 1)
 
     def _rotate_frame(self, frame: np.ndarray) -> np.ndarray:
         """Aplica la rotación configurada; sin `rotation` válida devuelve el frame tal cual."""

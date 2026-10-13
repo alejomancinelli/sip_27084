@@ -70,7 +70,7 @@ class CaptureThread(QThread):
             self._driver.get_status().get("error") if self._driver.is_config_error else None
         )
         self._last_status: dict = self._driver.get_status()
-        self._last_status_time_s = time.time()
+        self._last_status_time_s = time.monotonic()
         # Pedido de prender o apagar la captura, pendiente de aplicar. None = nada que
         # hacer. Lo escribe el hilo que llama a `set_capture_enabled` y lo consume este
         # hilo: asignar una referencia es atómico bajo el GIL, así que no necesita lock.
@@ -159,7 +159,7 @@ class CaptureThread(QThread):
                 self.msleep(self._idle_sleep_ms())
 
             # ── Telemetría ───────────────────────────────────────────────────
-            if (time.time() - self._last_status_time_s) > _STATUS_INTERVAL_S:
+            if (time.monotonic() - self._last_status_time_s) > _STATUS_INTERVAL_S:
                 self._emit_status()
 
         logger.info(f"[{self.camera_slot}] Liberando el driver y cerrando el hilo.")
@@ -169,7 +169,7 @@ class CaptureThread(QThread):
 
     def _emit_status(self):
         """Lee la salud del driver y la publica. Un driver que falla acá no baja el hilo."""
-        self._last_status_time_s = time.time()
+        self._last_status_time_s = time.monotonic()
         try:
             status = self._driver.get_status()
         except Exception as e:

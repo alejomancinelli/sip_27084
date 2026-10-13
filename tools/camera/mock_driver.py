@@ -44,7 +44,7 @@ class MockDriver(AbstractCameraDriver):
         fps_limit = config_cam.get("acquisition", {}).get("fps_limit") or _DEFAULT_FPS_LIMIT
         self._fps_limit = float(fps_limit)
         self._frame_time_s = 1.0 / self._fps_limit
-        self._last_frame_time_s = time.time()
+        self._last_frame_time_s = time.monotonic()
         self._noise: np.ndarray | None = None
         self._noise_time_s = 0.0
 
@@ -61,13 +61,13 @@ class MockDriver(AbstractCameraDriver):
 
         # Ritmo limitado al fps configurado. Si el próximo frame no entra en el
         # timeout, devuelve None como haría una cámara real.
-        pending_s = self._frame_time_s - (time.time() - self._last_frame_time_s)
+        pending_s = self._frame_time_s - (time.monotonic() - self._last_frame_time_s)
         if pending_s > timeout_ms / 1000.0:
             return None
         if pending_s > 0:
             time.sleep(pending_s)
 
-        self._last_frame_time_s = time.time()
+        self._last_frame_time_s = time.monotonic()
         return self._deliver(self._build_frame())
 
     def get_status(self) -> dict:
@@ -105,7 +105,7 @@ class MockDriver(AbstractCameraDriver):
         deja el frame en ~3 ms y el polvillo sigue cambiando lo suficiente para que no
         parezca una imagen congelada.
         """
-        now_s = time.time()
+        now_s = time.monotonic()
         if self._noise is None or (now_s - self._noise_time_s) >= _NOISE_REFRESH_S:
             self._noise = np.random.randint(
                 0, _DUST_NOISE_MAX, (_FRAME_HEIGHT_PX, _FRAME_WIDTH_PX, 3), dtype=np.uint8

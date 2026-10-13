@@ -161,8 +161,8 @@ class StDriver(AbstractCameraDriver):
         # También corta si alguien llamó a `disconnect()` o `interrupt()` mientras se
         # esperaba: sin eso, cerrar la aplicación durante el primer intento se queda
         # esperando el timeout entero.
-        deadline = time.time() + _CONNECT_TIMEOUT_S
-        while (not self.is_connected and self._grab_active and time.time() < deadline
+        deadline = time.monotonic() + _CONNECT_TIMEOUT_S
+        while (not self.is_connected and self._grab_active and time.monotonic() < deadline
                and not self._interrupted.wait(_CONNECT_POLL_S)):
             pass
 
