@@ -88,7 +88,7 @@ from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, QTimer, Signa
 from PySide6.QtWidgets import QApplication, QWidget
 
 from system import paths
-from system.camera.capture_scheduler import CaptureScheduler
+from system.camera.capture_scheduler import CaptureScheduler, has_measurement_cycle
 from system.camera.capture_thread import CaptureThread
 from system.camera import lens_health
 from system.camera.lens_health import LensHealthMonitor
@@ -836,10 +836,18 @@ class Application(QObject):
             f"{'de rescate' if self._config.is_using_fallback else 'leída'}."
         )
         if self._collector.is_active and self._collector.mode != _COLLECTOR_MODE_INTERVAL:
-            logger.info(
-                "[Main] El recolector está en modo on_demand: no guarda por su cuenta. "
-                "Los guardados los pide quien orqueste el ciclo con save_now()."
-            )
+            if has_measurement_cycle(self._config):
+                logger.info(
+                    "[Main] El recolector está en modo on_demand: no guarda por su cuenta. "
+                    "Los guardados los pide quien orqueste el ciclo con save_now()."
+                )
+            else:
+                # El mismo texto que el aviso de la pestaña de dataset: cubre el config
+                # editado a mano y el modo headless, donde nadie ve esa pestaña.
+                logger.warning(
+                    "[Main] A pedido no guarda nada: ningún pipeline tiene ciclo de "
+                    "medición. Usar Por intervalo (image_collector.mode: interval)."
+                )
 
     def stop(self):
         """Baja timers, hilos y servidores en orden. Idempotente."""

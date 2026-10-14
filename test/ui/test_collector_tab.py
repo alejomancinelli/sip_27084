@@ -1,6 +1,6 @@
 """
-Tests de la pestaña de dataset: la lista de cámaras que se guardan va y vuelve del config
-sin deformarse.
+Tests de la pestaña de dataset: qué modos ofrece según haya ciclo de medición, y que el
+modo y la lista de cámaras que se guardan vayan y vuelvan del config sin deformarse.
 
 Construye widgets, así que usa un `QApplication` sin pantalla —plataforma `offscreen`—.
 """
@@ -108,3 +108,51 @@ class TestCameras:
         assert not tab._camera_checks["camera_2"].isEnabled()
         tab.save()
         assert config.written["image_collector.cameras"] == ["camera_2"]
+
+
+def _with_cycle(frames_per_cycle: int, mode: str) -> dict:
+    return {
+        "inference.pipelines": {"pipeline_1": {}},
+        "inference.pipelines.pipeline_1.frames_per_cycle": frames_per_cycle,
+        "image_collector.mode": mode,
+    }
+
+
+def _modes(tab: CollectorTab) -> list[str]:
+    return [tab._mode_combo.itemData(i) for i in range(tab._mode_combo.count())]
+
+
+class TestMode:
+    def test_with_a_cycle_both_modes_are_offered(self):
+        tab, _ = _tab(**_with_cycle(5, "interval"))
+        assert _modes(tab) == ["on_demand", "interval"]
+        assert tab._no_cycle_warning.isHidden()
+
+    def test_without_a_cycle_only_interval_is_offered(self):
+        tab, _ = _tab(**_with_cycle(1, "interval"))
+        assert _modes(tab) == ["interval"]
+        assert tab._no_cycle_warning.isHidden()
+
+    def test_on_demand_without_a_cycle_is_kept_with_a_warning(self):
+        """Ocultarla y guardar cambiaría el modo en silencio."""
+        tab, _ = _tab(**_with_cycle(1, "on_demand"))
+        assert _modes(tab) == ["on_demand", "interval"]
+        assert tab._mode_combo.currentData() == "on_demand"
+        assert not tab._no_cycle_warning.isHidden()
+
+    def test_on_demand_without_a_cycle_goes_back_to_the_file(self):
+        tab, config = _tab(**_with_cycle(1, "on_demand"))
+        tab.save()
+        assert config.written["image_collector.mode"] == "on_demand"
+
+    def test_choosing_interval_hides_the_warning(self):
+        tab, _ = _tab(**_with_cycle(1, "on_demand"))
+        tab._mode_combo.setCurrentIndex(_modes(tab).index("interval"))
+        assert tab._no_cycle_warning.isHidden()
+
+    def test_the_rule_is_re_evaluated_on_load(self):
+        tab, config = _tab(**_with_cycle(1, "interval"))
+        config._values["inference.pipelines.pipeline_1.frames_per_cycle"] = 5
+        tab.load()
+        assert _modes(tab) == ["on_demand", "interval"]
+        assert tab._mode_combo.currentData() == "interval"

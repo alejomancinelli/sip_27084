@@ -2,7 +2,15 @@
 Pestaña de dataset: la sección `image_collector:`.
 
 `enabled` se prende y se apaga en caliente, pero el modo no: cambiarlo exige reiniciar
-el recolector, y la nota al pie lo dice donde se lo elige.
+la aplicación, y la nota al pie lo dice donde se lo elige.
+
+«A pedido» se ofrece sólo si algún pipeline tiene ciclo de medición: en ese modo guarda
+quien orquesta el ciclo, una vez por medición, y sin ciclo no guarda nunca. La regla de
+qué es tener ciclo es `has_measurement_cycle()` del scheduler, y no se re-deduce acá. Si
+el config ya dice `on_demand` sin ciclo, la opción se muestra igual con un aviso debajo:
+ocultarla y guardar cambiaría el modo en silencio. Se evalúa en `load()`, así que un
+`frames_per_cycle` cambiado en la pestaña de inferencia lo mueve recién al guardar, que
+es cuando el panel recarga.
 
 Con la recolección apagada no se edita nada más: los campos se atenúan como en las otras
 pestañas, porque un valor que se puede escribir mientras el subsistema está apagado
@@ -21,6 +29,7 @@ todas, y no guardar ninguna es apagar la recolección.
 from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QCheckBox, QVBoxLayout, QWidget
 
+from system.camera.capture_scheduler import has_measurement_cycle
 from system.config_manager import ConfigManager
 
 from ui.strings import tr
@@ -66,12 +75,16 @@ class CollectorTab(AbstractConfigTab):
 
     def _build_general_box(self) -> QWidget:
         box, form = build_group_box(tr("col_box_general"))
+        self._general_form = form
+        self._has_cycle = True
         self._enabled = add_check_row(form, tr("field_enabled"), False)
         self._mode_combo = add_form_row(
             form, tr("col_mode"),
             build_value_combo_box({tr(key): value for key, value in _MODES.items()},
                                   _MODE_ON_DEMAND),
         )
+        self._no_cycle_warning = add_hint_row(form, tr("col_mode_no_cycle"))
+        self._no_cycle_warning.setObjectName("warningBanner")
         add_hint_row(form, tr("col_mode_note"))
         self._interval_min = add_form_row(
             form, tr("col_interval_min"), build_spin_box(1, _MAX_INTERVAL_S, 60)
@@ -133,13 +146,13 @@ class CollectorTab(AbstractConfigTab):
         # que es el que los deja habilitados sin mirar el modo.
         self._enabled.toggled.connect(self._refresh_interval_fields)
         self._mode_combo.currentIndexChanged.connect(self._refresh_interval_fields)
+        self._mode_combo.currentIndexChanged.connect(self._refresh_no_cycle_warning)
 
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 
     def load(self):
         self._enabled.setChecked(bool(self._config.get("image_collector.enabled", False)))
-        set_combo_data(self._mode_combo,
-                       self._config.get("image_collector.mode", _MODE_ON_DEMAND))
+        self._load_mode()
         self._interval_min.setValue(int(self._config.get("image_collector.interval_min_s", 60)))
         self._interval_max.setValue(int(self._config.get("image_collector.interval_max_s", 600)))
         self._max_images.setValue(int(self._config.get("image_collector.max_images", 10000)))
@@ -191,6 +204,24 @@ class CollectorTab(AbstractConfigTab):
                      and self._mode_combo.currentData() == _MODE_INTERVAL)
         for spin in (self._interval_min, self._interval_max):
             spin.setEnabled(is_usable)
+
+    def _load_mode(self):
+        """Arma las opciones del modo según haya ciclo, y elige la del config."""
+        mode = self._config.get("image_collector.mode", _MODE_ON_DEMAND)
+        self._has_cycle = has_measurement_cycle(self._config)
+        with QSignalBlocker(self._mode_combo):
+            self._mode_combo.clear()
+            for key, value in _MODES.items():
+                if value == _MODE_ON_DEMAND and not self._has_cycle and mode != value:
+                    continue
+                self._mode_combo.addItem(tr(key), value)
+            set_combo_data(self._mode_combo, mode)
+        self._refresh_no_cycle_warning()
+
+    def _refresh_no_cycle_warning(self):
+        """El aviso, sólo con «A pedido» elegido y ningún pipeline con ciclo."""
+        is_useless = not self._has_cycle and self._mode_combo.currentData() == _MODE_ON_DEMAND
+        self._general_form.setRowVisible(self._no_cycle_warning, is_useless)
 
     def _load_cameras(self):
         """Marca las cámaras de la lista; vacía —o que no es lista— las marca todas."""

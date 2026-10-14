@@ -9,7 +9,9 @@ import time
 import pytest
 from PySide6.QtCore import Qt
 
-from system.camera.capture_scheduler import REASON_EMPTY_CYCLE, CaptureScheduler
+from system.camera.capture_scheduler import (
+    REASON_EMPTY_CYCLE, CaptureScheduler, has_measurement_cycle,
+)
 from system.inference.result import InferenceResult
 
 _PIPELINE = "pipeline_1"
@@ -112,6 +114,36 @@ class TestTakeFrame:
         scheduler = _scheduler()
         scheduler.stop()
         assert scheduler.take_frame(_SLOT, _PIPELINE) is False
+
+
+# ── Qué es tener ciclo ───────────────────────────────────────────────────────
+
+class TestHasMeasurementCycle:
+    """La regla que comparten el scheduler y la pestaña de dataset."""
+
+    def _config(self, **frames_by_pipeline) -> _MockConfig:
+        values = {"inference.pipelines": {slot: {} for slot in frames_by_pipeline}}
+        for pipeline_slot, frames_per_cycle in frames_by_pipeline.items():
+            values[f"inference.pipelines.{pipeline_slot}.frames_per_cycle"] = frames_per_cycle
+        return _MockConfig(**values)
+
+    def test_without_cycle(self):
+        assert has_measurement_cycle(self._config(pipeline_1=1, pipeline_2=1)) is False
+
+    def test_one_pipeline_with_cycle_is_enough(self):
+        assert has_measurement_cycle(self._config(pipeline_1=1, pipeline_2=5)) is True
+
+    def test_a_disabled_pipeline_with_cycle_does_not_count(self):
+        config = self._config(pipeline_1=1, pipeline_2=5)
+        config._values["inference.pipelines.pipeline_2.enabled"] = False
+        assert has_measurement_cycle(config) is False
+
+    def test_a_missing_value_is_one_frame(self):
+        config = _MockConfig(**{"inference.pipelines": {_PIPELINE: {}}})
+        assert has_measurement_cycle(config) is False
+
+    def test_without_pipelines(self):
+        assert has_measurement_cycle(_MockConfig()) is False
 
 
 # ── Sin ciclo: pass-through ──────────────────────────────────────────────────

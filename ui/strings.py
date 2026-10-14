@@ -531,9 +531,23 @@ _TEXTS: dict[str, dict[str, str]] = {
     "col_hamming":            {"es": "Umbral Hamming (0–64):",
                                "en": "Hamming threshold (0–64):",
                                "pt": "Limiar de Hamming (0–64):"},
-    "col_mode_note":          {"es": "Cambiar el modo exige reiniciar el recolector.",
-                               "en": "Changing the mode requires restarting the collector.",
-                               "pt": "Alterar o modo exige reiniciar o coletor."},
+    "col_mode_note":          {"es": "Cambiar el modo toma efecto al reiniciar la aplicación. "
+                                     "A pedido guarda una imagen por ciclo de medición, y se "
+                                     "ofrece sólo si algún pipeline mide de a varios frames.",
+                               "en": "Changing the mode takes effect when the application "
+                                     "restarts. On demand saves one image per measurement "
+                                     "cycle, and is offered only if some pipeline measures "
+                                     "several frames at a time.",
+                               "pt": "Alterar o modo tem efeito ao reiniciar a aplicação. "
+                                     "Sob demanda salva uma imagem por ciclo de medição, e só "
+                                     "é oferecido se algum pipeline mede vários frames por "
+                                     "vez."},
+    "col_mode_no_cycle":      {"es": "A pedido no guarda nada: ningún pipeline tiene ciclo de "
+                                     "medición. Usar Por intervalo.",
+                               "en": "On demand saves nothing: no pipeline has a measurement "
+                                     "cycle. Use By interval.",
+                               "pt": "Sob demanda não salva nada: nenhum pipeline tem ciclo de "
+                                     "medição. Usar Por intervalo."},
 
     # ── Telemetría (configuración) ───────────────────────────────────────────
     "tel_box_influxdb":       {"es": "InfluxDB",       "en": "InfluxDB",      "pt": "InfluxDB"},
