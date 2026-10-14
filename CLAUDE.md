@@ -328,9 +328,9 @@ siguen vienen del template.
   umbrales de fondo oscuro. Al cargar, el pipeline los confronta con los que traen los
   pesos —el `.engine` los guarda en su cabecera— y con otros no arranca, con el motivo en el
   log: 0 = desmenuzado, 1 = pellet. El template sigue leyendo `class_names` del config para
-  los forks que no declaran sus clases; en este la clave no está, y lo que se escriba en la
-  pestaña de inferencia no cambia ninguna medición: los nombres de los pesos le ganan, y si
-  los pesos no traen, el pipeline lo confronta igual y no arranca con otros.
+  los forks que no declaran sus clases; en este la clave no está. La UI no la muestra en
+  ningún proyecto: se escribe en el archivo al armar el fork, porque un orden cambiado no da
+  un error, invierte los porcentajes.
 - **El color de una clase va por índice y tiene un solo dueño:
   `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo, y
   lo mismo vale para toda la sección `inference.overlay`: varios de sus valores son de la
