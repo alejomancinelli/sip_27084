@@ -98,10 +98,13 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 
 Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva.
 
-### Sin PR todavía
+### En el PR #41
 
-Salieron del merge del template del 2026-10-14. Las dos son de cableado y no tocan la
-maquinaria de `system/`.
+Salieron del merge del template del 2026-10-14 y están en el
+[PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41), abierto, junto
+con el arreglo de C4 y el de los tests de Sentech —que acá siguen dando 18 errores en
+Windows hasta traerlo: sin stapipy en el venv, sus fixtures no encuentran `st_driver.st`—.
+Las dos de la tabla son de cableado y no tocan la maquinaria de `system/`.
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
@@ -223,11 +226,13 @@ template —`max_load_y_px`, `detection_count`—. Con el pipeline de la cinta, 
 `segmenter`, el modelo no carga y seis tests fallan. Acá se adaptaron al slot y a los hooks
 de la cinta, así que en el próximo merge van a chocar.
 
-**El arreglo** es del template: que el test arme el slot desde `Pipeline.model_slots` en vez
-de escribirlo, que lo que prueba de los hooks lo pregunte a `build_hooks()` —qué devuelve—
-en vez de suponer qué métricas salen, y que el `README.md` del template liste el config de
-`manual_test/offline_inference/` entre lo que el fork reescribe. Mientras no vuelva, en un
-merge quedarse con la versión de acá.
+**El arreglo** es del template y está en el
+[PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41): el test arma los
+slots desde `Pipeline.model_slots` y prueba los hooks con espías en lugar de suponer qué
+métricas salen, y el `README.md` del template suma el config de
+`manual_test/offline_inference/` y `test_hooks.py` a lo que el fork reescribe. Cuando se
+traiga, quedarse con el `test_offline.py` del template —pasa sin editar contra esta cinta—
+y conservar el config de la prueba manual de acá.
 
 ## Dónde más hay divergencia, sin ser ninguna de las tres
 
