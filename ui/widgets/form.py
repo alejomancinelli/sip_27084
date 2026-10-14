@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGraphicsOpacityEffect,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy, QSpinBox,
-    QTabWidget, QVBoxLayout, QWidget,
+    QStyle, QTabWidget, QVBoxLayout, QWidget,
 )
 
 _LABEL_MIN_WIDTH_PX = 240    # ancho mínimo de la etiqueta, para alinear todas las filas
@@ -232,6 +232,10 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     `_CARD_MIN_WIDTH_PX`. Si tomara el ancho que pide su contenido, cada pestaña tendría el
     suyo y el fondo saltaría al cambiar de una a otra. No es un ancho fijo: con el scroll
     horizontal apagado, en una pantalla chica cortaría los campos.
+
+    Por lo mismo, una tarjeta centrada con scroll queda en el mismo lugar haya barra
+    vertical o no: sin barra se reserva su ancho a la derecha. Si no, la pestaña larga
+    quedaría corrida medio ancho de barra respecto de la corta.
     """
     card = QWidget()
     card.setObjectName(_CARD_OBJECT_NAME)
@@ -258,12 +262,39 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     if not scroll:
         return wrapper
 
-    area = QScrollArea()
+    area = _BarReservingScrollArea(wrapper_layout) if center else QScrollArea()
     area.setWidgetResizable(True)
     area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     area.viewport().setAutoFillBackground(False)
     area.setWidget(wrapper)
     return area
+
+
+class _BarReservingScrollArea(QScrollArea):
+    """
+    Área con scroll que, sin barra vertical, reserva su ancho a la derecha del contenido.
+
+    Con margen o con barra el contenido tiene el mismo ancho, así que reservarlo no hace
+    aparecer ni desaparecer la barra: no oscila.
+    """
+
+    def __init__(self, content_layout: QHBoxLayout, parent=None):
+        super().__init__(parent)
+        self._content_layout = content_layout
+        self.verticalScrollBar().rangeChanged.connect(self._reserve_bar_width)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Un contenido que nunca necesita barra no cambia el rango, y el margen se pone acá.
+        self._reserve_bar_width()
+
+    def _reserve_bar_width(self):
+        bar = self.verticalScrollBar()
+        # El ancho se pide al estilo y no a la barra, que oculta no tiene medida; con el
+        # QSS aplicado, el estilo devuelve el ancho que declara la hoja.
+        width_px = 0 if bar.maximum() > 0 else self.style().pixelMetric(
+            QStyle.PM_ScrollBarExtent, None, bar)
+        self._content_layout.setContentsMargins(0, 0, width_px, 0)
 
 
 def wire_enable_toggle(check: QCheckBox, dependents: list):

@@ -56,3 +56,28 @@ class TestCardWidth:
 
     def test_a_card_that_is_not_centered_takes_the_whole_width(self):
         assert _card_width("tabla", _WIDE_WINDOW_PX, center=False) > form._CARD_WIDTH_PX
+
+
+def _card_x(row_count: int) -> tuple[int, bool]:
+    """Posición de la tarjeta de un contenido de `row_count` filas, en la ventana."""
+    inner = QWidget()
+    layout = QVBoxLayout(inner)
+    for i in range(row_count):
+        layout.addWidget(QLabel(f"fila {i}"))
+    wrapped = form.wrap_in_card(inner, scroll=True)
+    wrapped.resize(_WIDE_WINDOW_PX, _WINDOW_HEIGHT_PX)
+    wrapped.show()
+    QApplication.processEvents()
+    card = wrapped.findChild(QWidget, form._CARD_OBJECT_NAME)
+    x = card.mapTo(wrapped, card.rect().topLeft()).x()
+    has_bar = wrapped.verticalScrollBar().isVisible()
+    wrapped.close()
+    return x, has_bar
+
+
+class TestCardPosition:
+    def test_the_card_does_not_move_when_the_scroll_bar_appears(self):
+        short_x, short_has_bar = _card_x(2)
+        long_x, long_has_bar = _card_x(200)
+        assert (short_has_bar, long_has_bar) == (False, True)
+        assert short_x == long_x
