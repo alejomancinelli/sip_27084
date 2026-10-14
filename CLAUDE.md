@@ -332,8 +332,10 @@ siguen vienen del template.
   pestaña de inferencia no cambia ninguna medición: los nombres de los pesos le ganan, y si
   los pesos no traen, el pipeline lo confronta igual y no arranca con otros.
 - **El color de una clase va por índice y tiene un solo dueño:
-  `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo. Con
-  esa paleta el motor pinta las máscaras y el panel de composición pinta sus filas —`main.py`
+  `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo, y
+  lo mismo vale para toda la sección `inference.overlay`: varios de sus valores son de la
+  instalación —`font_scale` está calibrado para el frame de esta cámara— y no van a
+  constantes de `overlay.py`, que es maquinaria y se cross-portea. Con esa paleta el motor pinta las máscaras y el panel de composición pinta sus filas —`main.py`
   se la pasa al annotator—, así que una clase se ve del mismo color en los dos lados. Un
   color por nombre en el annotator era una segunda fuente que ya no coincidía con la de las
   máscaras, y que con un orden de clases invertido habría pintado la misma clase de dos

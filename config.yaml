@@ -122,7 +122,8 @@ inference:
   # cada pipeline.
   overlay:
     # Dibujado del resultado sobre el frame. Sale una sola vez y el mismo array viaja a
-    # la UI, al stream `annotated` y al dataset.
+    # la UI, al stream `annotated` y al dataset. La sección entera se edita sólo acá: la
+    # UI no la muestra.
     enabled: true
     draw_boxes: false           # con cientos de instancias las cajas tapan la imagen
     draw_masks: true
