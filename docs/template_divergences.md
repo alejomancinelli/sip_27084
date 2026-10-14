@@ -83,7 +83,9 @@ escala temperaturas y disco ×10; acá van en las direcciones viejas y sin escal
 
 **Cómo revertir:** no se revierte. Un mapa de registros es un contrato con el integrador y
 se cambia cuando el integrador cambia su programa, no cuando se actualiza el template. Lo
-único que se tomó del template es el bitfield del registro 51 y los registros 97-99.
+único que se tomó del template es el bitfield del registro 51 y el reloj y la licencia,
+que acá ocupan las tres últimas direcciones expuestas, 98-100. El template los tiene
+en 97-99 hasta que vuelva el cambio.
 
 ---
 

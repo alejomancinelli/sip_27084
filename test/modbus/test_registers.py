@@ -142,6 +142,19 @@ class TestLookupsUsedByTheApp:
             assert len(addrs) <= _CAMERA_BLOCK_STRIDE, f"{slot} se pasa de su bloque"
             assert max(addrs) < start + _CAMERA_BLOCK_STRIDE, f"{slot} pisa el bloque siguiente"
 
+    def test_the_license_closes_the_exposed_block(self):
+        """El bloque agregado ocupa las tres últimas direcciones: la licencia, la última."""
+        assert SCHEMA.addr("license_days_remaining") == DEFAULT_REGISTER_COUNT
+
+    def test_the_clock_words_are_consecutive_with_the_high_one_first(self):
+        """
+        El PLC lee las dos palabras como un DINT, alta en la dirección más baja: con el
+        orden invertido leería la palabra baja como alta y el reloj daría un absurdo.
+        """
+        high = SCHEMA.addr("clock_epoch_s_high")
+        assert SCHEMA.addr("clock_epoch_s_low") == high + 1
+        assert SCHEMA.addr("license_days_remaining") == high + 2
+
     def test_readback_addrs_are_a_subset_of_the_map(self):
         assert set(SCHEMA.readback_addrs()) <= {r.addr for r in REGISTERS}
 

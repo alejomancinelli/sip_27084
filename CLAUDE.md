@@ -318,7 +318,7 @@ siguen vienen del template.
   semántica se preservan porque el PLC ya está programado contra ellas; lo único que cambió
   son los `name:`, que son el contrato con el código y no con el PLC. Dos excepciones: el
   registro 51 pasó del enum 0-5 al bitfield del template —que es lo que transporta el bit de
-  lente sucio— y se agregaron 97-99 sobre direcciones que estaban libres.
+  lente sucio— y se agregaron 98-100 sobre direcciones que estaban libres.
 - **Las clases de esta cinta están en el código y no en el config, y deciden el nombre de
   sus métricas.** De `CLASS_NAMES` en `system/inference/pipeline.py` salen `pct_pellet` y
   `pct_pellet_norm`, y con ellos los registros que lee el PLC: no es algo que se edite en

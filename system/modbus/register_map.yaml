@@ -210,7 +210,7 @@
   producer: health
   unit: W
 
-# ── Reloj del equipo (97-98) ─────────────────────────────────────────────────
+# ── Reloj del equipo (98-99) ─────────────────────────────────────────────────
 # NUEVOS: el rango 91-100 estaba libre en el mapa anterior. El PLC puede ignorarlos
 # hasta que se los quiera usar.
 #
@@ -227,10 +227,10 @@
 # la práctica corriente y todo PLC sabe leer como DINT. Lo que el protocolo NO define es el
 # orden de las dos palabras, y ahí es donde fallan estas integraciones:
 #
-#     97  palabra ALTA   (bits 31-16)
-#     98  palabra BAJA   (bits 15-0)
+#     98  palabra ALTA   (bits 31-16)
+#     99  palabra BAJA   (bits 15-0)
 #
-#     epoch = (reg97 * 65536) + reg98
+#     epoch = (reg98 * 65536) + reg99
 #
 # Alta primero, en la dirección más baja. Si el PLC lee un DINT y da un número absurdo,
 # está invirtiendo las palabras: casi todos los drivers tienen un `word swap` para eso.
@@ -241,13 +241,13 @@
 # hay zona horaria que configurar en ningún lado.
 #
 # Leído como DINT **con signo** el valor da la vuelta en 2038; como unsigned llega a 2106.
-- addr: 97
+- addr: 98
   name: clock_epoch_s_high
   desc: Reloj del equipo, palabra alta (epoch UTC = alta*65536 + baja)
   producer: health
   unit: s
 
-- addr: 98
+- addr: 99
   name: clock_epoch_s_low
   desc: Reloj del equipo, palabra baja
   producer: health
@@ -257,7 +257,7 @@
 # empiece a andar mal, que es lo que permite alarmar con un mes de anticipación en vez
 # de enterarse el día que la línea para. Una licencia perpetua publica un centinela alto
 # y constante (9999); una vencida, sin licencia o con el reloj movido publica 0.
-- addr: 99
+- addr: 100
   name: license_days_remaining
   desc: Días hasta el vencimiento de la licencia
   producer: health
