@@ -176,6 +176,8 @@ image_collector:
   # el frame de cámara en original/, el anotado en annotated/ y la metadata de
   # inferencia en un .json al lado del anotado.
   enabled: false                # se prende y se apaga en caliente
+  cameras: []                   # slots que se guardan; [] = todas, también las que se agreguen
+                                # después. Con una lista, una cámara nueva no entra hasta sumarla
   mode: interval                # on_demand | interval
   interval_min_s: 60            # ventana al azar entre guardados
   interval_max_s: 600
