@@ -37,6 +37,7 @@ cambiarlo se cambia ahí:
 | Color de algo que se dibuja | `ui/theme.py` (`get_palette`, `get_color`) | el widget lo pide en su `set_dark()` |
 | Color de una serie de gráfica | `ui/theme.py` (`SERIES_COLORS`) | `RealtimeChart(series_role="cpu")` |
 | Color de una detección | `system/inference/overlay.py` | **no es de la UI**: el frame llega anotado |
+| Estilo del anotado (máscaras, texto, grosor, paleta) | `inference.overlay` en `config.yaml` | **no se edita desde la UI**: ninguna pestaña lo muestra |
 | Texto que ve el operador | `ui/strings.py` | `tr("clave")`; nunca un literal |
 | Medida (ancho, alto, margen) | constante `_ALGO_PX` del módulo que la usa | si la usan dos módulos, va en `ui/widgets/form.py` |
 | Alto de una pestaña | no se declara: la envuelve un área con scroll | ver «Agregar una pestaña» |

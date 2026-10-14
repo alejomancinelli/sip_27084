@@ -340,9 +340,6 @@ _TEXTS: dict[str, dict[str, str]] = {
     # ── Inferencia (configuración) ───────────────────────────────────────────
     "inf_box_model":          {"es": "Modelo",         "en": "Model",         "pt": "Modelo"},
     "inf_box_pipeline":       {"es": "Pipeline",       "en": "Pipeline",      "pt": "Pipeline"},
-    "inf_box_overlay":        {"es": "Anotado del resultado",
-                               "en": "Result overlay",
-                               "pt": "Anotação do resultado"},
     "inf_model_type":         {"es": "Tipo:",          "en": "Type:",         "pt": "Tipo:"},
     "inf_model_path":         {"es": "Pesos:",         "en": "Weights:",      "pt": "Pesos:"},
     "inf_min_confidence":     {"es": "Confianza mínima por detección (%):",
@@ -366,19 +363,6 @@ _TEXTS: dict[str, dict[str, str]] = {
     "inf_min_result_conf":    {"es": "Confianza mínima del resultado (%):",
                                "en": "Minimum result confidence (%):",
                                "pt": "Confiança mínima do resultado (%):"},
-    "inf_draw_timestamp":     {"es": "Dibujar la hora","en": "Draw timestamp","pt": "Desenhar a hora"},
-    "inf_overlay_note":       {"es": "Las cajas, las máscaras, las etiquetas y el recuadro del ROI "
-                                     "van siempre: apagarlas deja un stream anotado que no muestra "
-                                     "nada. Sus claves siguen en el config.yaml por si un proyecto "
-                                     "necesita apagarlas.",
-                               "en": "Boxes, masks, labels and the ROI outline are always drawn: "
-                                     "turning them off leaves an annotated stream showing nothing. "
-                                     "Their keys remain in config.yaml in case a project needs to "
-                                     "disable them.",
-                               "pt": "As caixas, as máscaras, as etiquetas e o contorno do ROI vão "
-                                     "sempre: desligá-las deixa um stream anotado que não mostra "
-                                     "nada. Suas chaves seguem no config.yaml caso um projeto "
-                                     "precise desligá-las."},
     "inf_frames_per_cycle":   {"es": "Imágenes por medición:",
                                "en": "Frames per measurement:",
                                "pt": "Imagens por medição:"},
@@ -400,20 +384,6 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Com 1 imagem por medição as outras três não fazem "
                                      "nada. Desligar a captura libera a rede, mas deixa o "
                                      "vídeo ao vivo sem imagem até a medição seguinte."},
-    "inf_crop_to_roi":        {"es": "Anotar sólo el recorte del ROI",
-                               "en": "Annotate only the ROI crop",
-                               "pt": "Anotar apenas o recorte do ROI"},
-    "inf_mask_style":         {"es": "Dibujo de la máscara:",
-                               "en": "Mask drawing:",   "pt": "Desenho da máscara:"},
-    "inf_mask_alpha":         {"es": "Opacidad del relleno:",
-                               "en": "Fill opacity:",   "pt": "Opacidade do preenchimento:"},
-    "inf_font_scale":         {"es": "Escala de fuente:",
-                               "en": "Font scale:",    "pt": "Escala da fonte:"},
-    "inf_font_scale_auto":    {"es": "automática",
-                               "en": "automatic",      "pt": "automática"},
-    "inf_thickness":          {"es": "Grosor de línea (px):",
-                               "en": "Line thickness (px):",
-                               "pt": "Espessura da linha (px):"},
 
     # ── Proceso (configuración) ──────────────────────────────────────────────
     "process_box_belt":       {"es": "Rectángulo de cinta",

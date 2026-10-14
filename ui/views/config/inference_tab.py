@@ -1,5 +1,5 @@
 """
-Pestaña de inferencia: `inference.models`, `inference.pipelines` e `inference.overlay`.
+Pestaña de inferencia: `inference.models` e `inference.pipelines`.
 
 Un grupo por slot de modelo y otro por slot de pipeline, sacados del config: los slots
 son fijos por proyecto, igual que las cámaras.
@@ -11,24 +11,24 @@ esta pestaña sale de dónde se carga cada modelo y qué cámaras entran a cada 
 Los tipos de modelo que ofrece el combo salen de `REGISTERED_MODELS`, así que un fork
 que registra su modelo en la fábrica lo ve acá sin tocar la UI.
 
-Tres claves de la sección no están en esta pantalla, y no es un olvido:
+Dos cosas de la sección no están en esta pantalla, y no es un olvido:
 
   - **`device`** no existe más: el modelo resuelve solo si hay CUDA disponible. Elegirlo
     a mano desde la planta sólo servía para dejar la inferencia en CPU sin darse cuenta.
-  - **`frames_per_cycle`** no lo lee el motor —emite un resultado por frame y no promedia—:
-    lo usa quien orquesta el ciclo de medición. Mostrarlo acá invita a cambiarlo esperando
-    un efecto que no va a pasar.
-  - **Las cuatro banderas de dibujado que van siempre** (cajas, máscaras, etiquetas y ROI):
-    ver la nota del grupo de anotado.
+  - **`inference.overlay`**, el anotado del resultado, se edita sólo en el config.yaml,
+    como su paleta `class_colors_bgr`. Varios de sus valores son de la instalación y no
+    una preferencia del operador —el tamaño del texto se calibra para el frame de cada
+    cámara—, y cambiarlos desde la planta no mide mejor: sólo cambia lo que se ve en el
+    stream, en la UI y en el dataset a la vez.
 
-Las claves siguen funcionando si un proyecto las agrega al config.yaml; lo que se saca es
-el control de planta, no la capacidad.
+Las claves del ciclo de medición —`frames_per_cycle` y las tres que dependen de él— sí se
+muestran: no las lee el motor sino el scheduler, y la nota del grupo dice que con una
+imagen por medición las otras tres no hacen nada.
 """
 
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from system.inference.models.model_factory import REGISTERED_MODELS
-from system.inference.overlay import MASK_STYLE_FILL, MASK_STYLES
 
 from system.config_manager import ConfigManager
 
@@ -45,12 +45,10 @@ _MAX_DETECTIONS = 10000
 _MAX_INTERVAL_S = 3600.0
 _MAX_FRAMES_PER_CYCLE = 100      # N imágenes por medición; más que esto es otro problema
 _MAX_CYCLE_INTERVAL_S = 86400.0  # una medición por día es el extremo razonable
-_MAX_FONT_SCALE = 4.0
-_MAX_THICKNESS_PX = 10
 
 
 class InferenceTab(AbstractConfigTab):
-    """Sección `inference:` del config, menos el orden de las etapas."""
+    """Sección `inference:` del config, menos el orden de las etapas y el anotado."""
 
     TITLE_KEY = "tab_inference"
 
@@ -65,7 +63,6 @@ class InferenceTab(AbstractConfigTab):
             layout.addWidget(self._build_model_box(model_slot))
         for pipeline_slot in (self._config.get("inference.pipelines", {}) or {}):
             layout.addWidget(self._build_pipeline_box(pipeline_slot))
-        layout.addWidget(self._build_overlay_box())
         layout.addStretch()
         self.load()
 
@@ -121,36 +118,6 @@ class InferenceTab(AbstractConfigTab):
         self._pipeline_forms[pipeline_slot] = fields
         return box
 
-    def _build_overlay_box(self) -> QWidget:
-        box, form = build_group_box(tr("inf_box_overlay"))
-        self._overlay_enabled = add_check_row(form, tr("field_enabled"), True)
-        # Sólo las dos que un operador realmente apaga. Las otras cuatro van siempre:
-        # el motor las sigue leyendo del config, así que un proyecto que necesite
-        # apagarlas puede, pero no desde la pantalla de planta.
-        self._overlay_checks = {
-            "draw_timestamp": add_check_row(form, tr("inf_draw_timestamp"), True),
-            "crop_to_roi":    add_check_row(form, tr("inf_crop_to_roi"), False),
-        }
-        self._mask_style = add_form_row(
-            form, tr("inf_mask_style"), build_combo_box(list(MASK_STYLES), MASK_STYLE_FILL))
-        self._mask_alpha = add_form_row(
-            form, tr("inf_mask_alpha"),
-            build_double_spin_box(0.0, 1.0, 0.45, decimals=2, step=0.05),
-        )
-        self._font_scale = add_form_row(
-            form, tr("inf_font_scale"),
-            # El mínimo es 0 y NO es un tamaño: es «automática». Con el mínimo en 0.1,
-            # abrir esta pantalla y guardar convertía el 0 del config en 0.1 sin avisar,
-            # y el texto dejaba de adaptarse al tamaño del lienzo.
-            build_double_spin_box(0.0, _MAX_FONT_SCALE, 0.6, decimals=2, step=0.1,
-                                  special_value_text=tr("inf_font_scale_auto")),
-        )
-        self._thickness = add_form_row(
-            form, tr("inf_thickness"), build_spin_box(1, _MAX_THICKNESS_PX, 2)
-        )
-        add_hint_row(form, tr("inf_overlay_note"))
-        return box
-
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 
     def load(self):
@@ -184,15 +151,6 @@ class InferenceTab(AbstractConfigTab):
             fields["idle_cameras_between_cycles"].setChecked(
                 bool(self._config.get(f"{prefix}.idle_cameras_between_cycles", False)))
 
-        self._overlay_enabled.setChecked(bool(self._config.get("inference.overlay.enabled", True)))
-        for key, check in self._overlay_checks.items():
-            check.setChecked(bool(self._config.get(f"inference.overlay.{key}", True)))
-        set_combo_value(self._mask_style,
-                        self._config.get("inference.overlay.mask_style", MASK_STYLE_FILL))
-        self._mask_alpha.setValue(float(self._config.get("inference.overlay.mask_alpha", 0.45)))
-        self._font_scale.setValue(float(self._config.get("inference.overlay.font_scale", 0.6)))
-        self._thickness.setValue(int(self._config.get("inference.overlay.thickness", 2)))
-
     def save(self):
         for model_slot, fields in self._model_forms.items():
             prefix = f"inference.models.{model_slot}"
@@ -217,11 +175,3 @@ class InferenceTab(AbstractConfigTab):
                              fields["capture_timeout_s"].value())
             self._config.set(f"{prefix}.idle_cameras_between_cycles",
                              fields["idle_cameras_between_cycles"].isChecked())
-
-        self._config.set("inference.overlay.enabled", self._overlay_enabled.isChecked())
-        for key, check in self._overlay_checks.items():
-            self._config.set(f"inference.overlay.{key}", check.isChecked())
-        self._config.set("inference.overlay.mask_style", self._mask_style.currentText())
-        self._config.set("inference.overlay.mask_alpha", self._mask_alpha.value())
-        self._config.set("inference.overlay.font_scale", self._font_scale.value())
-        self._config.set("inference.overlay.thickness", self._thickness.value())
