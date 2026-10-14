@@ -14,15 +14,16 @@ alimenta cada campo.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGraphicsOpacityEffect,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
-    QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy, QSpinBox,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 _LABEL_MIN_WIDTH_PX = 240    # ancho mínimo de la etiqueta, para alinear todas las filas
 _ROW_MIN_HEIGHT_PX = 28      # alto mínimo de una fila, para que todas midan igual
 _BOX_MIN_WIDTH_PX = 640      # ancho mínimo de un QGroupBox
 _CARD_MIN_WIDTH_PX = 720     # ancho mínimo de la tarjeta de una pestaña
-_CARD_MAX_WIDTH_PX = 1600    # ancho máximo de la tarjeta; de ahí en más queda centrada
+_CARD_WIDTH_PX = 1100        # ancho de toda tarjeta centrada; de ahí en más, fondo a los lados
+_FULL_CARD_MAX_WIDTH_PX = 6400   # tope de una tarjeta a todo el ancho, para una tabla
 _CARD_MARGIN_PX = 14
 _DISABLED_OPACITY = 0.35     # opacidad de un campo que su checkbox de habilitado apagó
 
@@ -225,12 +226,19 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     `center` deja el contenido centrado con fondo a los lados, que es lo que quieren
     los grupos de campos; en False ocupa todo el ancho, para una tabla. `scroll`
     agrega la barra vertical, para las pestañas que no entran en pantalla.
+
+    **Toda tarjeta centrada mide lo mismo, en todas las pestañas**: se estira hasta
+    `_CARD_WIDTH_PX` y por debajo de eso ocupa lo que haya, con el mínimo de
+    `_CARD_MIN_WIDTH_PX`. Si tomara el ancho que pide su contenido, cada pestaña tendría el
+    suyo y el fondo saltaría al cambiar de una a otra. No es un ancho fijo: con el scroll
+    horizontal apagado, en una pantalla chica cortaría los campos.
     """
     card = QWidget()
     card.setObjectName(_CARD_OBJECT_NAME)
     card.setAttribute(Qt.WA_StyledBackground, True)
     card.setMinimumWidth(_CARD_MIN_WIDTH_PX)
-    card.setMaximumWidth(_CARD_MAX_WIDTH_PX if center else _CARD_MAX_WIDTH_PX * 4)
+    card.setMaximumWidth(_CARD_WIDTH_PX if center else _FULL_CARD_MAX_WIDTH_PX)
+    card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     card_layout = QVBoxLayout(card)
     card_layout.setContentsMargins(_CARD_MARGIN_PX, _CARD_MARGIN_PX,
                                    _CARD_MARGIN_PX, _CARD_MARGIN_PX)
@@ -239,11 +247,13 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     wrapper = QWidget()
     wrapper_layout = QHBoxLayout(wrapper)
     wrapper_layout.setContentsMargins(0, 0, 0, 0)
+    # La tarjeta tiene el stretch: crece primero hasta su tope, y lo que sobra va a los
+    # costados.
     if center:
-        wrapper_layout.addStretch()
-    wrapper_layout.addWidget(card)
+        wrapper_layout.addStretch(0)
+    wrapper_layout.addWidget(card, 1)
     if center:
-        wrapper_layout.addStretch()
+        wrapper_layout.addStretch(0)
 
     if not scroll:
         return wrapper

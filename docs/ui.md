@@ -40,6 +40,7 @@ cambiarlo se cambia ahí:
 | Estilo del anotado (máscaras, texto, grosor, paleta) | `inference.overlay` en `config.yaml` | **no se edita desde la UI**: ninguna pestaña lo muestra |
 | Texto que ve el operador | `ui/strings.py` | `tr("clave")`; nunca un literal |
 | Medida (ancho, alto, margen) | constante `_ALGO_PX` del módulo que la usa | si la usan dos módulos, va en `ui/widgets/form.py` |
+| Ancho de una pestaña | `_CARD_WIDTH_PX` en `ui/widgets/form.py` | uno solo para toda tarjeta centrada, en Configuración y en Diagnóstico: no se ajusta por pestaña |
 | Alto de una pestaña | no se declara: la envuelve un área con scroll | ver «Agregar una pestaña» |
 | Estado de un servicio | `ui/service_status.py` | `describe(service, status)` |
 | Estado de un chip | `ui/widgets/status_chip.py` (`CHIP_*`) | `chip.set_state(CHIP_OK)` |
