@@ -96,20 +96,12 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Las primeras son
-del build compilado en la Jetson, con el detalle en `.claude/plans/jetson-compilation.md`;
-las que siguen salieron de la revisión del template y del proyecto del 2026-10-08.
+Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Salieron de la
+revisión del template y del proyecto del 2026-10-08 y de la del costo por frame, y
+**ninguna tiene PR todavía**.
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
-| `build/build.py` | En Linux el build es acelerado (`_ACCELERATED`): compila `system`, `tools` y `ui` con `no_site` y `--file-reference-choice=runtime`; lo de terceros —`cryptography` incluida— va suelto | En cualquier Jetson el standalone de torch no termina con 8 GB, y CUDA, TensorRT y Python salen del JetPack igual |
-| `build/make_release.py` | El entregable acelerado: `program/site-packages` copiado del venv sin lo de build, symlinks de apt como symlinks, lanzadores con `PYTHONPATH`, verificador de cámara que busca los paquetes donde viajan | Es la otra mitad del build acelerado |
-| `build/requirements.txt`, `build/README.md`, `build/.gitignore` | Nuitka 4.2.2 declarado; la forma de Linux documentada | Ídem |
-| `system/paths.py` | `APP_DIR` acelerado desde `__compiled__.containing_dir`, no desde `sys.executable` | Acelerado, `sys.executable` es el intérprete del equipo de build |
-| `system/license/verify.py` | Autocontrol del verificador con el vector 1 de la RFC 8032 antes de cada verificación | Con `cryptography` suelta, vaciar su `verify()` es el ataque de un rato en cualquier fork |
-| `system/system_monitor.py` | Potencia del INA3221 desde `in1_input × curr1_input` | JetPack 6 no publica `power1_input`: toda Jetson con JetPack 6 reporta 0 W |
-| `main.py` (fuera del bloque del fork) | El handler de SIGINT/SIGTERM agenda el cierre con `QTimer.singleShot(0, app.quit)` en vez de cerrar (`_build_interrupt_handler()`) | Compilado, el handler corre con el lock del config tomado y Qt 6 emite `aboutToQuit` en el acto: el cierre se trababa y abortaba en cualquier fork |
-| `tools/camera/abstract_driver.py`, `tools/camera/st_driver.py`, `system/camera/capture_thread.py` | `interrupt()` en el contrato del driver; `StDriver` despierta con él `connect()` y los reintentos; `CaptureThread.requestInterruption()` lo llama | Sin cámara, un cierre durante `connect()` dejaba el hilo vivo hasta 20 s y Qt abortaba, también desde fuentes |
 | `system/inference/engine.py`, `system/inference/models/abstract_model.py` | Docstrings: la lógica por cámara va al pipeline, que recibe `camera_slot` en `_run()`; el `classifier` queda para lo que depende de la posición en el frame | Contradecían el contrato del pipeline desde que `_run()` recibe la cámara |
 | `system/inference/engine.py`, `tools/camera/abstract_driver.py` | `push_frame()` guarda el frame sin copiarlo, y el contrato de `get_frame()` declara que el array es propio y que nadie lo modifica in-place | La copia suponía un driver que reusa su buffer, y ninguno lo hace: ~140 MB/s tirados a 3 MP y 15 fps |
 | `system/telemetry/persistence.py` | El comentario de `_PUBLISH_INTERVAL_S` ya no dice que la cola topea el ritmo en 10 puntos/s | El hilo drena la cola de continuo |
@@ -127,6 +119,29 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `ui/widgets/camera_panel.py` | No pinta oculto, y achica el frame con OpenCV antes de pasarlo a Qt | Convertía los 3 MP enteros a pixmap por frame en la GUI |
 | `ui/widgets/log_table.py` | Una fila por evento en vez de reconstruir la tabla | 200 × 4 items por línea de log, en ráfaga |
 | `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
+
+Con los tests de cada uno: `test/test_main.py`, `test/inference/test_engine.py`,
+`test/modbus/test_server.py`, `test/test_gpio_control.py`,
+`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`,
+`test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
+`test/video/test_http_server.py`, `test/ui/test_camera_panel.py` y
+`test/ui/test_log_table.py`.
+
+**En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
+la de acá. Si no la trae, conservarla y abrir el PR.
+
+### En el PR #37
+
+Lo de la revisión de la GUI del 2026-10-14 está en el
+[PR #37](https://github.com/alejomancinelli/cv_projects_template/pull/37), abierto. Al
+mergearlo y traer el template, estas filas pasan a «Lo que ya volvió». Dos diferencias con
+lo de acá, a propósito: el `main.py` del template no consulta `should_collect()`, porque
+eso cuelga del arreglo «sin recolección prendida no se arma el JSON» de la tabla de
+arriba, que todavía no volvió; y el PR mueve el reloj y la licencia del mapa de ejemplo
+a 98-100, como se hizo acá (A3).
+
+| Archivo | Qué se cambió | Por qué es genérico |
+|---|---|---|
 | `ui/views/config/system_tab.py`, `ui/strings.py`, comentario de `system.device_id` en `config.yaml` | `system.device_id` de sólo lectura, con una nota de dónde se cambia y qué rompe | Es el `client_id` de MQTT y el tag `device` de InfluxDB: editarlo en planta echa equipos del broker y parte las series |
 | `system/image_collector/collector.py`, `ui/views/config/collector_tab.py`, `ui/strings.py`, `main.py` (fuera del bloque del fork), `manual_test/ui/config.yaml`, `image_collector.cameras` en `config.yaml` | Recolección por cámara: `image_collector.cameras` (`[]` = todas), filtrada adentro del recolector en los dos modos y expuesta como `should_collect()`, que el cableado usa en vez de `is_active`; un checkbox por cámara en la pestaña | Un fork con varias cámaras no tenía cómo guardar sólo algunas,, la lista vacía deja igual a un config existente |
 | `system/camera/capture_scheduler.py`, `ui/views/config/collector_tab.py`, `ui/strings.py`, `main.py` (fuera del bloque del fork) | `has_measurement_cycle()` como regla única de «tener ciclo», que usan el scheduler y la pestaña; «A pedido» se ofrece sólo con ciclo, un `on_demand` sin ciclo se conserva con un aviso, y el arranque lo avisa como warning | Con `frames_per_cycle: 1` el modo a pedido no guarda nunca, y la pestaña lo ofrecía igual |
@@ -135,20 +150,10 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `ui/widgets/form.py`, `docs/ui.md` | Toda tarjeta centrada se estira hasta un ancho común, `_CARD_WIDTH_PX` (1000 px, antes un tope de 1600), con el mínimo de 720 px, y sin barra vertical se reserva su ancho | Cada tarjeta tomaba el ancho de su contenido, y el fondo saltaba al cambiar de pestaña; la barra corría la tarjeta medio ancho |
 | `ui/views/config/inference_tab.py`, `ui/strings.py` | Sale el campo «Nombres de clase»: `class_names` se escribe en el config.yaml al armar el fork | Un orden cambiado no da un error, invierte los porcentajes; y en un fork que declara sus clases en el código el campo sólo podía frenar el pipeline |
 
-Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
-`test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
-`test/tools/camera/test_st_driver.py`, `test/build/`, `test/inference/test_engine.py`,
-`test/modbus/test_server.py`, `test/test_gpio_control.py`,
-`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`,
-`test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
-`test/video/test_http_server.py`, `test/ui/test_camera_panel.py`,
-`test/ui/test_log_table.py`, `test/ui/test_system_tab.py`,
+Con los tests de cada uno: `test/ui/test_system_tab.py`,
 `test/image_collector/test_collector.py`, `test/ui/test_collector_tab.py`,
 `test/camera/test_capture_scheduler.py`, `test/ui/test_inference_tab.py` y
 `test/ui/test_form.py`.
-
-**En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
-la de acá. Si no la trae, conservarla y abrir el PR.
 
 ### Lo que ya volvió
 
@@ -166,6 +171,18 @@ aislado, `verify_env.py` —salvo su bloque del fork—, el build y el entregabl
 el borrado de las claves del build, `probe_codec()` y el `nvvidconv` de los codecs `_hw`,
 el filtro de registros de `ui_app.py`, el timestamp del overlay y el STC-MCS312POE del
 catálogo.
+
+Con el [PR #36](https://github.com/alejomancinelli/cv_projects_template/pull/36), mergeado
+el 2026-10-09, volvió lo del build compilado en la Jetson, con el detalle en
+`.claude/plans/jetson-compilation.md`: el build acelerado de Linux (`build/build.py`,
+`build/make_release.py`, `build/requirements.txt`, `build/README.md`, `build/.gitignore`),
+el `APP_DIR` acelerado de `system/paths.py`, el autocontrol de `system/license/verify.py`,
+la potencia del INA3221 en `system/system_monitor.py`, el handler de señales que agenda el
+cierre en `main.py` e `interrupt()` en el contrato del driver, en `StDriver` y en
+`CaptureThread`. **Ese PR todavía no se trajo con un merge**: el contenido ya es idéntico
+salvo `test/test_paths.py`, que el template arregló en el mismo PR para comparar rutas
+absolutas —es por eso que acá fallan dos tests de rutas en Windows—. Un
+`git merge template/main` lo cierra.
 
 ---
 
