@@ -129,6 +129,7 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
 | `ui/views/config/system_tab.py`, `ui/strings.py`, comentario de `system.device_id` en `config.yaml` | `system.device_id` de sólo lectura, con una nota de dónde se cambia y qué rompe | Es el `client_id` de MQTT y el tag `device` de InfluxDB: editarlo en planta echa equipos del broker y parte las series |
 | `system/image_collector/collector.py`, `ui/views/config/collector_tab.py`, `ui/strings.py`, `main.py` (fuera del bloque del fork), `manual_test/ui/config.yaml`, `image_collector.cameras` en `config.yaml` | Recolección por cámara: `image_collector.cameras` (`[]` = todas), filtrada adentro del recolector en los dos modos y expuesta como `should_collect()`, que el cableado usa en vez de `is_active`; un checkbox por cámara en la pestaña | Un fork con varias cámaras no tenía cómo guardar sólo algunas,, la lista vacía deja igual a un config existente |
+| `system/camera/capture_scheduler.py`, `ui/views/config/collector_tab.py`, `ui/strings.py`, `main.py` (fuera del bloque del fork) | `has_measurement_cycle()` como regla única de «tener ciclo», que usan el scheduler y la pestaña; «A pedido» se ofrece sólo con ciclo, un `on_demand` sin ciclo se conserva con un aviso, y el arranque lo avisa como warning | Con `frames_per_cycle: 1` el modo a pedido no guarda nunca, y la pestaña lo ofrecía igual |
 
 Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
@@ -138,7 +139,8 @@ Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
 `test/video/test_http_server.py`, `test/ui/test_camera_panel.py`,
 `test/ui/test_log_table.py`, `test/ui/test_system_tab.py`,
-`test/image_collector/test_collector.py` y `test/ui/test_collector_tab.py`.
+`test/image_collector/test_collector.py`, `test/ui/test_collector_tab.py` y
+`test/camera/test_capture_scheduler.py`.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
