@@ -8,7 +8,7 @@ project:
 
 system:
   app_name: Detección de calidad de pellet
-  device_id: jetson-1
+  device_id: jetson-1           # client_id de MQTT; se fija al instalar, no desde la UI
   log_level: INFO               # DEBUG | INFO | WARNING | ERROR
   hard_exit: false
   # Termina el proceso al salir sin desarmar el intérprete. Hace falta sólo cuando el

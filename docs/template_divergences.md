@@ -125,6 +125,7 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `ui/widgets/camera_panel.py` | No pinta oculto, y achica el frame con OpenCV antes de pasarlo a Qt | Convertía los 3 MP enteros a pixmap por frame en la GUI |
 | `ui/widgets/log_table.py` | Una fila por evento en vez de reconstruir la tabla | 200 × 4 items por línea de log, en ráfaga |
 | `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
+| `ui/views/config/system_tab.py`, `ui/strings.py`, comentario de `system.device_id` en `config.yaml` | `system.device_id` de sólo lectura, con una nota de dónde se cambia y qué rompe | Es el `client_id` de MQTT y el tag `device` de InfluxDB: editarlo en planta echa equipos del broker y parte las series |
 
 Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
@@ -132,8 +133,8 @@ Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
 `test/modbus/test_server.py`, `test/test_gpio_control.py`,
 `test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`,
 `test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
-`test/video/test_http_server.py`, `test/ui/test_camera_panel.py` y
-`test/ui/test_log_table.py`.
+`test/video/test_http_server.py`, `test/ui/test_camera_panel.py`,
+`test/ui/test_log_table.py` y `test/ui/test_system_tab.py`.
 
 **En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
 la de acá. Si no la trae, conservarla y abrir el PR.
