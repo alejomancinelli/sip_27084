@@ -96,9 +96,17 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Salieron de la
-revisión del template y del proyecto del 2026-10-08 y de la del costo por frame, y
-**ninguna tiene PR todavía**.
+Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Hoy no queda
+ninguna sin PR: las de abajo están en dos abiertos.
+
+### En el PR #38
+
+Lo de la revisión del template y del proyecto del 2026-10-08 y lo de la del costo por
+frame está en el [PR #38](https://github.com/alejomancinelli/cv_projects_template/pull/38),
+abierto **encima del #37**: el dataset que no se arma usa `should_collect()`, que llega
+con ese. Al mergearlos y traer el template, estas filas pasan a «Lo que ya volvió». Los
+tres cambios de `main.py` se portaron a mano, porque el de acá diverge (A1); el código del
+cambio es el mismo.
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
@@ -134,11 +142,9 @@ la de acá. Si no la trae, conservarla y abrir el PR.
 
 Lo de la revisión de la GUI del 2026-10-14 está en el
 [PR #37](https://github.com/alejomancinelli/cv_projects_template/pull/37), abierto. Al
-mergearlo y traer el template, estas filas pasan a «Lo que ya volvió». Dos diferencias con
-lo de acá, a propósito: el `main.py` del template no consulta `should_collect()`, porque
-eso cuelga del arreglo «sin recolección prendida no se arma el JSON» de la tabla de
-arriba, que todavía no volvió; y el PR mueve el reloj y la licencia del mapa de ejemplo
-a 98-100, como se hizo acá (A3).
+mergearlo y traer el template, estas filas pasan a «Lo que ya volvió». El `main.py` del
+#37 todavía no consulta `should_collect()`: eso entra con el #38. Y el PR mueve el reloj y
+la licencia del mapa de ejemplo a 98-100, como se hizo acá (A3).
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
