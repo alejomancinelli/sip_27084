@@ -586,6 +586,20 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "en": "Application name:",
                                "pt": "Nome da aplicação:"},
     "sys_device_id":          {"es": "Id del equipo:", "en": "Device id:",    "pt": "Id do equipamento:"},
+    "sys_device_id_note":     {"es": "El nombre de la app y el id del equipo se cambian en "
+                                     "config.yaml. El id identifica al equipo en la telemetría: "
+                                     "cambiarlo puede partir la historia en dos series, y dos "
+                                     "equipos con el mismo id se echan del broker MQTT.",
+                               "en": "The application name and the device id are changed in "
+                                     "config.yaml. The id identifies the device in telemetry: "
+                                     "changing it can split the history into two series, and "
+                                     "two devices with the same id kick each other off the "
+                                     "MQTT broker.",
+                               "pt": "O nome da aplicação e o id do equipamento são alterados "
+                                     "em config.yaml. O id identifica o equipamento na "
+                                     "telemetria: alterá-lo pode dividir o histórico em duas "
+                                     "séries, e dois equipamentos com o mesmo id se derrubam "
+                                     "do broker MQTT."},
     "sys_log_level":          {"es": "Nivel de log:",  "en": "Log level:",    "pt": "Nível de log:"},
     "sys_logs_path":          {"es": "Carpeta de logs:",
                                "en": "Logs folder:",   "pt": "Pasta de logs:"},
