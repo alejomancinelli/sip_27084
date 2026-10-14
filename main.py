@@ -1014,10 +1014,10 @@ class Application(QObject):
 
         # Dataset: `push_frame` encola y vuelve; escribe el hilo del recolector. El
         # contexto se arma una vez y vale para los dos modos: es del par (cámara, momento)
-        # y no del camino por el que se guarda. Con la recolección apagada no se arma
-        # nada: `to_dict()` recorre cientos de detecciones y el contexto lee el config, y
-        # esto corre por resultado en el hilo de la GUI.
-        if self._collector.is_active:
+        # y no del camino por el que se guarda. Con la recolección apagada, o sin esta
+        # cámara, no se arma nada: `to_dict()` recorre cientos de detecciones y el
+        # contexto lee el config, y esto corre por resultado en el hilo de la GUI.
+        if self._collector.should_collect(result.camera_slot):
             self._send_to_dataset(result)
 
         content = self._ui.monitor_content

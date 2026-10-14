@@ -512,6 +512,19 @@ _TEXTS: dict[str, dict[str, str]] = {
     "col_save_json":          {"es": "Guardar el JSON de inferencia",
                                "en": "Save the inference JSON",
                                "pt": "Salvar o JSON de inferência"},
+    "col_box_cameras":        {"es": "Cámaras",        "en": "Cameras",       "pt": "Câmeras"},
+    "col_cameras_note":       {"es": "Con todas marcadas se guardan todas, incluidas las que "
+                                     "se agreguen después. Con alguna desmarcada se guardan "
+                                     "sólo las marcadas, y una cámara nueva no entra hasta "
+                                     "marcarla.",
+                               "en": "With all checked, every camera is saved, including any "
+                                     "added later. With any unchecked, only the checked ones "
+                                     "are saved, and a new camera is left out until it is "
+                                     "checked.",
+                               "pt": "Com todas marcadas, todas são salvas, inclusive as que "
+                                     "forem adicionadas depois. Com alguma desmarcada, só as "
+                                     "marcadas são salvas, e uma câmera nova fica de fora até "
+                                     "ser marcada."},
     "col_history_len":        {"es": "Historial comparado (guardados):",
                                "en": "Compared history (saves):",
                                "pt": "Histórico comparado (salvamentos):"},

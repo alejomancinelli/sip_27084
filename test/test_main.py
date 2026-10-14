@@ -449,7 +449,10 @@ class TestFramePath:
 
 
 class TestDatasetGating:
-    """Con la recolección apagada, el resultado no se serializa: corre por frame en la GUI."""
+    """
+    Con la recolección apagada, o sin esa cámara, el resultado no se serializa: corre por
+    frame en la GUI.
+    """
 
     def _application(self, collector_active: bool):
         import types
@@ -458,7 +461,8 @@ class TestDatasetGating:
         app._ui = types.SimpleNamespace(monitor_content=None)
         app._pending_results = {}
         app._store_metrics = lambda result: None
-        app._collector = types.SimpleNamespace(is_active=collector_active)
+        app._collector = types.SimpleNamespace(
+            should_collect=lambda camera_slot: collector_active)
         app.sent = []
         app._send_to_dataset = app.sent.append
         return app

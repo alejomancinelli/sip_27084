@@ -90,6 +90,7 @@ inference:
       params: {}
 image_collector:
   enabled: false
+  cameras: []
   mode: on_demand
   interval_min_s: 60
   interval_max_s: 600

@@ -29,7 +29,7 @@ from system.image_collector.collector import (
 from system.image_collector.conditions import field_truthy_condition, min_confidence_condition
 
 _STATS_KEYS = {
-    "mode", "active", "running", "images", "saved", "skipped",
+    "mode", "active", "cameras", "running", "images", "saved", "skipped",
     "last_save_iso", "disk_free_gb", "disk_guard_active",
 }
 
@@ -306,6 +306,68 @@ class TestOnDemandMode:
         assert collector.set_active(True) is True
         assert collector.is_active is True
         assert config.save_calls == 1
+
+
+class TestCameraFilter:
+    """`image_collector.cameras` elige qué cámaras se guardan; vacía = todas."""
+
+    def test_an_empty_list_saves_every_camera(self, dataset_path, build_collector):
+        collector = build_collector(_MockConfig(
+            dataset_path, **{"image_collector.cameras": []}))
+        assert collector.save_now("camera_1", _frame(1)) is True
+        assert collector.save_now("camera_2", _frame(2)) is True
+
+    def test_a_missing_key_saves_every_camera(self, dataset_path, build_collector):
+        """Un config de antes de la clave no cambia de comportamiento."""
+        collector = build_collector(_MockConfig(dataset_path))
+        assert collector.should_collect("camera_7") is True
+
+    def test_save_now_skips_a_camera_off_the_list(self, dataset_path, build_collector):
+        collector = build_collector(_MockConfig(
+            dataset_path, **{"image_collector.cameras": ["camera_1"]}))
+        assert collector.save_now("camera_2", _frame(2)) is False
+        assert collector.save_now("camera_1", _frame(1)) is True
+        assert collector.get_stats()["images"] == {"camera_1": 1}
+
+    def test_push_frame_skips_a_camera_off_the_list(self, dataset_path, build_collector,
+                                                    fast_interval):
+        collector = build_collector(_MockConfig(dataset_path, **{
+            "image_collector.mode": "interval",
+            "image_collector.cameras": ["camera_1"],
+        }))
+        collector.start()
+        collector.push_frame("camera_2", _frame(2))
+        collector.push_frame("camera_1", _frame(1))
+
+        assert _wait_until(lambda: collector.get_stats()["saved"] == 1)
+        time.sleep(_FAST_INTERVAL_S * _TICKS_TO_WAIT)
+        assert collector.get_stats()["images"] == {"camera_1": 1}
+
+    def test_the_list_is_read_on_every_save(self, dataset_path, build_collector):
+        """Se prende y se apaga una cámara en caliente, como `enabled`."""
+        config = _MockConfig(dataset_path, **{"image_collector.cameras": ["camera_1"]})
+        collector = build_collector(config)
+        assert collector.save_now("camera_2", _frame(2)) is False
+        config.set("image_collector.cameras", ["camera_1", "camera_2"])
+        assert collector.save_now("camera_2", _frame(2)) is True
+
+    def test_a_disabled_collector_skips_every_camera(self, dataset_path, build_collector):
+        collector = build_collector(_MockConfig(dataset_path, **{
+            "image_collector.enabled": False,
+            "image_collector.cameras": ["camera_1"],
+        }))
+        assert collector.should_collect("camera_1") is False
+
+    def test_a_value_that_is_not_a_list_saves_every_camera(self, dataset_path,
+                                                           build_collector):
+        collector = build_collector(_MockConfig(
+            dataset_path, **{"image_collector.cameras": "camera_1"}))
+        assert collector.should_collect("camera_2") is True
+
+    def test_the_stats_report_the_list(self, dataset_path, build_collector):
+        collector = build_collector(_MockConfig(
+            dataset_path, **{"image_collector.cameras": ["camera_2"]}))
+        assert collector.get_stats()["cameras"] == ["camera_2"]
 
 
 class TestSaveConditions:

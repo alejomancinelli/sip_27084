@@ -10,9 +10,16 @@ promete algo que no va a pasar.
 
 Los dos intervalos tienen una condición más: sólo hacen algo en modo `interval`, así que
 están habilitados únicamente cuando la recolección está prendida **y** el modo es ese.
+
+Las cámaras que se guardan son un checkbox por slot de `cameras:`. Todas marcadas guarda
+`image_collector.cameras: []`, que también incluye a las que se agreguen después; si no,
+la lista de las marcadas. Un slot de la lista que ya no está en `cameras:` vuelve al
+archivo tal cual. La última marcada no se puede desmarcar: la lista vacía significa
+todas, y no guardar ninguna es apagar la recolección.
 """
 
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QSignalBlocker
+from PySide6.QtWidgets import QCheckBox, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 
@@ -49,6 +56,7 @@ class CollectorTab(AbstractConfigTab):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.addWidget(self._build_general_box())
+        layout.addWidget(self._build_cameras_box())
         layout.addWidget(self._build_dedup_box())
         layout.addStretch()
         self._wire_enabled()
@@ -82,6 +90,19 @@ class CollectorTab(AbstractConfigTab):
         self._save_json = add_check_row(form, tr("col_save_json"), True)
         return box
 
+    def _build_cameras_box(self) -> QWidget:
+        box, form = build_group_box(tr("col_box_cameras"))
+        self._camera_checks: dict[str, QCheckBox] = {}
+        # Slots de la lista del config que no están en `cameras:`: no tienen checkbox y
+        # vuelven al archivo como estaban.
+        self._unlisted_cameras: list[str] = []
+        for camera_slot in (self._config.get("cameras", {}) or {}):
+            check = add_check_row(form, str(camera_slot), True)
+            check.toggled.connect(lambda checked, check=check: self._keep_one_checked(check))
+            self._camera_checks[str(camera_slot)] = check
+        add_hint_row(form, tr("col_cameras_note"))
+        return box
+
     def _build_dedup_box(self) -> QWidget:
         box, form = build_group_box(tr("col_box_dedup"))
         self._dedup_enabled = add_check_row(form, tr("field_enabled"), True)
@@ -106,7 +127,7 @@ class CollectorTab(AbstractConfigTab):
             self._mode_combo, self._interval_min, self._interval_max,
             self._max_images, self._min_free_space,
             self._save_original, self._save_annotated, self._save_json,
-            self._dedup_enabled,
+            *self._camera_checks.values(), self._dedup_enabled,
         ])
         # Los intervalos dependen además del modo, y eso se resuelve después del toggle,
         # que es el que los deja habilitados sin mirar el modo.
@@ -134,6 +155,7 @@ class CollectorTab(AbstractConfigTab):
         self._save_json.setChecked(
             bool(self._config.get("image_collector.save_inference_json", True))
         )
+        self._load_cameras()
         self._dedup_enabled.setChecked(
             bool(self._config.get("image_collector.dedup.enabled", True))
         )
@@ -156,6 +178,7 @@ class CollectorTab(AbstractConfigTab):
         self._config.set("image_collector.save_original", self._save_original.isChecked())
         self._config.set("image_collector.save_annotated", self._save_annotated.isChecked())
         self._config.set("image_collector.save_inference_json", self._save_json.isChecked())
+        self._config.set("image_collector.cameras", self._get_selected_cameras())
         self._config.set("image_collector.dedup.enabled", self._dedup_enabled.isChecked())
         self._config.set("image_collector.dedup.history_len", self._history_len.value())
         self._config.set("image_collector.dedup.hamming_threshold", self._hamming.value())
@@ -168,3 +191,26 @@ class CollectorTab(AbstractConfigTab):
                      and self._mode_combo.currentData() == _MODE_INTERVAL)
         for spin in (self._interval_min, self._interval_max):
             spin.setEnabled(is_usable)
+
+    def _load_cameras(self):
+        """Marca las cámaras de la lista; vacía —o que no es lista— las marca todas."""
+        cameras = self._config.get("image_collector.cameras", []) or []
+        selected = [str(slot) for slot in cameras] if isinstance(cameras, (list, tuple)) else []
+        self._unlisted_cameras = [slot for slot in selected if slot not in self._camera_checks]
+        for camera_slot, check in self._camera_checks.items():
+            with QSignalBlocker(check):
+                check.setChecked(not selected or camera_slot in selected)
+
+    def _get_selected_cameras(self) -> list[str]:
+        """Lo que va a `image_collector.cameras`: [] con todas marcadas, si no la lista."""
+        checked = [slot for slot, check in self._camera_checks.items() if check.isChecked()]
+        if len(checked) == len(self._camera_checks):
+            return []
+        return checked + self._unlisted_cameras
+
+    def _keep_one_checked(self, check: QCheckBox):
+        """Vuelve a marcar la última cámara desmarcada: ninguna se guardaría como todas."""
+        if any(other.isChecked() for other in self._camera_checks.values()):
+            return
+        with QSignalBlocker(check):
+            check.setChecked(True)
