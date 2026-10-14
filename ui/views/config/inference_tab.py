@@ -15,7 +15,7 @@ esta pestaña sale de dónde se carga cada modelo y qué cámaras entran a cada 
 Los tipos de modelo que ofrece el combo salen de `REGISTERED_MODELS`, así que un fork
 que registra su modelo en la fábrica lo ve acá sin tocar la UI.
 
-Dos cosas de la sección no están en esta pantalla, y no es un olvido:
+Tres cosas de la sección no están en esta pantalla, y no es un olvido:
 
   - **`device`** no existe más: el modelo resuelve solo si hay CUDA disponible. Elegirlo
     a mano desde la planta sólo servía para dejar la inferencia en CPU sin darse cuenta.
@@ -24,6 +24,10 @@ Dos cosas de la sección no están en esta pantalla, y no es un olvido:
     una preferencia del operador —el tamaño del texto se calibra para el frame de cada
     cámara—, y cambiarlos desde la planta no mide mejor: sólo cambia lo que se ve en el
     stream, en la UI y en el dataset a la vez.
+  - **`class_names`** de cada modelo se escribe en el config.yaml al armar el fork, o lo
+    traen los pesos, que le ganan. Cambiar el orden no da un error: invierte en silencio
+    todos los porcentajes. Un fork que declara sus clases en el código no lo usa, y ahí
+    escribirlo sólo podía hacer que el pipeline se negara a arrancar.
 
 Las claves del ciclo de medición —`frames_per_cycle` y las tres que dependen de él— sí se
 muestran: no las lee el motor sino el scheduler, y la nota del grupo dice que con una
@@ -97,8 +101,6 @@ class InferenceTab(AbstractConfigTab):
                                                build_spin_box(0, 100, 50)),
             "max_side_px": add_form_row(form, tr("inf_max_side"),
                                         build_spin_box(0, _MAX_SIDE_PX, 0)),
-            "class_names": add_form_row(form, tr("inf_class_names"),
-                                        build_line_edit("", "ok, nok")),
         }
         self._model_forms[model_slot] = fields
         return page
@@ -147,7 +149,6 @@ class InferenceTab(AbstractConfigTab):
                 int(self._config.get(f"{prefix}.min_confidence_pct", 50))
             )
             fields["max_side_px"].setValue(int(self._config.get(f"{prefix}.max_side_px", 0)))
-            fields["class_names"].setText(join_list(self._config.get(f"{prefix}.class_names", [])))
 
         for pipeline_slot, fields in self._pipeline_forms.items():
             prefix = f"inference.pipelines.{pipeline_slot}"
@@ -177,7 +178,6 @@ class InferenceTab(AbstractConfigTab):
             self._config.set(f"{prefix}.min_confidence_pct",
                              fields["min_confidence_pct"].value())
             self._config.set(f"{prefix}.max_side_px", fields["max_side_px"].value())
-            self._config.set(f"{prefix}.class_names", split_list(fields["class_names"].text()))
 
         for pipeline_slot, fields in self._pipeline_forms.items():
             prefix = f"inference.pipelines.{pipeline_slot}"

@@ -63,6 +63,19 @@ class TestOverlay:
         assert not [key for key in config.written if key.startswith("inference.overlay")]
 
 
+class TestClassNames:
+    def test_save_does_not_write_them(self):
+        """Se escriben en el config.yaml: un orden cambiado invierte los porcentajes."""
+        tab, config = _tab(**{f"inference.models.{_MODEL}.class_names": ["ok", "nok"]})
+        tab.save()
+        assert f"inference.models.{_MODEL}.class_names" not in config.written
+
+    def test_save_does_not_add_them_when_the_config_leaves_them_out(self):
+        tab, config = _tab()
+        tab.save()
+        assert not [key for key in config.written if key.endswith(".class_names")]
+
+
 class TestRoundTrip:
     def test_the_model_and_the_pipeline_go_back_as_they_were(self):
         tab, config = _tab()
