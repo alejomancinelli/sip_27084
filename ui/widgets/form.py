@@ -14,8 +14,8 @@ alimenta cada campo.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGraphicsOpacityEffect,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QVBoxLayout,
-    QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 _LABEL_MIN_WIDTH_PX = 240    # ancho mínimo de la etiqueta, para alinear todas las filas
@@ -34,11 +34,38 @@ def build_group_box(title: str) -> tuple[QGroupBox, QFormLayout]:
     """Devuelve un QGroupBox con su QFormLayout, listos para agregarle filas."""
     box = QGroupBox(title)
     box.setMinimumWidth(_BOX_MIN_WIDTH_PX)
+    form = _build_form_layout()
+    box.setLayout(form)
+    return box, form
+
+
+def build_form_page() -> tuple[QWidget, QFormLayout]:
+    """Devuelve una página con su QFormLayout, para el formulario de una sub-pestaña."""
+    page = QWidget()
+    form = _build_form_layout()
+    page.setLayout(form)
+    return page, form
+
+
+def build_slot_tabs() -> QTabWidget:
+    """
+    Barra de sub-pestañas, una por slot —cámara, modelo, pipeline—.
+
+    Con más slots de los que entran a lo ancho, Qt muestra flechas de desplazamiento en la
+    barra y no corta ningún rótulo: un slot cortado a la mitad no se distingue de otro. Se
+    fija explícito para que no dependa del estilo ni del tema.
+    """
+    tabs = QTabWidget()
+    tabs.setUsesScrollButtons(True)
+    tabs.setElideMode(Qt.ElideNone)
+    return tabs
+
+
+def _build_form_layout() -> QFormLayout:
     form = QFormLayout()
     form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     form.setSpacing(8)
-    box.setLayout(form)
-    return box, form
+    return form
 
 
 def add_form_row(form: QFormLayout, label: str, widget: QWidget) -> QWidget:

@@ -338,8 +338,8 @@ _TEXTS: dict[str, dict[str, str]] = {
                                      "estourada e outra na sombra, e custa bem mais que a gama."},
 
     # ── Inferencia (configuración) ───────────────────────────────────────────
-    "inf_box_model":          {"es": "Modelo",         "en": "Model",         "pt": "Modelo"},
-    "inf_box_pipeline":       {"es": "Pipeline",       "en": "Pipeline",      "pt": "Pipeline"},
+    "inf_box_models":         {"es": "Modelos",        "en": "Models",        "pt": "Modelos"},
+    "inf_box_pipelines":      {"es": "Pipelines",      "en": "Pipelines",     "pt": "Pipelines"},
     "inf_model_type":         {"es": "Tipo:",          "en": "Type:",         "pt": "Tipo:"},
     "inf_model_path":         {"es": "Pesos:",         "en": "Weights:",      "pt": "Pesos:"},
     "inf_min_confidence":     {"es": "Confianza mínima por detección (%):",

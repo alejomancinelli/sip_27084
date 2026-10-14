@@ -1,8 +1,12 @@
 """
 Pestaña de inferencia: `inference.models` e `inference.pipelines`.
 
-Un grupo por slot de modelo y otro por slot de pipeline, sacados del config: los slots
-son fijos por proyecto, igual que las cámaras.
+Dos secciones, una debajo de la otra: «Modelos» y «Pipelines», cada una con una
+sub-pestaña por slot, como Cámaras. Los slots salen del config y son fijos por proyecto,
+igual que las cámaras. Los pipelines van debajo porque nombran modelos, así que se leen en
+ese orden, y las dos barras nunca se mezclan: un slot de modelo y uno de pipeline en la
+misma fila de pestañas no se distinguen por el rótulo. Con más slots de los que entran a
+lo ancho, la barra muestra flechas en vez de cortar rótulos (`build_slot_tabs()`).
 
 **El orden de las etapas no está acá y no puede estarlo**: se programa en
 `system/inference/pipeline.py`, porque encadenar dos modelos es lógica del proceso. De
@@ -26,6 +30,8 @@ muestran: no las lee el motor sino el scheduler, y la nota del grupo dice que co
 imagen por medición las otras tres no hacen nada.
 """
 
+from collections.abc import Callable, Iterable
+
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from system.inference.models.model_factory import REGISTERED_MODELS
@@ -36,8 +42,8 @@ from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
     add_check_row, add_form_row, add_hint_row, build_combo_box, build_double_spin_box,
-    build_group_box, build_line_edit, build_spin_box, join_list, set_combo_value,
-    split_list,
+    build_form_page, build_group_box, build_line_edit, build_slot_tabs, build_spin_box,
+    join_list, set_combo_value, split_list,
 )
 
 _MAX_SIDE_PX = 8192
@@ -59,17 +65,29 @@ class InferenceTab(AbstractConfigTab):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-        for model_slot in (self._config.get("inference.models", {}) or {}):
-            layout.addWidget(self._build_model_box(model_slot))
-        for pipeline_slot in (self._config.get("inference.pipelines", {}) or {}):
-            layout.addWidget(self._build_pipeline_box(pipeline_slot))
+        layout.addWidget(self._build_section(
+            tr("inf_box_models"), self._build_model_page,
+            self._config.get("inference.models", {}) or {}))
+        layout.addWidget(self._build_section(
+            tr("inf_box_pipelines"), self._build_pipeline_page,
+            self._config.get("inference.pipelines", {}) or {}))
         layout.addStretch()
         self.load()
 
     # ── Construcción ─────────────────────────────────────────────────────────
 
-    def _build_model_box(self, model_slot: str) -> QWidget:
-        box, form = build_group_box(f"{tr('inf_box_model')} — {model_slot}")
+    def _build_section(self, title: str, build_page: Callable[[str], QWidget],
+                       slots: Iterable[str]) -> QWidget:
+        """Un grupo con una sub-pestaña por slot; el rótulo de cada una es el slot."""
+        box, form = build_group_box(title)
+        tabs = build_slot_tabs()
+        for slot in slots:
+            tabs.addTab(build_page(slot), str(slot))
+        form.addRow(tabs)
+        return box
+
+    def _build_model_page(self, model_slot: str) -> QWidget:
+        page, form = build_form_page()
         fields = {
             "type": add_form_row(form, tr("inf_model_type"),
                                  build_combo_box(list(REGISTERED_MODELS), "")),
@@ -83,10 +101,10 @@ class InferenceTab(AbstractConfigTab):
                                         build_line_edit("", "ok, nok")),
         }
         self._model_forms[model_slot] = fields
-        return box
+        return page
 
-    def _build_pipeline_box(self, pipeline_slot: str) -> QWidget:
-        box, form = build_group_box(f"{tr('inf_box_pipeline')} — {pipeline_slot}")
+    def _build_pipeline_page(self, pipeline_slot: str) -> QWidget:
+        page, form = build_form_page()
         fields = {
             "enabled": add_check_row(form, tr("field_enabled"), True),
             "cameras": add_form_row(form, tr("inf_pipeline_cameras"),
@@ -116,7 +134,7 @@ class InferenceTab(AbstractConfigTab):
         }
         add_hint_row(form, tr("inf_cycle_note"))
         self._pipeline_forms[pipeline_slot] = fields
-        return box
+        return page
 
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 

@@ -297,6 +297,28 @@ la imagen.
 Un combo así se conecta por `currentIndexChanged` y no por `currentTextChanged`: el
 índice es lo que identifica la opción cuando el texto no la identifica.
 
+### Una sub-pestaña por slot
+
+Cuando una sección tiene slots —cámaras, modelos, pipelines—, cada slot es una
+sub-pestaña de una barra armada con `build_slot_tabs()`, y el formulario de cada una
+sale de `build_form_page()`. Así una pestaña con slots se ve igual en todas, y la barra
+se porta igual con muchos: con más slots de los que entran a lo ancho muestra flechas de
+desplazamiento y no corta ningún rótulo, porque un slot cortado a la mitad no se
+distingue de otro.
+
+Dos familias de slots no comparten barra. Inferencia tiene dos secciones, «Modelos» y
+«Pipelines», cada una con la suya, y los pipelines van debajo porque nombran modelos.
+
+```python
+box, form = build_group_box(tr("inf_box_models"))
+tabs = build_slot_tabs()
+for model_slot in self._config.get("inference.models", {}) or {}:
+    page, page_form = build_form_page()
+    ...                                   # add_form_row(page_form, ...)
+    tabs.addTab(page, model_slot)
+form.addRow(tabs)
+```
+
 ## Agregar una pestaña de diagnóstico
 
 Una pestaña de diagnóstico **muestra, no edita**: recibe lo que le empujan y no tiene
