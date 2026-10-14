@@ -224,7 +224,7 @@ def _resolve_key(args) -> bytes | None:
         try:
             key = bytes.fromhex(args.key_hex.strip())
         except ValueError:
-            raise SystemExit("--key-hex no es hexadecimal.")
+            raise SystemExit("--key-hex no es hexadecimal.") from None
         if len(key) != ew.KEY_SIZE:
             raise SystemExit(f"--key-hex tiene que traer {ew.KEY_SIZE} bytes.")
         # Con la clave puesta a mano el build queda simulado, igual que al cifrar acá.

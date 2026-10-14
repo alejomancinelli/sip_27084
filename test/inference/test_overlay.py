@@ -6,7 +6,6 @@ aspecto no es afirmable, la mutación sí.
 """
 
 import numpy as np
-import pytest
 
 from system.inference import overlay
 from system.inference.result import Detection, InferenceResult

@@ -139,8 +139,8 @@ from system.camera.capture_thread import CaptureThread                   # noqa:
 from system.config_manager import ConfigManager                          # noqa: E402
 from system.formats import camera_health, com_status, system_status       # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
-from system.inference import annotations, metrics                        # noqa: E402
-from system.inference.pipeline import CLASS_NAMES, BeltPipeline          # noqa: E402
+from system.inference.hooks import build_hooks                           # noqa: E402
+from system.inference.pipeline import Pipeline                           # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
@@ -357,26 +357,18 @@ class _DemoApp(QObject):
         # ── Inferencia ───────────────────────────────────────────────────────
         # Un hilo por pipeline habilitado. `annotate_gate` atado al combo de la
         # grilla: si nadie mira el anotado, el motor no lo dibuja.
+        # Los hooks son los del proyecto, los mismos que arma `main.py`.
+        hooks = build_hooks(config)
         self._engines: list = []
         for pipeline_slot in (config.get("inference.pipelines", {}) or {}):
             if not config.get(f"inference.pipelines.{pipeline_slot}.enabled", True):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config,
-                BeltPipeline(config, pipeline_slot,
-                             dark_background_threshold=config.get(
-                                 "process.dark_background_threshold", {}) or {}),
-                analyzer=metrics.build_analyzer(
-                    class_names=list(CLASS_NAMES),
-                    belt_roi_px=config.get("process.belt_roi_px", {}) or {}),
-                annotator=annotations.chain(
-                    annotations.belt_roi_annotator(
-                        config.get("process.belt_roi_px", {}) or {}),
-                    annotations.composition_panel_annotator(
-                        list(CLASS_NAMES),
-                        class_colors_bgr=tuple(tuple(color) for color in (config.get(
-                            "inference.overlay.class_colors_bgr", []) or [])))),
+                config, Pipeline(config, pipeline_slot),
+                classifier=hooks.classifier,
+                analyzer=hooks.analyzer,
+                annotator=hooks.annotator,
                 annotate_gate=self._is_annotated_watched,
             )
             engine.result_ready.connect(self._on_result_ready)

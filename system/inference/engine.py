@@ -215,6 +215,29 @@ class InferenceThread(QThread):
         """
         return self._annotate(result, respect_gate=False)
 
+    def process(self, frame_bgr: np.ndarray, camera_slot: str) -> InferenceResult:
+        """
+        Corre el ciclo completo sobre un frame en el hilo del que llama, sin el hilo propio.
+
+        Es el mismo ciclo que corre `run()` —preprocessor, ROI, compuertas, pipeline,
+        classifier, analyzer y overlay— y por eso el resultado es el que saldría en vivo:
+        no hay un segundo camino de inferencia que pueda divergir del primero. Existe para
+        correr imágenes sueltas fuera de la app.
+
+        No emite `result_ready` ni suma a los contadores de `get_status()`, que cuentan lo
+        que procesó el hilo. Cargar el pipeline es de quien lo construyó: sin cargar, el
+        resultado sale inválido con el motivo `no_model`, como en vivo.
+
+        Levanta RuntimeError con el hilo corriendo: el pipeline es una sola instancia y no
+        es reentrante.
+        """
+        if self.isRunning():
+            raise RuntimeError(
+                f"[Inference/{self.pipeline_slot}] process() con el hilo corriendo: el "
+                f"pipeline no admite dos frames a la vez."
+            )
+        return self._process(frame_bgr, camera_slot)
+
     def get_status(self) -> dict:
         """
         Estado del motor con claves estables:
@@ -281,6 +304,7 @@ class InferenceThread(QThread):
 
             camera_slot, frame_bgr = job
             result = self._process(frame_bgr, camera_slot)
+            self._publish(result)
             self.result_ready.emit(result)
             self._emit_status_if_due()
 
@@ -362,8 +386,6 @@ class InferenceThread(QThread):
         if result.is_valid:
             result.metrics = self._run_analyzer(result)
         result.annotated_bgr = self._annotate(result)
-
-        self._publish(result)
         return result
 
     def _gate_frame(self, result: InferenceResult, camera_slot: str) -> str:

@@ -31,10 +31,17 @@ las decisiones vigentes; las convenciones de nombres, comentarios y límites, en
 
 ## Cómo se corre
 
-El intérprete del proyecto es el del venv, **no** el `python` del PATH:
+El intérprete del proyecto es el del venv, **no** el `python` del PATH. El lint y los tests
+se corren por un solo punto de entrada, que es el mismo que usan los hooks de git:
 
-    .venv\Scripts\python.exe -m pytest -q          # Windows
-    .venv/bin/python -m pytest -q                  # Linux
+    .venv\Scripts\python.exe ci/check.py           # lint + suite (Windows; ~15 s en paralelo)
+    .venv/bin/python ci/check.py lint              # sólo Ruff y el índice de tests (Linux)
+    .venv/bin/python ci/check.py test -- -k gpio   # pytest con lo que va después de --
+
+No hay CI en servidores: la barrera son dos hooks versionados en `.githooks/`. El de
+**commit** corre el lint y el de **push** corre todo; se activan una vez por clon con
+`git config core.hooksPath .githooks`, que ya hace `setup/venv-setup` con `-Dev`. El índice
+de la suite —qué prueba cada archivo— está en [docs/tests.md](docs/tests.md).
 
 Y la aplicación, con o sin ventana:
 
@@ -49,6 +56,13 @@ entre los hilos.
 
 Python 3.10 de 64 bits. La suite completa corre sin hardware, sin GUI y sin red. Lo que
 sí necesita hardware vive en `manual_test/<tema>/`, cada uno con su `config.yaml` al lado.
+
+Para probar sin la línea hay dos caminos, los dos sobre el mismo código que corre en
+producción: una cámara con `driver: video_file` reproduce en loop los videos de
+`recordings/` como si fueran en vivo, y `manual_test/offline_inference/run_images.py` corre
+los pipelines sobre una carpeta de imágenes y deja el resultado en una carpeta fechada.
+Cómo se preparan los videos y cómo se lee el resultado está en
+[docs/offline_testing.md](docs/offline_testing.md).
 
 ## De dónde viene este repo
 
@@ -115,6 +129,7 @@ proyecto.**
 | `system/inference/pipeline.py` | una etapa: el segmentador de la cinta |
 | `system/inference/metrics.py` | composición y carga, por conteo de píxeles por unión |
 | `system/inference/annotations.py` | el rectángulo de cinta y el panel de composición |
+| `system/inference/hooks.py` | el cuerpo de `build_hooks()`: el analyzer y los annotators con los valores de `process:` |
 | `system/version.py` | la versión del equipo; se sube en cada release |
 | `setup/jetson/*.txt` | el framework del segmentador en la Jetson: torch y torchvision de NVIDIA, ultralytics 8.4.90 y sus dependencias, con las versiones fijadas |
 | `setup/venv-setup/verify_env.py` | sólo el bloque del fork: los módulos del framework y la prueba de CUDA y del NMS de torchvision |
@@ -149,9 +164,9 @@ lo que falta es un punto de extensión, no un parche.
 | Carpeta | Archivos |
 |---|---|
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
-| captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `mock_driver.py`, `null_driver.py` |
+| captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `video_file_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `rolling.py`, `engine.py` |
+| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `rolling.py`, `engine.py`, `preprocessing.py`, `offline.py` |
 | bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py`, `gpio_status.py` |
 | GPIO | `system/gpio_control.py` |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
@@ -160,6 +175,7 @@ lo que falta es un punto de extensión, no un parche.
 | instalación | `setup/cameras/*`, `setup/jetson/setup-jetson.sh`, `setup/venv-setup/*` salvo el bloque del fork de `verify_env.py` |
 | dataset | `system/image_collector/collector.py`, `conditions.py` |
 | licencia | `system/license/*` entero. La clave pública no se edita en ningún fork: la genera el repositorio de firma al compilar, en un `_public_key.py` que no se versiona |
+| verificación | `ci/check.py`, `ci/suite_index.py`, `.githooks/*`, `pyproject.toml`, `requirements-dev.txt` |
 | interfaz | `ui/` entero salvo lo de arriba: `strings.py`, `theme.py`, `service_status.py`, `main_window.py`, las tres vistas, `views/config/*`, `views/diagnostics/*`, `widgets/*`, `dialogs/*`, `styles/*` |
 
 Dos excepciones acotadas: `model_factory.py` y `camera_factory.py` reciben **una línea**
@@ -169,6 +185,9 @@ cada uno cuando el fork agrega una implementación. Eso es registro, no lógica.
 
 `docs/modbus_map.md` y `docs/modbus_map.csv` salen de
 `python -m system.modbus.export_map`. La fuente única es `register_map.yaml`.
+
+`docs/tests.md` sale de `python ci/suite_index.py`, y la fuente es `test/`. Un fork que
+agrega tests lo regenera, y el hook de commit no deja pasar uno desactualizado.
 
 ## Cómo devolver una mejora al template
 
@@ -302,11 +321,11 @@ genérica la maquinaria y testeable lo del proyecto.
 
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
-| `preprocessor` | sobre qué imagen se mide | `tools/image/undistort.py` y `enhance.py`, desde el config de cada cámara, o del fork |
+| `preprocessor` | sobre qué imagen se mide | `preprocessing.py`, con `tools/image/undistort.py` y `enhance.py` desde el config de cada cámara |
 | `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
 | `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | **sin usar acá**: lo calibrado por cámara lo resuelve el pipeline |
-| `analyzer` | qué significan las detecciones | `metrics.py`, con `process:` |
-| `annotator` | qué se dibuja además del resultado | `annotations.py`, con `process:` |
+| `analyzer` | qué significan las detecciones | `metrics.py`, armado en `hooks.py` con `process:` |
+| `annotator` | qué se dibuja además del resultado | `annotations.py`, compuesto en `hooks.py` con `process:` |
 | `annotate_gate` | si alguien está mirando el stream anotado | `main.py`, del servidor de video |
 
 Lo que depende de la cámara entra en dos lugares, y la diferencia es dónde están las

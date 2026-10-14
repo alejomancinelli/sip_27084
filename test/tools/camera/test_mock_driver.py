@@ -1,8 +1,6 @@
 """Tests del MockDriver: es el único driver que corre sin hardware, así que es
 donde se verifica el contrato que la base impone a todos."""
 
-import os
-import sys
 import time
 
 

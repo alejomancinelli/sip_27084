@@ -8,11 +8,9 @@ equipo."""
 
 import os
 import subprocess
-import sys
 import threading
 from collections import namedtuple
 
-import psutil
 import pytest
 
 

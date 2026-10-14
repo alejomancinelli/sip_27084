@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Antes de cada commit: Ruff y el índice de tests al día. Tarda menos de dos segundos.
+#
+# Los hooks de este directorio se activan una vez por clon (lo hace venv-setup con --dev):
+#     git config core.hooksPath .githooks
+#
+# Se saltea con `git commit --no-verify`, que es para una emergencia y no para un lint rojo.
+
+root="$(git rev-parse --show-toplevel)" || exit 1
+
+for python in "$root/.venv/Scripts/python.exe" "$root/.venv/bin/python"; do
+    if [ -x "$python" ]; then
+        exec "$python" "$root/ci/check.py" lint
+    fi
+done
+
+echo "pre-commit: no hay .venv en $root; crearlo con setup/venv-setup y --dev." >&2
+exit 1

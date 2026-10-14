@@ -740,3 +740,70 @@ class TestLifecycle:
     def test_the_inference_time_is_measured(self):
         result = _process_one(_engine(_FakePipeline(delay_s=0.02)), _frame())
         assert result.inference_time_ms >= 20
+
+
+# ── Corrida sincrónica ───────────────────────────────────────────────────────
+
+class TestSynchronousProcess:
+    """`process()` corre el ciclo del hilo sobre un frame suelto, sin arrancarlo."""
+
+    def test_it_returns_the_result_without_starting_the_thread(self):
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 10, 10))]))
+        result = engine.process(_frame(), _SLOT)
+        assert result.is_valid and result.detection_count == 1
+        assert engine.isRunning() is False
+
+    def test_it_runs_the_same_cycle_as_the_thread(self):
+        """ROI, analyzer y overlay incluidos: el resultado es el que saldría en vivo."""
+        # Sin hora ni panel: dibujan el instante y el tiempo de inferencia, que cambian
+        # entre dos corridas aunque el ciclo sea el mismo.
+        config = _MockConfig(**{
+            f"cameras.{_SLOT}.roi": {
+                "enabled": True, "x_px": 100, "y_px": 50, "width_px": 80, "height_px": 60},
+            "inference.overlay.draw_timestamp": False,
+            "inference.overlay.draw_summary": False,
+        })
+        live = _process_one(_engine(_FakePipeline([(0, 90.0, (10, 10, 20, 20))]), config,
+                                    analyzer=lambda result: {"count": result.detection_count}),
+                            _frame())
+        offline = _engine(_FakePipeline([(0, 90.0, (10, 10, 20, 20))]), config,
+                          analyzer=lambda result: {"count": result.detection_count}
+                          ).process(_frame(), _SLOT)
+
+        assert offline.roi_px == live.roi_px
+        assert offline.detections[0].bbox_px == live.detections[0].bbox_px
+        assert offline.metrics == live.metrics == {"count": 1}
+        np.testing.assert_array_equal(offline.annotated_bgr, live.annotated_bgr)
+
+    def test_it_does_not_emit_the_result(self):
+        engine = _engine(_FakePipeline())
+        collector = _Collector()
+        engine.result_ready.connect(collector.on_result, Qt.ConnectionType.DirectConnection)
+        engine.process(_frame(), _SLOT)
+        assert collector.count() == 0
+
+    def test_it_does_not_add_to_the_counters_of_the_thread(self):
+        engine = _engine(_FakePipeline(raises=True))
+        engine.process(_frame(), _SLOT)
+        status = engine.get_status()
+        assert (status["processed"], status["invalid"]) == (0, 0)
+        assert status["last_inference_time_ms"] == 0.0
+
+    def test_it_does_not_load_the_pipeline(self):
+        """Cargar es de quien construyó el pipeline; sin cargar sale como en vivo."""
+        pipeline = _FakePipeline(loaded=False)
+        result = _engine(pipeline).process(_frame(), _SLOT)
+        assert pipeline.load_calls == 0
+        assert result.invalid_reason == REASON_NO_MODEL
+
+    def test_it_refuses_to_run_while_the_thread_is_running(self):
+        pipeline = _FakePipeline()
+        engine = _engine(pipeline)
+        engine.start()
+        try:
+            assert _wait_until(lambda: pipeline.load_calls == 1)
+            with pytest.raises(RuntimeError):
+                engine.process(_frame(), _SLOT)
+        finally:
+            engine.requestInterruption()
+            assert engine.wait(_WAIT_TIMEOUT_MS)

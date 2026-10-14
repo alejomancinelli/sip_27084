@@ -6,8 +6,6 @@ no el hardware. Las constantes de tiempo del módulo se achican para que los
 tests corran en milisegundos."""
 
 import logging
-import os
-import sys
 import threading
 import time
 

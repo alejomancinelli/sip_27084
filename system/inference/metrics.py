@@ -24,8 +24,8 @@ dos se superponen gana la última —el mismo criterio con el que se dibuja el o
 
 Sobre los nombres de las claves: son las que ya consumen el mapa de registros y el
 dashboard, así que **no se renombran**. `pct_fondo` y `pct_carga` quedaron en castellano de
-la primera versión del proyecto; el resto se arma con el nombre de clase del config. Cuál
-es cuál está en `docs/influxdb.md` y en `docs/modbus_map.md`.
+la primera versión del proyecto; el resto se arma con los nombres de `pipeline.CLASS_NAMES`.
+Cuál es cuál está en `docs/influxdb.md` y en `docs/modbus_map.md`.
 """
 
 from collections.abc import Callable
@@ -45,7 +45,7 @@ def build_analyzer(*, class_names: list, belt_roi_px: dict) -> Callable:
     """
     Devuelve el analyzer con los parámetros de la planta ya leídos.
 
-    Los tres salen de `main.py`, que es el único que lee el config: así esta cuenta se
+    Salen de `hooks.py`, que es el único que lee el config: así esta cuenta se
     testea con tres números y sin archivo, y el annotator que dibuja el ROI de cinta y el
     analyzer que mide contra él reciben **el mismo valor leído una sola vez**.
 

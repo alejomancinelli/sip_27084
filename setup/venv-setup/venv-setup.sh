@@ -20,6 +20,11 @@
 #     ./setup/venv-setup/venv-setup.sh
 #     ./setup/venv-setup/venv-setup.sh --force
 #     ./setup/venv-setup/venv-setup.sh --skip-install
+#     ./setup/venv-setup/venv-setup.sh --dev
+#
+# --dev is for a development machine: it installs requirements-dev.txt (the app plus
+# pytest and ruff) and points git at the versioned hooks in .githooks/. A plant
+# machine gets requirements.txt only.
 #
 # Exits with the code of verify_env.py, so it can gate an install script.
 
@@ -27,10 +32,12 @@ set -euo pipefail
 
 FORCE=0
 SKIP_INSTALL=0
+DEV=0
 for _arg in "$@"; do
     case "$_arg" in
         --force)        FORCE=1 ;;
         --skip-install) SKIP_INSTALL=1 ;;
+        --dev)          DEV=1 ;;
         *) echo "unknown option: $_arg" >&2; exit 2 ;;
     esac
 done
@@ -41,6 +48,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_PATH="$PROJECT_ROOT/.venv"
 VENV_PYTHON="$VENV_PATH/bin/python"
 REQUIREMENTS="$PROJECT_ROOT/requirements.txt"
+if [ "$DEV" -eq 1 ]; then REQUIREMENTS="$PROJECT_ROOT/requirements-dev.txt"; fi
+REQUIREMENTS_NAME="$(basename "$REQUIREMENTS")"
 PACKAGES_DIR="$PROJECT_ROOT/packages"
 VERIFY_SCRIPT="$SCRIPT_DIR/verify_env.py"
 JETSON_DIR="$PROJECT_ROOT/setup/jetson"
@@ -148,8 +157,8 @@ step "4/6  Installing dependencies"
 "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel || fail "Failed to upgrade pip."
 
 if [ "$IS_JETSON" -eq 0 ]; then
-    "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS" || fail "'pip install -r requirements.txt' failed."
-    ok "requirements.txt installed"
+    "$VENV_PYTHON" -m pip install -r "$REQUIREMENTS" || fail "'pip install -r $REQUIREMENTS_NAME' failed."
+    ok "$REQUIREMENTS_NAME installed"
     note "Not a Jetson: the inference framework (setup/jetson/) is not installed."
 else
     CONSTRAINTS="$JETSON_DIR/constraints.txt"
@@ -183,8 +192,8 @@ else
         _requirement_files+=(-r "$JETSON_DIR/requirements.txt")
     fi
     "$VENV_PYTHON" -m pip install -c "$CONSTRAINTS" "${_requirement_files[@]}" \
-        || fail "'pip install' of requirements.txt and setup/jetson/requirements.txt failed."
-    ok "requirements.txt and setup/jetson/requirements.txt installed"
+        || fail "'pip install' of $REQUIREMENTS_NAME and setup/jetson/requirements.txt failed."
+    ok "$REQUIREMENTS_NAME and setup/jetson/requirements.txt installed"
 
     # Packages whose declared dependencies would replace something installed above.
     if has_requirements "$JETSON_DIR/requirements-nodeps.txt"; then
@@ -192,6 +201,15 @@ else
             -r "$JETSON_DIR/requirements-nodeps.txt" \
             || fail "'pip install --no-deps -r setup/jetson/requirements-nodeps.txt' failed."
         ok "setup/jetson/requirements-nodeps.txt installed (--no-deps)"
+    fi
+fi
+
+if [ "$DEV" -eq 1 ]; then
+    # Versioned hooks: lint before each commit, tests before each push.
+    if git -C "$PROJECT_ROOT" config core.hooksPath .githooks; then
+        ok "git hooks enabled (core.hooksPath = .githooks)"
+    else
+        note "Could not set core.hooksPath - is this a git checkout?"
     fi
 fi
 
@@ -237,7 +255,7 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     echo ""
     echo " Run:    .venv/bin/python main.py             (with window)"
     echo "         .venv/bin/python main.py --headless  (no window)"
-    echo " Tests:  .venv/bin/python -m pytest -q"
+    if [ "$DEV" -eq 1 ]; then echo " Checks: .venv/bin/python ci/check.py   (lint + tests)"; fi
 else
     echo " Environment INCOMPLETE - review the failures above."
     echo "======================================================================"

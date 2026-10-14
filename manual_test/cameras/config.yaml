@@ -61,6 +61,15 @@ cameras:
     acquisition:
       fps_limit: 0
 
+  # Video grabado en loop: un archivo, o una carpeta que se reproduce entera en orden
+  # alfabético. La ruta relativa se ancla a la raíz del repo, no a esta carpeta.
+  replay:
+    driver: video_file
+    address: recordings
+    rotation: null
+    acquisition:
+      fps_limit: 0              # 0 = el fps del video
+
   # Verifica la salida por configuración inválida: debe dar un NullDriver.
   unregistered:
     driver: DOES_NOT_EXIST

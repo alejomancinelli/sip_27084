@@ -1,7 +1,5 @@
 """Tests de la fábrica de cámaras, el NullDriver y el contrato del driver."""
 
-import os
-import sys
 
 import pytest
 

@@ -412,9 +412,9 @@ lo que el operador eligió en el selector.
 - **Los intrínsecos del lente** se muestran pero no se editan: una matriz 3x3 y hasta 14
   coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las coordenadas
   del proyecto. Se editan en el `config.yaml`.
-- **Casi no hay tests de `ui/`.** La suite corre sin GUI y así se queda, con dos
-  excepciones que se ganaron el lugar: `theme.py`, que no necesita widgets, y la pestaña de
-  proceso, que sí los construye con la plataforma `offscreen` de Qt. Esa última está
-  testeada porque su forma de fallar es cara y silenciosa: abrir el panel y guardar sin
-  tocar nada tiene que dejar el `config.yaml` igual, y lo que se pierde cuando no lo deja
-  es la calibración del proceso.
+- **Pocos tests de `ui/`, y sólo los que se ganaron el lugar.** La suite corre sin ventana:
+  `theme.py` no necesita widgets, y el resto —las pestañas de proceso, sistema, inferencia
+  y dataset, el formulario, el panel de cámara y la tabla de logs— se construye con la
+  plataforma `offscreen` de Qt. Están porque su forma de fallar es cara y silenciosa: la
+  de la pestaña de proceso, por ejemplo, es que abrir el panel y guardar sin tocar nada
+  cambie el `config.yaml`, y lo que se pierde ahí es la calibración del proceso.

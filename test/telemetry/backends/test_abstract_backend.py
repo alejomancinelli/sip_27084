@@ -4,8 +4,6 @@ destino nuevo y qué garantiza la base a quien lo consume.
 Los backends concretos se prueban en su propio archivo; acá se verifica lo que
 todos comparten, que es lo que PersistenceThread y la UI dan por cierto."""
 
-import os
-import sys
 
 import pytest
 

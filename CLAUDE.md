@@ -25,14 +25,17 @@ archivo de qué se toca están en `README.md`.
 
 ## Cómo se corre
 
-El intérprete del proyecto es el del venv, **no** el `python` del PATH:
+El intérprete del proyecto es el del venv, **no** el `python` del PATH. Lint y tests salen
+de un solo punto de entrada, el mismo que corren los hooks de git:
 
-    .venv\Scripts\python.exe -m pytest -q          # Windows
-    .venv/bin/python -m pytest -q                  # Linux
+    .venv\Scripts\python.exe ci/check.py           # lint + suite, en paralelo (~15 s)
+    .venv/bin/python ci/check.py lint              # Ruff + índice de tests al día
+    .venv/bin/python ci/check.py test -- <args>    # pytest con lo que va después de --
 
 Python 3.10 de 64 bits, fijado por el wheel cp310 de stapipy. La suite completa
 corre sin hardware, sin GUI y sin red: todo lo externo se reemplaza por dobles
-dentro del propio archivo de test.
+dentro del propio archivo de test. Cómo se escribe un test y qué se hace cuando uno falla
+está en la skill `pruebas`; qué prueba cada archivo, en `docs/tests.md`.
 
 Lo que sí necesita hardware —o una pantalla, como la prueba de la interfaz— vive en
 `manual_test/<tema>/`, cada uno con su `config.yaml` al lado. La instalación de los
@@ -82,6 +85,9 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
         rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
         metrics.py            DEL PROYECTO — composición y carga por conteo de píxeles
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
+        preprocessing.py      el preprocessor del motor: lente y ajuste de imagen por cámara
+        hooks.py              DEL PROYECTO — el analyzer y los annotators de la cinta
+        offline.py            los pipelines del config sobre imágenes sueltas, como en vivo
       license/                ata el equipo a la máquina para la que se emitió la licencia
         schema.py             nivel 1 — dueño del formato del .lic: campos, token, firma
         verify.py             nivel 0 — Ed25519 contra la clave pública embebida
@@ -117,6 +123,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
         basler_driver.py      pypylon
         st_driver.py          stapipy (Sentech / Omron)
         rtsp_driver.py        cámara IP por RTSP, con FFmpeg de OpenCV
+        video_file_driver.py  video grabado en loop, al ritmo del reloj, como cámara en vivo
         mock_driver.py        frames sintéticos, sin hardware
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
@@ -145,6 +152,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
       ui/                     levanta la app entera con cámaras mock; hace de main.py
       license/                emite la solicitud y simula el binario para probar la licencia
       model_protection/       cifra unos pesos y los abre en memoria; mide el costo
+      offline_inference/      corre los pipelines sobre una carpeta de imágenes; salida fechada
     setup/                    instalación (en inglés, ver skill)
       cameras/                SDK de cámara, por fabricante y sistema
       venv-setup/             el venv, y verify_env.py que lo verifica en este equipo
@@ -152,13 +160,18 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
                               sus versiones fijadas son DEL PROYECTO
     packages/                 wheels que no están en PyPI (stapipy)
     build/                    compilar con Nuitka y armar el entregable; ver su README
+    ci/                       verificación: check.py (lint + tests) y suite_index.py (docs/tests.md)
+    .githooks/                pre-commit corre el lint, pre-push corre todo; activados por clon
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
                               licensing.md (cómo se pide y se renueva una licencia),
                               influxdb_template.md (la estructura CANÓNICA del
                               template, de la que este equipo diverge a propósito),
-                              mqtt.md (la misma estructura, en tópicos y JSON) y
-                              model_protection.md (cómo se protege y se reemplaza un modelo)
+                              mqtt.md (la misma estructura, en tópicos y JSON),
+                              model_protection.md (cómo se protege y se reemplaza un modelo),
+                              offline_testing.md (video grabado e imágenes sueltas) y
+                              tests.md (el índice de la suite, generado)
+    recordings/               videos que el driver `video_file` reproduce; no se versionan
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -196,7 +209,7 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Preprocessor** — `system/inference/engine.py`: `(frame, camera_slot) -> frame`, y lo
   que devuelve es el frame de referencia del ciclo. Lo cumplen el corrector de lente
   (`tools/image/undistort.py`) y el ajuste de imagen por cámara (`tools/image/enhance.py`),
-  que `main.py` encadena en ese orden.
+  que `system/inference/preprocessing.py` encadena en ese orden.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
   entre el pipeline y el promedio de confianza. Corre **después** de devolver las
   detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
@@ -260,8 +273,9 @@ siguen vienen del template.
 - **El rectángulo de cinta va en `process:` y NO en `cameras.<slot>.roi`.** Si fuera el ROI
   de cámara, el motor recortaría antes de inferir y los dos denominadores pasarían a ser el
   mismo, cambiando en silencio todos los porcentajes publicados. Como está en `process:`, lo
-  lee `main.py` una sola vez y se lo pasa al analyzer y al annotator: el rectángulo que ve
-  el operador y el que se usó para el número que salió al PLC son el mismo.
+  lee `system/inference/hooks.py` una sola vez y se lo pasa al analyzer y al annotator: el
+  rectángulo que ve el operador y el que se usó para el número que salió al PLC son el
+  mismo.
 - **El brillo de la versión anterior se reproduce en la medición.** Aquella infería sobre
   el frame con un ajuste de software de ×4.6 (`brillo: 90`) a 800 µs, y calibraba el umbral
   de fondo oscuro —60, sólo para desmenuzado— contra esa imagen. Acá se conservan los tres
@@ -302,6 +316,12 @@ siguen vienen del template.
   lógica del proceso ya puede depender de la cámara sin pasar por el `classifier`, que
   existía justamente para tapar esa ceguera. Al modelo se le sigue sin pasar: un modelo es un
   envoltorio de framework y se reusa entre proyectos; el pipeline es código del fork.
+- **El umbral de fondo oscuro lo lee el pipeline del config, no se lo pasa nadie.** La app
+  y la corrida de imágenes sueltas (`offline.py`, maquinaria) arman el pipeline igual, con
+  `Pipeline(config, pipeline_slot)`; si el umbral entrara por un argumento que sólo pasa
+  `main.py`, una imagen suelta mediría sin refinar y daría distinto que la línea, sin que
+  nada lo dijera. El argumento `dark_background_threshold` queda para los tests y para
+  `manual_test/belt`, que lo apaga con `--no-refine`.
 - **Las rutas de los streams llevan el nombre viejo de la cámara.** `video.http.stream_names`
   mapea `camera_1` a `cinta` para no romper las URLs que ya están puestas en tableros y
   navegadores de la planta. Es deuda, no diseño: afecta sólo a la ruta —en los registros y
@@ -323,11 +343,11 @@ siguen vienen del template.
   sus métricas.** De `CLASS_NAMES` en `system/inference/pipeline.py` salen `pct_pellet` y
   `pct_pellet_norm`, y con ellos los registros que lee el PLC: no es algo que se edite en
   planta, y un orden invertido invierte en silencio todos los porcentajes. Se declaran una
-  sola vez, ahí: el pipeline nombra cada detección por su índice, el cableado se los pasa al
-  analyzer, al panel y a las medias de la hora, y la pestaña de proceso los lee para los
-  umbrales de fondo oscuro. Al cargar, el pipeline los confronta con los que traen los
-  pesos —el `.engine` los guarda en su cabecera— y con otros no arranca, con el motivo en el
-  log: 0 = desmenuzado, 1 = pellet. El template sigue leyendo `class_names` del config para
+  sola vez, ahí: el pipeline nombra cada detección por su índice, `hooks.py` se los pasa al
+  analyzer y al panel, `main.py` arma con ellos las medias de la hora, y la pestaña de
+  proceso los lee para los umbrales de fondo oscuro. Al cargar, el pipeline los confronta
+  con los que traen los pesos —el `.engine` los guarda en su cabecera— y con otros no
+  arranca, con el motivo en el log: 0 = desmenuzado, 1 = pellet. El template sigue leyendo `class_names` del config para
   los forks que no declaran sus clases; en este la clave no está. La UI no la muestra en
   ningún proyecto: se escribe en el archivo al armar el fork, porque un orden cambiado no da
   un error, invierte los porcentajes.
@@ -335,8 +355,9 @@ siguen vienen del template.
   `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo, y
   lo mismo vale para toda la sección `inference.overlay`: varios de sus valores son de la
   instalación —`font_scale` está calibrado para el frame de esta cámara— y no van a
-  constantes de `overlay.py`, que es maquinaria y se cross-portea. Con esa paleta el motor pinta las máscaras y el panel de composición pinta sus filas —`main.py`
-  se la pasa al annotator—, así que una clase se ve del mismo color en los dos lados. Un
+  constantes de `overlay.py`, que es maquinaria y se cross-portea. Con esa paleta el motor
+  pinta las máscaras y el panel de composición pinta sus filas —`hooks.py` se la pasa al
+  annotator—, así que una clase se ve del mismo color en los dos lados. Un
   color por nombre en el annotator era una segunda fuente que ya no coincidía con la de las
   máscaras, y que con un orden de clases invertido habría pintado la misma clase de dos
   colores.
@@ -376,6 +397,20 @@ siguen vienen del template.
 - Un hilo por cámara, y el ritmo lo pone la cámara (free-run). Si alguna vez se
   captura por trigger, el ritmo y el orden de los disparos son de quien orqueste
   la captura, no del hilo.
+- **El video grabado entra como una cámara más, leído del archivo y no por un servidor
+  RTSP.** `driver: video_file` se declara en el config —se prueba en la máquina de
+  desarrollo, antes de la configuración final, así que no hace falta un flag que lo
+  sobreescriba— y el ritmo lo pone el reloj: un consumidor lento pierde frames y el video no
+  se estira. Un servidor RTSP probaría además el transporte, pero agrega dos binarios y
+  fallas que no son del proyecto justo en la herramienta que tiene que ser la más
+  confiable. La cámara va marcada como sintética: es imagen real, pero no la línea ahora, y
+  el estado que lee el PLC lo dice. Los videos van en `recordings/`, que no se versiona.
+- **Lo que se prueba sin la línea corre el código de la línea.** La corrida de imágenes
+  sueltas (`system/inference/offline.py`) arma los pipelines como la app —el mismo
+  `Pipeline`, `build_preprocessor()` y `build_hooks()`— y corre el ciclo del motor con
+  `InferenceThread.process()`, sin arrancar el hilo. Un segundo camino de inferencia
+  podría dar distinto que el primero, y una imagen que pasa la prueba no diría nada de la
+  línea. Por eso lo del fork que entra al motor vive en `hooks.py` y no en `main.py`.
 - El video sale por dos caminos y no compiten: MJPEG por HTTP es el stream liviano
   para mirar en el navegador, y RTSP es el de resolución completa para un NVR o un
   reproductor. El RTSP se publica por interfaz (`video.rtsp.net_interfaces`), y
@@ -409,8 +444,8 @@ siguen vienen del template.
   de la telemetría y a los registros del PLC.
 - **Los parámetros de lo que se mide viven en la sección `process` del config**, que es la
   única cuya forma cambia entre proyectos. No la lee ningún módulo de la maquinaria: la lee
-  `main.py` y se la pasa al analyzer y a los annotators, que así reciben números y se
-  testean sin archivo. Un valor que alimenta a dos consumidores —la altura del límite de
+  `system/inference/hooks.py` y se la pasa al classifier, al analyzer y a los annotators,
+  que así reciben números y se testean sin archivo. Un valor que alimenta a dos consumidores —la altura del límite de
   carga, que se dibuja y se mide— se lee una sola vez, para que el operador y el PLC no
   puedan estar mirando cosas distintas.
 - El frame anotado se dibuja una sola vez, en el motor, y el mismo array viaja a la UI,
@@ -614,6 +649,14 @@ siguen vienen del template.
   es la forma en el cable —MQTT publica un JSON plano en `<topic_base>/<measurement>`, con
   los tags y los fields fusionados—, y eso está en `docs/mqtt.md`, que apunta a
   `docs/influxdb.md` para los campos en vez de repetirlos.
+- **La verificación es local y la barrera son los hooks de git, no un servidor.** El
+  pre-commit corre Ruff y el índice de tests; el pre-push, además, la suite entera en
+  paralelo. Los dos llaman a `ci/check.py`, que es el único lugar donde se decide cómo se
+  corre algo. El lint es sólo lint —pyflakes, bugbear y errores de sintaxis—, sin
+  formatter ni orden de imports: los forks cross-portean la maquinaria, y reformatear el
+  template haría chocar cada línea en el próximo merge. La suite corre en orden aleatorio
+  (pytest-randomly) para que un test que deja estado se note acá y no en otra máquina.
+  `--no-verify` saltea todo, y por eso no se usa: no hay otra red detrás.
 - **El mapa Modbus es un archivo de datos, no código.** Vive en
   `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
   es fuente única: la tabla que lee el integrador se genera con
@@ -688,7 +731,7 @@ describe qué se mide en esta cinta, es de este proyecto.**
 - **De este proyecto** —lo que se reescribió al migrar—: `config.yaml` (sección `process:`
   incluida), `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
   `system/inference/metrics.py`, `system/inference/annotations.py`,
-  `system/inference/models/yolo_seg_model.py`, el contenido de
+  `system/inference/hooks.py`, `system/inference/models/yolo_seg_model.py`, el contenido de
   `setup/jetson/{constraints,requirements,requirements-nodeps}.txt` y el bloque del fork
   de `setup/venv-setup/verify_env.py`, este archivo y el `README.md`.
 - **Lo que este proyecto agregó de genérico ya volvió al template**: el subsistema de GPIO
@@ -697,8 +740,10 @@ describe qué se mide en esta cinta, es de este proyecto.**
   `setup/venv-setup/`, `build/`) y los arreglos de maquinaria que nacieron acá. Ahora son
   maquinaria y se cross-portean como el resto; la lista está en «Lo que ya volvió» de
   `docs/template_divergences.md`.
-- **De `main.py` se completó el bloque marcado**: el analyzer, los annotators, el contexto
-  del dataset y el widget del monitor —que es la grilla de cámaras, sin widget propio—.
+- **De `main.py` se completó el bloque marcado**: el contexto del dataset y el widget del
+  monitor —que es la grilla de cámaras, sin widget propio—. El analyzer y los annotators,
+  que antes también estaban ahí, son de `hooks.py` desde que la corrida de imágenes sueltas
+  los usa igual que la app.
 - **`main.py` diverge además fuera de ese bloque**, y es lo que hay que mirar al
   cross-portear: el bloque de measurements de telemetría, `_build_inference_fields()`,
   `_build_optics_fields()` y `_build_system_fields()` usan los nombres viejos del dashboard;
@@ -754,6 +799,10 @@ La tabla completa, archivo por archivo, está en `README.md`.
   no se restringe nada. El diseño completo está en `.claude/plans/licensing.md`.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
+- **El ground truth de esta cinta.** El template ya trae las dos piezas —la cámara
+  `video_file` y la corrida de imágenes sueltas de `manual_test/offline_inference/`—, pero
+  faltan las imágenes con el resultado esperado. El diseño está en
+  `.claude/plans/replay-and-ground-truth.md`.
 
 ## Dónde va lo que se escribe
 

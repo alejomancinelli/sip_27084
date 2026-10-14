@@ -6,8 +6,6 @@ levantado para verificar el contrato del backend."""
 
 import json
 import logging
-import os
-import sys
 import types
 
 import pytest

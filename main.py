@@ -52,17 +52,18 @@ Lo que **no** hace, y por qué:
 
 Los seis puntos de extensión del motor, y de dónde sale cada uno:
 
-    preprocessor    `tools/image/undistort.py` y `enhance.py`, si alguna cámara declara
+    preprocessor    `system/inference/preprocessing.py`, si alguna cámara declara
                     calibración o ajuste de imagen
     pipeline        `system/inference/pipeline.py`, que el fork reescribe
-    classifier      qué detecciones cuentan y con qué clase, compuesto abajo con `process:`
-    analyzer        `system/inference/metrics.py`, que el fork reescribe
-    annotator       `system/inference/annotations.py`, compuesto abajo con `process:`
+    classifier      `system/inference/hooks.py`, que el fork reescribe con `process:`
+    analyzer        `system/inference/hooks.py`, con la cuenta de `metrics.py`
+    annotator       `system/inference/hooks.py`, con las factories de `annotations.py`
     annotate_gate   acá: se dibuja si lo mira la UI o un cliente del stream anotado
 
-**Qué toca el fork.** Los cuatro métodos del bloque «Lo que cambia en cada fork»: qué mira
-el operador, qué detecciones cuentan, qué se dibuja además del resultado, y con qué
-parámetros se cuenta. El resto es cableado genérico y se cross-portea sin editar.
+**Qué toca el fork.** Los dos métodos del bloque «Lo que cambia en cada fork»: qué mira el
+operador y con qué parámetros quedó medido lo que se guarda. Lo que entra al motor es de
+`hooks.py`, que también usa la corrida de imágenes sueltas: armarlo acá lo dejaría en un
+solo lado de los dos. El resto es cableado genérico y se cross-portea sin editar.
 
 Cómo llegan los números al PLC: se publican los registros de salud —heartbeat, hardware,
 estado por cámara, palabras de estado y de GPIO— y, de las métricas del analyzer, **las que tengan
@@ -97,9 +98,12 @@ from system.env import load_env_file
 from system.formats import camera_health, com_status, gpio_status, system_status
 from system.gpio_control import GpioController, GpioPollingThread
 from system.image_collector.collector import ImageCollector
-from system.inference import analysis, annotations, metrics, rolling
+from system.inference import analysis, rolling
 from system.inference.engine import InferenceThread
-from system.inference.pipeline import CLASS_NAMES, BeltPipeline
+from system.inference.hooks import build_hooks
+from system.inference.metrics import LOAD_KEY
+from system.inference.pipeline import CLASS_NAMES, Pipeline
+from system.inference.preprocessing import build_preprocessor
 from system.inference.result import InferenceResult
 from system.license.manager import (
     PERPETUAL_DAYS_SENTINEL, RECHECK_INTERVAL_MS, LicenseManager, read_feature,
@@ -114,8 +118,7 @@ from system.version import APP_VERSION
 from system.video.abstract_video_server import MODE_ANNOTATED
 from system.video.http_server import HttpVideoServer
 from system.video.rtsp_server import RtspVideoServer
-from tools.image.enhance import build_display_adjust, build_image_adjust
-from tools.image.undistort import build_undistorter
+from tools.image.enhance import build_display_adjust
 
 from ui import service_status
 # `MainWindow` y `CameraGrid` se importan dentro de `_QtUi`: en headless no se construye
@@ -133,7 +136,7 @@ _HEARTBEAT_MAX = 65535            # el registro es uint16: el contador da la vue
 # del analyzer y el registro de la media se llama igual con `_1h` al final, que es como ya
 # lo lee el PLC. La composición se pesa con la carga, así que las dos van siempre juntas.
 _ROLLING_COMPOSITION_NAMES = tuple(f"pct_{name}_norm" for name in CLASS_NAMES)
-_LOAD_NAME = metrics.LOAD_KEY
+_LOAD_NAME = LOAD_KEY
 _ROLLING_SUFFIX = "_1h"
 # Sufijo de las métricas de composición: entre las clases detectadas, suman 100.
 _NORMALIZED_SUFFIX = "_norm"
@@ -563,13 +566,8 @@ class Application(QObject):
         # Un hilo por pipeline habilitado: las cámaras que comparten pipeline comparten
         # el hilo, así los pesos se cargan una vez y el acceso a la GPU queda
         # serializado por construcción.
-        # `process:` la lee este archivo y se la pasa hecha a quien la necesite, igual que
-        # al analyzer y a los annotators: así el pipeline se testea con tres números.
-        dark_background_threshold = config.get("process.dark_background_threshold", {}) or {}
-        preprocessor = self._build_preprocessor()
-        classifier = self._build_classifier()
-        analyzer = self._build_analyzer()
-        annotator = self._build_annotator()
+        preprocessor = build_preprocessor(config)
+        hooks = build_hooks(config)
         self._engines: list[InferenceThread] = []
         for pipeline_slot in (config.get("inference.pipelines", {}) or {}):
             if not config.get(f"inference.pipelines.{pipeline_slot}.enabled", True):
@@ -587,12 +585,11 @@ class Application(QObject):
                 continue
             engine = InferenceThread(
                 config,
-                BeltPipeline(config, pipeline_slot,
-                             dark_background_threshold=dark_background_threshold),
+                Pipeline(config, pipeline_slot),
                 preprocessor=preprocessor,
-                classifier=classifier,
-                analyzer=analyzer,
-                annotator=annotator,
+                classifier=hooks.classifier,
+                analyzer=hooks.analyzer,
+                annotator=hooks.annotator,
                 annotate_gate=self._is_annotated_watched,
                 # El anotado se ve como el stream crudo: los dos los mira una persona.
                 canvas_adjust=self._for_display,
@@ -724,10 +721,10 @@ class Application(QObject):
 
     # ── Lo que cambia en cada fork ───────────────────────────────────────────
     #
-    # Cinco decisiones del proyecto, juntas y marcadas para que un diff las muestre de
-    # una: qué mira el operador, qué detecciones cuentan, con qué parámetros se cuenta,
-    # qué se dibuja además del resultado, y con qué parámetros quedó medido lo que se
-    # guarda. Todo lo demás de este archivo es cableado genérico.
+    # Dos decisiones del proyecto, juntas y marcadas para que un diff las muestre de una:
+    # qué mira el operador y con qué parámetros quedó medido lo que se guarda. Lo que entra
+    # al motor —qué detecciones cuentan, qué significan y qué se dibuja— es de
+    # `system/inference/hooks.py`. Todo lo demás de este archivo es cableado genérico.
 
     def _build_monitor_content(self) -> QWidget:
         """
@@ -769,50 +766,7 @@ class Application(QObject):
             context["dark_background_threshold"] = dict(thresholds)
         return context or None
 
-    def _build_classifier(self):
-        """
-        Qué detecciones cuentan y con qué clase. Este proyecto no filtra ni reetiqueta.
-
-        Todo lo que hay que decidir sobre una detección lo decide el modelo con su
-        `min_confidence_pct`, y el reparto entre clases se resuelve contando píxeles en el
-        analyzer. No hay nada calibrado por cámara —hay una sola cinta— que el modelo no
-        pueda saber.
-        """
-        return None
-
-    def _build_analyzer(self):
-        """
-        Qué significan las detecciones: la composición y la carga de la cinta.
-
-        Los nombres de clase son los de `pipeline.CLASS_NAMES`, que es su única
-        declaración: son los que deciden cómo se llaman las métricas —`pct_pellet_norm`— y
-        por lo tanto qué registro las transporta, así que no salen de un archivo que se
-        edita en planta. El pipeline los confronta con los del modelo al cargar.
-        """
-        return metrics.build_analyzer(
-            class_names=list(CLASS_NAMES),
-            belt_roi_px=self._config.get("process.belt_roi_px", {}) or {},
-        )
-
-    def _build_annotator(self):
-        """
-        Lo que se dibuja además del resultado: el rectángulo de cinta y el panel.
-
-        Lee los mismos valores que el analyzer y en el mismo lugar, que es la razón de que
-        se lean acá y no adentro de cada factory: el rectángulo que ve el operador y el que
-        se usó para calcular el porcentaje que salió al PLC son el mismo, y no pueden
-        discrepar. La paleta es la misma con la que el motor pinta las máscaras, por igual
-        razón.
-        """
-        colors = self._config.get("inference.overlay.class_colors_bgr", []) or []
-        return annotations.chain(
-            annotations.belt_roi_annotator(
-                self._config.get("process.belt_roi_px", {}) or {}),
-            annotations.composition_panel_annotator(
-                list(CLASS_NAMES),
-                class_colors_bgr=tuple(tuple(color) for color in colors),
-                font_scale=float(self._config.get("inference.overlay.font_scale", 0) or 0)),
-        )
+    # ── Ciclo de vida ────────────────────────────────────────────────────────
 
     def start(self):
         """Arranca servidores e hilos y muestra la ventana."""
@@ -1790,35 +1744,6 @@ class Application(QObject):
 
     # ── Internos ─────────────────────────────────────────────────────────────
 
-    def _build_preprocessor(self):
-        """
-        Corrector de lente y ajuste de imagen, si alguna cámara declara alguno de los dos.
-
-        Lo que devuelve pasa a ser el frame de referencia del ciclo: el que ve el modelo,
-        el que queda en `source_bgr` —y con él en el dataset—, el espacio del ROI y el
-        lienzo del overlay. Sin nada declarado devuelve None y el motor no gasta la pasada.
-
-        **Primero la geometría y después el brillo.** El gamma es por píxel y el orden no
-        le cambia nada, pero el contraste local ecualiza por celdas: corrido antes de
-        corregir el lente, las celdas quedarían deformadas sobre el frame que mide el
-        modelo.
-        """
-        camera_slots = tuple(self._config.get("cameras", {}) or {})
-        undistorter = build_undistorter({
-            camera_slot: self._config.get(f"cameras.{camera_slot}.calibration", {}) or {}
-            for camera_slot in camera_slots
-        })
-        if undistorter is not None:
-            logger.info("[Main] Corrección de lente activa: el frame de referencia va corregido.")
-        image_adjust = build_image_adjust({
-            camera_slot: self._config.get(f"cameras.{camera_slot}.image_adjust", {}) or {}
-            for camera_slot in camera_slots
-        })
-        if image_adjust is not None:
-            logger.info(f"[Main] Ajuste de imagen activo — {image_adjust.__name__}: el modelo "
-                        f"y el dataset reciben el frame ajustado.")
-        return _chain_preprocessors(undistorter, image_adjust)
-
     def _get_service_statuses(self) -> dict:
         """Estado de los seis canales de salida, cada uno preguntado a su dueño."""
         return {
@@ -1909,28 +1834,6 @@ def _parse_args(argv: list) -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true",
                         help="no abrir la ventana; también se puede con ui.enabled: false")
     return parser.parse_args(argv)
-
-
-def _chain_preprocessors(*preprocessors):
-    """
-    Junta varios preprocessors en uno, en orden. El motor recibe una sola función.
-
-    Los que vienen en None se descartan: sin ninguno devuelve None, y con uno solo lo
-    devuelve tal cual, así el motor no paga una llamada de más por frame.
-    """
-    selected = [preprocessor for preprocessor in preprocessors if preprocessor is not None]
-    if not selected:
-        return None
-    if len(selected) == 1:
-        return selected[0]
-
-    def preprocess(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
-        for preprocessor in selected:
-            frame_bgr = preprocessor(frame_bgr, camera_slot)
-        return frame_bgr
-
-    preprocess.__name__ = " + ".join(getattr(p, "__name__", repr(p)) for p in selected)
-    return preprocess
 
 
 def _build_modbus_server(config: ConfigManager) -> SharedModbusServer:

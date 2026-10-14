@@ -28,14 +28,21 @@
 .PARAMETER SkipInstall
     Only create the venv; do not install anything. Useful when debugging the venv.
 
+.PARAMETER Dev
+    Development machine: install requirements-dev.txt (the app plus pytest and ruff)
+    and point git at the versioned hooks in .githooks\. A plant machine gets
+    requirements.txt only.
+
 .EXAMPLE
     .\setup\venv-setup\venv-setup.ps1
     .\setup\venv-setup\venv-setup.ps1 -Force
+    .\setup\venv-setup\venv-setup.ps1 -Dev
 #>
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$Dev
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +53,8 @@ $ProjectRoot  = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $VenvPath     = Join-Path $ProjectRoot ".venv"
 $VenvPython   = Join-Path $VenvPath "Scripts\python.exe"
 $Requirements = Join-Path $ProjectRoot "requirements.txt"
+if ($Dev) { $Requirements = Join-Path $ProjectRoot "requirements-dev.txt" }
+$RequirementsName = Split-Path $Requirements -Leaf
 $PackagesDir  = Join-Path $ProjectRoot "packages"
 $VerifyScript = Join-Path $PSScriptRoot "verify_env.py"
 
@@ -123,8 +132,18 @@ Write-Step "3/5  Installing dependencies"
 if (-not $?) { throw "Failed to upgrade pip." }
 
 & $VenvPython -m pip install -r $Requirements
-if (-not $?) { throw "'pip install -r requirements.txt' failed." }
-Write-Ok "requirements.txt installed"
+if (-not $?) { throw "'pip install -r $RequirementsName' failed." }
+Write-Ok "$RequirementsName installed"
+
+if ($Dev) {
+    # Versioned hooks: lint before each commit, tests before each push.
+    & git -C $ProjectRoot config core.hooksPath .githooks
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "git hooks enabled (core.hooksPath = .githooks)"
+    } else {
+        Write-Note "Could not set core.hooksPath - is this a git checkout?"
+    }
+}
 
 # --- 4/5  stapipy (Sentech) from the local wheel -----------------------------
 # Not published on PyPI: it ships inside the Windows SentechSDK. Optional - without
@@ -164,7 +183,7 @@ if ($VerifyExit -eq 0) {
     Write-Host ""
     Write-Host " Run:    .\.venv\Scripts\python.exe main.py             (with window)"
     Write-Host "         .\.venv\Scripts\python.exe main.py --headless  (no window)"
-    Write-Host " Tests:  .\.venv\Scripts\python.exe -m pytest -q"
+    if ($Dev) { Write-Host " Checks: .\.venv\Scripts\python.exe ci\check.py   (lint + tests)" }
 } else {
     Write-Host " Environment INCOMPLETE - review the failures above." -ForegroundColor Red
     Write-Host "======================================================================"

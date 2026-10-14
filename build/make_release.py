@@ -106,7 +106,8 @@ _SITE_PACKAGES_DIR = "site-packages"
 # metadata y no por nombre de carpeta, que no siempre coincide: pytest deja además un
 # `py.py` suelto en la raíz.
 _BUILD_ONLY_DISTRIBUTIONS = ("nuitka", "ordered-set", "zstandard", "pytest", "pluggy",
-                             "iniconfig")
+                             "iniconfig", "pytest-randomly", "pytest-xdist", "execnet",
+                             "ruff")
 
 # Archivos con nombre fijo, propios de la maquinaria y no de la instalación: van siempre,
 # si están. Los pesos del modelo NO están acá a propósito — un fork no tiene un nombre de

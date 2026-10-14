@@ -2,10 +2,8 @@
 conectado, espera por número de secuencia, ciclo de vida y endpoints."""
 
 import logging
-import os
 import socket
 import struct
-import sys
 import threading
 import time
 from http.client import HTTPConnection, HTTPResponse

@@ -9,7 +9,7 @@ import pytest
 
 from system.inference.models.abstract_model import AbstractModel
 from system.inference.abstract_pipeline import AbstractPipeline
-from system.inference.pipeline import CLASS_NAMES, BeltPipeline
+from system.inference.pipeline import CLASS_NAMES, Pipeline
 from system.inference.result import Detection
 
 _PIPELINE = "pipeline_1"
@@ -96,7 +96,7 @@ class TestLoading:
         config = _MockConfig(segmenter={"type": "mock"})
         models = {"segmenter": _FakeModel(config, "segmenter")}
         _install_models(monkeypatch, models)
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is True
         assert set(pipeline.get_status()["models"]) == {"segmenter"}
@@ -107,7 +107,7 @@ class TestLoading:
         import system.inference.abstract_pipeline as ap
         monkeypatch.setattr(ap, "create_model", lambda config, model_slot:
                             created.append(model_slot) or _FakeModel(config, model_slot))
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.load()
         assert created == ["segmenter"]
@@ -115,7 +115,7 @@ class TestLoading:
     def test_a_stage_that_could_not_load_leaves_the_pipeline_unloaded(self, monkeypatch):
         config = _MockConfig(segmenter={"type": "mock"})
         _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_loaded is False
         assert pipeline.get_status()["models"]["segmenter"]["error"] == "pesos ausentes"
@@ -132,7 +132,7 @@ class TestLoading:
     def test_unload_releases_every_stage(self, monkeypatch):
         config = _MockConfig(segmenter={"type": "mock"})
         _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter")})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.run(_frame(), _SLOT)
         pipeline.unload()
@@ -145,7 +145,7 @@ class TestRunning:
         config = _MockConfig(segmenter={"type": "mock"})
         model = _FakeModel(config, "segmenter")
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         detections = pipeline.run(_frame(), _SLOT)
         assert [d.class_index for d in detections] == [0]
@@ -154,7 +154,7 @@ class TestRunning:
     def test_a_stage_without_a_model_returns_nothing(self, monkeypatch):
         config = _MockConfig(segmenter={"type": "mock"})
         _install_models(monkeypatch, {"segmenter": _FakeModel(config, "segmenter", loads=False)})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.run(_frame(), _SLOT) == []
 
@@ -194,7 +194,7 @@ class TestRunning:
         config = _MockConfig(segmenter={"type": "mock"})
         model = _FakeModel(config, "segmenter")
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         pipeline.run(_frame(), _SLOT)
         assert model.calls[0][1] == []
@@ -205,7 +205,7 @@ class TestRunning:
         model = _FakeModel(config, "segmenter")
         model.predict = lambda frame_bgr, previous=None: (_ for _ in ()).throw(RuntimeError("cuda"))
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         with pytest.raises(RuntimeError):
             pipeline.run(_frame(), _SLOT)
@@ -260,7 +260,7 @@ class TestRunning:
         model = _FakeModel(config, "segmenter")
         model.is_synthetic = True
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         assert pipeline.is_synthetic is True
 
@@ -291,12 +291,12 @@ class TestDarkBackground:
         return frame
 
     def _pipeline(self, monkeypatch, thresholds: dict, *,
-                  class_name: str = "desmenuzado") -> BeltPipeline:
+                  class_name: str = "desmenuzado") -> Pipeline:
         config = _MockConfig(segmenter={"type": "mock"})
         model = _FakeModel(config, "segmenter")
         model.detections = [self._detection(class_name)]
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE, dark_background_threshold=thresholds)
+        pipeline = Pipeline(config, _PIPELINE, dark_background_threshold=thresholds)
         pipeline.load()
         return pipeline
 
@@ -321,6 +321,17 @@ class TestDarkBackground:
     def test_without_thresholds_nothing_is_refined(self, monkeypatch):
         pipeline = self._pipeline(monkeypatch, {})
         assert pipeline.run(self._frame(), _SLOT)[0].area_px == 40 * 40
+
+    def test_without_passing_them_the_thresholds_come_from_process(self, monkeypatch):
+        """Es como la arman la app y la corrida offline: las dos tienen que medir igual."""
+        config = _MockConfig(segmenter={"type": "mock"})
+        config._values["process.dark_background_threshold"] = {_SLOT: {"desmenuzado": 60}}
+        model = _FakeModel(config, "segmenter")
+        model.detections = [self._detection()]
+        _install_models(monkeypatch, {"segmenter": model})
+        pipeline = Pipeline(config, _PIPELINE)
+        pipeline.load()
+        assert pipeline.run(self._frame(), _SLOT)[0].area_px == 20 * 40
 
     def test_a_mask_left_empty_is_dropped(self, monkeypatch):
         """Una instancia que ya no cubre nada inflaría el conteo y la confianza."""
@@ -357,7 +368,7 @@ class TestOverlapGoesToTheMostConfident:
         model.detections = [self._detection(1, "pellet", 95.0, 0, 30),
                             self._detection(0, "desmenuzado", 40.0, 10, 40)]
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         return pipeline.run(np.full((40, 40, 3), 200, np.uint8), _SLOT)
 
@@ -388,7 +399,7 @@ class TestClassNames:
     invertidos. Por eso el pipeline no arranca con él.
     """
 
-    def _pipeline(self, monkeypatch, declared: list | None) -> BeltPipeline:
+    def _pipeline(self, monkeypatch, declared: list | None) -> Pipeline:
         section = {"type": "mock"}
         if declared is not None:
             section["class_names"] = declared
@@ -398,7 +409,7 @@ class TestClassNames:
                                       confidence_pct=90.0, bbox_px=(0, 0, 10, 10))
                             for index in range(len(CLASS_NAMES))]
         _install_models(monkeypatch, {"segmenter": model})
-        pipeline = BeltPipeline(config, _PIPELINE)
+        pipeline = Pipeline(config, _PIPELINE)
         pipeline.load()
         return pipeline
 

@@ -335,7 +335,7 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             remaining = subs.unregister(key, token)
             # El anotado no se borra: es la última medición, y el que se conecte después
             # tiene que verla sin esperar el ciclo siguiente. El crudo sí, porque el
-            # próximo frame llega enseguida y uno viejo mostraría una cinta que ya pasó.
+            # próximo frame llega enseguida y uno viejo mostraría una escena que ya pasó.
             if remaining == 0 and key[1] != MODE_ANNOTATED:
                 store.clear(key)
             self.server.log_client_event(

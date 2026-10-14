@@ -9,7 +9,6 @@ un segundo: lo que se prueba es la cadencia, no el piso.
 
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
