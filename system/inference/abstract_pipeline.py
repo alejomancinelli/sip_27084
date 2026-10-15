@@ -20,7 +20,8 @@ cámara se resuelve por frame, no se guarda en el objeto.
 concreta —`pipeline.py` en el template—, porque encadenar dos modelos es lógica del
 proceso: qué recorta el segundo, qué hace con lo que encontró el primero, cuándo no
 vale la pena correrlo. Eso no se expresa en una lista del config.yaml. Lo que sí es
-configuración es de dónde sale cada modelo (`inference.models.<slot>`) y qué cámaras
+configuración es qué clase corre cada slot (`inference.pipelines.<slot>.type`, que resuelve
+`pipeline_factory`), de dónde sale cada modelo (`inference.models.<slot>`) y qué cámaras
 entran al pipeline (`inference.pipelines.<slot>.cameras`).
 
 Una instancia por pipeline, no por cámara: todas las cámaras del pipeline la comparten

@@ -130,10 +130,12 @@ proyecto.**
 | `system/inference/metrics.py` | composición y carga, por conteo de píxeles por unión |
 | `system/inference/annotations.py` | el rectángulo de cinta y el panel de composición |
 | `system/inference/hooks.py` | el cuerpo de `build_hooks()`: el analyzer y los annotators con los valores de `process:` |
+| `test/inference/test_hooks.py` | los tests de `build_hooks()`, que cambian con él |
+| `manual_test/offline_inference/config.yaml` | `process:` de la cinta y el slot `segmenter` con el mock, para que la corrida ande sin pesos |
 | `system/version.py` | la versión del equipo; se sube en cada release |
 | `setup/jetson/*.txt` | el framework del segmentador en la Jetson: torch y torchvision de NVIDIA, ultralytics 8.4.90 y sus dependencias, con las versiones fijadas |
 | `setup/venv-setup/verify_env.py` | sólo el bloque del fork: los módulos del framework y la prueba de CUDA y del NMS de torchvision |
-| `main.py` | el bloque «Lo que cambia en cada fork», **más** la divergencia de telemetría y el cableado de las medias móviles |
+| `main.py` | el bloque «Lo que cambia en cada fork» —con `_build_frame_gates()` vacío, como en el template—, **más** la divergencia de telemetría y el cableado de las medias móviles |
 | `CLAUDE.md`, `README.md` | el mapa, las decisiones y esta guía |
 
 ### Lo que ya volvió al template
@@ -166,8 +168,8 @@ lo que falta es un punto de extensión, no un parche.
 | infraestructura | `system/config_manager.py`, `logger.py`, `paths.py`, `system_monitor.py` |
 | captura | `system/camera/capture_thread.py`, `tools/camera/abstract_driver.py`, `camera_factory.py`, `basler_driver.py`, `st_driver.py`, `rtsp_driver.py`, `video_file_driver.py`, `mock_driver.py`, `null_driver.py` |
 | imagen | `tools/image/enhance.py`, `undistort.py` |
-| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `result.py`, `overlay.py`, `analysis.py`, `rolling.py`, `engine.py`, `preprocessing.py`, `offline.py` |
-| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py`, `gpio_status.py` |
+| inferencia | `system/inference/models/*` (menos `yolo_seg_model.py`), `abstract_pipeline.py`, `null_pipeline.py`, `result.py`, `overlay.py`, `composer.py`, `analysis.py`, `rolling.py`, `engine.py`, `preprocessing.py`, `offline.py` |
+| bitfields | `system/formats/camera_health.py`, `com_status.py`, `system_status.py`, `gpio_status.py`, `pipeline_status.py` |
 | GPIO | `system/gpio_control.py` |
 | Modbus | `system/modbus/schema.py`, `registers.py`, `server.py`, `export_map.py` |
 | telemetría | `system/telemetry/persistence.py`, `backends/*` |
@@ -178,8 +180,8 @@ lo que falta es un punto de extensión, no un parche.
 | verificación | `ci/check.py`, `ci/suite_index.py`, `.githooks/*`, `pyproject.toml`, `requirements-dev.txt` |
 | interfaz | `ui/` entero salvo lo de arriba: `strings.py`, `theme.py`, `service_status.py`, `main_window.py`, las tres vistas, `views/config/*`, `views/diagnostics/*`, `widgets/*`, `dialogs/*`, `styles/*` |
 
-Dos excepciones acotadas: `model_factory.py` y `camera_factory.py` reciben **una línea**
-cada uno cuando el fork agrega una implementación. Eso es registro, no lógica.
+Tres excepciones acotadas: `model_factory.py`, `pipeline_factory.py` y `camera_factory.py`
+reciben **una línea** cada uno cuando el fork agrega una implementación. Eso es registro, no lógica.
 
 ### Generados: nunca a mano
 
@@ -229,7 +231,8 @@ Qué esperar:
 - **Los archivos que el fork reescribió conflictúan**, y no es una falla: `config.yaml`,
   `register_map.yaml`, `pipeline.py`, `metrics.py`, `version.py`, `CLAUDE.md` y
   `README.md` son las mismas rutas con contenido distinto a propósito.
-- **Las dos fábricas** conflictúan en la línea de registro. Se resuelve dejando las dos.
+- **Las tres fábricas** conflictúan en la línea de registro. Se resuelve dejando las dos
+  versiones de la línea.
 
 **No se resuelven en automático con «la mía».** Git mergea por bloques, así que un cambio
 del template en una parte del `config.yaml` que no tocaste entra solo —y eso normalmente
@@ -290,9 +293,10 @@ proyecto sigue en su propio repo.
 
 ### Lo que ya sabemos que va a chocar
 
-`model_factory.py` y `camera_factory.py` reciben una línea de registro por fork. Dos forks
-que agregan al mismo diccionario conflictúan ahí, y se resuelve en una línea. Es el precio
-de que agregar un modelo o un driver no toque nada más.
+`model_factory.py`, `pipeline_factory.py` y `camera_factory.py` reciben una línea de
+registro por fork. Dos forks que agregan al mismo diccionario conflictúan ahí, y se resuelve
+en una línea. Es el precio de que agregar un modelo, un pipeline o un driver no toque nada
+más.
 
 ### Qué cuesta no hacerlo
 
@@ -322,7 +326,7 @@ genérica la maquinaria y testeable lo del proyecto.
 | Punto | Qué hace | Dónde vive |
 |---|---|---|
 | `preprocessor` | sobre qué imagen se mide | `preprocessing.py`, con `tools/image/undistort.py` y `enhance.py` desde el config de cada cámara |
-| `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py` |
+| `pipeline` | qué modelos corren, en qué orden y qué se hace con lo que devuelven; recibe la cámara | `pipeline.py`, registrado como `default` en `pipeline_factory.py` |
 | `classifier` | qué detecciones cuentan y con qué clase, en coordenadas del frame completo | **sin usar acá**: lo calibrado por cámara lo resuelve el pipeline |
 | `analyzer` | qué significan las detecciones | `metrics.py`, armado en `hooks.py` con `process:` |
 | `annotator` | qué se dibuja además del resultado | `annotations.py`, compuesto en `hooks.py` con `process:` |

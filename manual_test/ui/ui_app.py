@@ -22,7 +22,7 @@ hacer `main.py`, con los mismos métodos públicos. Ver `docs/ui.md`.
 **Ningún estado está simulado.** Todo lo que muestra la pantalla lo informó su dueño:
 
     4 hilos de captura (mock)      frames, fps y temperatura de cada cámara
-    1 hilo de inferencia           resultados, anotado e iluminación
+    2 hilos de inferencia          resultados, anotado e iluminación
     SystemMonitor (en su hilo)     CPU, GPU, RAM, disco, temperaturas y red
     servidor HTTP de video         su `status`, sus clientes y sus URLs
     servidor Modbus TCP + RTU      su `status` por transporte, y el datastore que se
@@ -45,6 +45,11 @@ Qué mirar:
     mira.** En «Video crudo» el motor no gasta una pasada de overlay: el `annotate_gate`
     que recibe está atado al combo. Pasar a «Video anotado» y ver aparecer las cajas, las
     máscaras y el panel de resumen del mock.
+  - **«Cinta entrada» la miran dos pipelines y el anotado no parpadea.** `pipeline_1`
+    infiere cada 0.5 s con máscaras y `pipeline_3` —otra clase, `demo_person`, con su
+    propio mock— cada 0.1 s con cajas sin máscara. En «Video anotado» las dos capas tienen
+    que verse juntas y quietas en cada frame; sin el composer, cinco de cada seis frames
+    llevarían sólo las cajas de `pipeline_3`. Las otras cámaras tienen un solo pipeline.
   - **El selector de foco** deja una cámara sola y en grande, y permite saltar directo a
     otra sin volver a la grilla; la primera opción vuelve a mostrarlas todas.
   - **La barra lateral se colapsa** con la tira de la izquierda, que queda visible.
@@ -118,6 +123,7 @@ import random
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -138,9 +144,12 @@ from PySide6.QtWidgets import QApplication                               # noqa:
 from system.camera.capture_thread import CaptureThread                   # noqa: E402
 from system.config_manager import ConfigManager                          # noqa: E402
 from system.formats import camera_health, com_status, system_status       # noqa: E402
+from system.inference import pipeline_factory                            # noqa: E402
+from system.inference.abstract_pipeline import AbstractPipeline          # noqa: E402
+from system.inference.composer import FrameComposer                      # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
 from system.inference.hooks import build_hooks                           # noqa: E402
-from system.inference.pipeline import Pipeline                           # noqa: E402
+from system.inference.pipeline_factory import create_pipeline           # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
@@ -173,6 +182,24 @@ _HEARTBEAT_MAX = 65535           # el registro es uint16: el contador da la vuel
 # lee su PLC y no tiene por qué traer todo lo que esto mide.
 _REGISTER_NAMES = frozenset(reg.name for reg in REGISTERS)
 _SERVER_STOP_TIMEOUT_S = 5.0     # espera al hilo del servidor Modbus al cerrar
+
+
+class _PersonDemoPipeline(AbstractPipeline):
+    """
+    Segundo proceso sobre la misma cámara, con su propio modelo mock: `model_3`.
+
+    Es el `type: demo_person` del config de al lado. En un fork la clase va en
+    `pipeline.py` y se registra con una línea en la fábrica; acá se registra a mano para no
+    agregarle al template un pipeline que ninguna instalación corre.
+    """
+
+    model_slots = ("model_3",)
+
+    def _run(self, frame_bgr, camera_slot):
+        return self._run_stage("model_3", frame_bgr)
+
+
+pipeline_factory._PIPELINE_CLASSES["demo_person"] = _PersonDemoPipeline
 
 _GPIO_INPUT_COUNT = 4
 _GPIO_OUTPUT_COUNT = 4
@@ -365,7 +392,7 @@ class _DemoApp(QObject):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config, Pipeline(config, pipeline_slot),
+                config, create_pipeline(config, pipeline_slot),
                 classifier=hooks.classifier,
                 analyzer=hooks.analyzer,
                 annotator=hooks.annotator,
@@ -373,6 +400,12 @@ class _DemoApp(QObject):
             )
             engine.result_ready.connect(self._on_result_ready)
             self._engines.append(engine)
+        # Un solo anotado por cámara con los overlays de todos sus pipelines, como en
+        # `main.py`: `camera_1` entra a dos, cada uno a su ritmo.
+        self._composer = FrameComposer({
+            engine.pipeline_slot: float(config.get(
+                f"inference.pipelines.{engine.pipeline_slot}.interval_s", 0.0) or 0.0)
+            for engine in self._engines})
 
         # ── Captura ──────────────────────────────────────────────────────────
         for camera_slot in (config.get("cameras", {}) or {}):
@@ -454,7 +487,8 @@ class _DemoApp(QObject):
             self._grid.update_frame(frame_bgr, camera_slot)
         self._http_video.push_raw(camera_slot, frame_bgr)
         for engine in self._engines:
-            engine.push_frame(frame_bgr, camera_slot)
+            if engine.has_camera(camera_slot):
+                engine.push_frame(frame_bgr, camera_slot)
 
     @Slot(object, str)
     def _on_camera_status(self, status: dict, camera_slot: str):
@@ -477,9 +511,14 @@ class _DemoApp(QObject):
         )
         if result.annotated_bgr is None:
             return
+        shown_bgr = self._composer.compose(
+            result, result.annotated_bgr, time.monotonic(),
+            {engine.pipeline_slot: engine for engine in self._engines})
+        if shown_bgr is None:
+            return
         if self._grid.mode == MODE_ANNOTATED:
-            self._grid.update_frame(result.annotated_bgr, result.camera_slot)
-        self._http_video.push_annotated(result.camera_slot, result.annotated_bgr)
+            self._grid.update_frame(shown_bgr, result.camera_slot)
+        self._http_video.push_annotated(result.camera_slot, shown_bgr)
 
     def _is_annotated_watched(self, camera_slot: str) -> bool:
         """

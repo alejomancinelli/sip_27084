@@ -36,8 +36,8 @@ para que los dos consumidores, que comparten el orden, sigan diciendo lo mismo.
 
 Los umbrales salen de `process.dark_background_threshold`, y es esta clase la que los lee:
 la arman igual la app y la corrida de imágenes sueltas (`offline.py`), con
-`Pipeline(config, pipeline_slot)`, y leerlos acá es lo que hace que las dos midan con el
-mismo umbral. Un test los pasa ya leídos por `dark_background_threshold` y se arma con tres
+`create_pipeline(config, pipeline_slot)` de `pipeline_factory.py` —que la registra como
+`default`—, y leerlos acá es lo que hace que las dos midan con el mismo umbral. Un test los pasa ya leídos por `dark_background_threshold` y se arma con tres
 números y sin archivo.
 
 **Las clases de esta cinta están en el código, no en el config.** De cada nombre sale el de

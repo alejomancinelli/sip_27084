@@ -2,7 +2,8 @@
 Tests del driver Sentech: la reconexión del thread de captura.
 
 No hay cámara ni StApi de verdad: se reemplaza el módulo `st` por un doble y se corre
-`_grab_loop` directamente. Lo que se verifica es la máquina de reintentos, que es donde
+`_grab_loop` directamente. El doble se instala con `raising=False` porque sin stapipy
+instalado el driver no define `st`, y la suite corre igual en un equipo sin la SDK. Lo que se verifica es la máquina de reintentos, que es donde
 estaba el bug — el resto del driver es la SDK y no se puede afirmar sin hardware.
 """
 
@@ -68,7 +69,8 @@ def system(monkeypatch):
     stub = _System()
     monkeypatch.setattr(st_driver, "st",
                         type("_St", (), {"initialize": staticmethod(lambda: None),
-                                         "create_system": staticmethod(lambda: stub)}))
+                                         "create_system": staticmethod(lambda: stub)}),
+                        raising=False)
     monkeypatch.setattr(st_driver, "_RETRY_DELAY_S", 0)
     return stub
 
@@ -384,7 +386,8 @@ class TestCameraParams:
         monkeypatch.setattr(st_driver, "st",
                             type("_St", (), {"PyIFloat": _Accessor,
                                              "PyIEnumeration": _Accessor,
-                                             "PyIInteger": _Accessor}))
+                                             "PyIInteger": _Accessor}),
+                            raising=False)
         return _Nodemap()
 
     def _apply(self, nodemap, acquisition: dict):
@@ -453,7 +456,8 @@ class TestTheSessionIsAlwaysReleased:
                             type("_St", (), {"PyIFloat": _Accessor,
                                              "PyIEnumeration": _Accessor,
                                              "PyIInteger": _Accessor,
-                                             "EGCCallbackType": None}))
+                                             "EGCCallbackType": None}),
+                            raising=False)
         made = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
         made._grab_active = True
         return made

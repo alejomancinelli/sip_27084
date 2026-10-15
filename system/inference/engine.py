@@ -161,6 +161,17 @@ class InferenceThread(QThread):
         return self._cached(key, lambda: tuple(
             str(slot) for slot in (self._config.get(key, []) or [])))
 
+    def has_camera(self, camera_slot: str) -> bool:
+        """
+        True si esa cámara entra a este pipeline. Sin lista declarada, entran todas.
+
+        Barata y sin avisos: es para quien reparte frames entre varios motores y le
+        pregunta a cada uno antes de empujar. `push_frame` descarta igual un frame ajeno,
+        pero lo avisa, porque ahí sí es un error de cableado.
+        """
+        camera_slots = self.camera_slots
+        return not camera_slots or camera_slot in camera_slots
+
     def push_frame(self, frame_bgr: np.ndarray | None, camera_slot: str, *,
                    ignore_interval: bool = False):
         """
@@ -214,6 +225,47 @@ class InferenceThread(QThread):
         conecta después no tiene nada que ver, y no es que llegue tarde: nunca se dibujó.
         """
         return self._annotate(result, respect_gate=False)
+
+    def draw_onto(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """
+        Dibuja in-place el resultado de este pipeline sobre el anotado de otro.
+
+        Es para la cámara que miran varios pipelines: el frame lo pone uno y los demás
+        dibujan encima su ROI, sus detecciones y el annotator, con las mismas opciones que
+        su propio anotado. Corre en el hilo del que llama y no pasa por el gate: quien la
+        llama ya tiene un anotado, así que alguien está mirando.
+
+        Tres cosas que `annotate()` hace y esto no:
+          - **No ajusta el lienzo.** Ya viene ajustado para mirar por el motor que lo
+            dibujó; otra pasada lo aclararía dos veces.
+          - **No dibuja la hora.** Es del frame, no de cada resultado: la pone una vez quien
+            arma el frame, al final, con `draw_timestamp()`.
+          - **No dibuja nada con `crop_to_roi`.** El lienzo es el recorte de otro pipeline y
+            las coordenadas de éste no tienen por qué caer adentro.
+        """
+        if not self._setting("inference.overlay.enabled", True):
+            return
+        options = self._cached("overlay_options", self._read_overlay_options)
+        if options.crop_to_roi:
+            return
+        try:
+            if options.draw_roi and result.roi_px is not None:
+                overlay.draw_roi(canvas_bgr, result.roi_px)
+            overlay.draw_detections(canvas_bgr, result.detections, options=options)
+        except Exception as e:
+            self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
+            return
+        self._run_annotator(canvas_bgr, result)
+
+    def draw_timestamp(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """Dibuja in-place la hora del resultado, si el config la pide. Va última: no se tapa."""
+        options = self._cached("overlay_options", self._read_overlay_options)
+        if not options.draw_timestamp:
+            return
+        try:
+            overlay.draw_timestamp(canvas_bgr, result.timestamp_s, options=options)
+        except Exception as e:
+            self._warn_throttled("timestamp", f"No se pudo dibujar la hora: {e}.")
 
     def process(self, frame_bgr: np.ndarray, camera_slot: str) -> InferenceResult:
         """
@@ -314,9 +366,8 @@ class InferenceThread(QThread):
     # ── Cola de frames ───────────────────────────────────────────────────────
 
     def _accepts(self, camera_slot: str) -> bool:
-        """True si esa cámara está asignada al pipeline. Sin lista declarada, todas."""
-        camera_slots = self.camera_slots
-        if not camera_slots or camera_slot in camera_slots:
+        """`has_camera()`, avisando si no: un frame ajeno que llega acá es un cableado mal hecho."""
+        if self.has_camera(camera_slot):
             return True
         self._warn_throttled(
             f"foreign_{camera_slot}",
@@ -525,18 +576,19 @@ class InferenceThread(QThread):
         if annotated is None:
             return None
 
-        if self._annotator is not None:
-            name = getattr(self._annotator, "__name__", repr(self._annotator))
-            try:
-                self._annotator(annotated, result)
-            except Exception as e:
-                self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
-        if options.draw_timestamp:
-            try:
-                overlay.draw_timestamp(annotated, result.timestamp_s, options=options)
-            except Exception as e:
-                self._warn_throttled("timestamp", f"No se pudo dibujar la hora: {e}.")
+        self._run_annotator(annotated, result)
+        self.draw_timestamp(annotated, result)
         return annotated
+
+    def _run_annotator(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """El annotator del proyecto. Uno que falla deja lo que alcanzó a dibujar."""
+        if self._annotator is None:
+            return
+        name = getattr(self._annotator, "__name__", repr(self._annotator))
+        try:
+            self._annotator(canvas_bgr, result)
+        except Exception as e:
+            self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
 
     # ── Lectura de config ────────────────────────────────────────────────────
 

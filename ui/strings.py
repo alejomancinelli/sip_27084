@@ -348,6 +348,7 @@ _TEXTS: dict[str, dict[str, str]] = {
     "inf_max_side":           {"es": "Redimensionar (px, 0 = nativo):",
                                "en": "Resize (px, 0 = native):",
                                "pt": "Redimensionar (px, 0 = nativo):"},
+    "inf_pipeline_type":      {"es": "Tipo:",          "en": "Type:",         "pt": "Tipo:"},
     "inf_pipeline_cameras":   {"es": "Cámaras (coma, vacío = todas):",
                                "en": "Cameras (comma, empty = all):",
                                "pt": "Câmeras (vírgula, vazio = todas):"},

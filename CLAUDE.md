@@ -63,6 +63,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
         gpio_status.py        las dos palabras de GPIO: entradas leídas y salidas comandadas
+        pipeline_status.py    una palabra por pipeline: ¿sus números son una medición?
         system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
@@ -78,8 +79,11 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
           null_model.py       lo que devuelve la fábrica ante una config inválida
         abstract_pipeline.py  maquinaria de las etapas: las crea, las carga y las cronometra
         pipeline.py           DEL PROYECTO — una etapa: el segmentador de la cinta
+        pipeline_factory.py   único archivo que conoce esas clases; `type` elige una por slot
+        null_pipeline.py      lo que devuelve la fábrica ante un `type` no registrado
         result.py             nivel 1 — Detection e InferenceResult, el dato que cruza
         overlay.py            nivel 1 — dibujado del resultado; también lo lee la UI
+        composer.py           nivel 1 — un anotado por cámara con los overlays de sus pipelines
         annotations.py        DEL PROYECTO — el rectángulo de cinta y el panel
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
         rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
@@ -197,8 +201,10 @@ Son punteros: el contrato vive en el archivo, no acá.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
   etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. `_run()`
   recibe `(frame_bgr, camera_slot)`: el pipeline **sí** sabe de qué cámara viene el frame y
-  el modelo no, así que lo calibrado por montaje entra ahí. El pipeline concreto es
-  `system/inference/pipeline.py`.
+  el modelo no, así que lo calibrado por montaje entra ahí. Los pipelines concretos están en
+  `system/inference/pipeline.py`, y qué clase corre cada slot lo dice
+  `inference.pipelines.<slot>.type`, que resuelve `pipeline_factory.py`: sin `type`, el
+  `default`.
 - **Resultado de inferencia** — `system/inference/result.py`: los campos de
   `Detection` e `InferenceResult`, el reparto entre `detections`, `labels` y `metrics`,
   el vocabulario de `invalid_reason` y qué significa `is_valid`. Es el objeto que
@@ -318,7 +324,8 @@ siguen vienen del template.
   envoltorio de framework y se reusa entre proyectos; el pipeline es código del fork.
 - **El umbral de fondo oscuro lo lee el pipeline del config, no se lo pasa nadie.** La app
   y la corrida de imágenes sueltas (`offline.py`, maquinaria) arman el pipeline igual, con
-  `Pipeline(config, pipeline_slot)`; si el umbral entrara por un argumento que sólo pasa
+  `create_pipeline(config, pipeline_slot)`, que con `type: default` instancia el `Pipeline`
+  de la cinta; si el umbral entrara por un argumento que sólo pasa
   `main.py`, una imagen suelta mediría sin refinar y daría distinto que la línea, sin que
   nada lo dijera. El argumento `dark_background_threshold` queda para los tests y para
   `manual_test/belt`, que lo apaga con `--no-refine`.
@@ -422,8 +429,9 @@ siguen vienen del template.
   distintos son dos hilos y sí corren en paralelo.
 - **El orden de las etapas de un pipeline es código, no configuración.** Vive en
   `system/inference/pipeline.py` porque encadenar dos modelos es lógica del proceso:
-  qué recorta el segundo, qué hace con lo que encontró el primero. Del config salen de
-  dónde se carga cada modelo y qué cámaras entran a cada pipeline.
+  qué recorta el segundo, qué hace con lo que encontró el primero. Del config salen qué
+  clase corre cada slot, de dónde se carga cada modelo y qué cámaras entran a cada
+  pipeline.
 - La confianza se juzga en dos niveles y son de dueños distintos: el modelo descarta
   la detección por debajo de su `min_confidence_pct` —bajo a propósito cuando hay que
   contar cientos de objetos—, y el pipeline marca el resultado completo como no
@@ -454,6 +462,37 @@ siguen vienen del template.
   inferencia lo dibuja `overlay`, que es genérico; las referencias de la planta —un
   límite de carga, una zona— son annotators de `annotations.py` que el motor corre
   después, y su geometría va al config porque cambia con cada montaje.
+- **Una cámara que miran varios pipelines muestra un solo anotado, con todas las capas.**
+  Mostrar cada anotado tal como llega hace parpadear el overlay de cada uno —personas cada
+  100 ms y grano cada 500 ms dan cinco frames de uno por cada uno del otro—. Lo decide
+  `system/inference/composer.py`: el frame lo pone el resultado más nuevo de la cámara, y
+  encima van los demás pipelines con su último resultado, dibujados por su propio motor
+  (`draw_onto()`) y descartados pasado su tiempo de vigencia, para que uno caído no quede
+  congelado en pantalla. Uno más viejo que el último mostrado —un ciclo, con el instante
+  de su representativo— no pone el frame: el video no salta para atrás. El dataset sigue
+  guardando el anotado propio de cada pipeline, porque su JSON trae sólo esas detecciones.
+  Una cámara sin ningún resultado vigente —todos sus pipelines cortados o caídos— se ve en
+  vivo en vez de congelada en el último anotado; la vigencia mira también el tiempo real
+  entre resultados, así que un modelo lento no la hace parpadear entre anotado y vivo.
+  Con `crop_to_roi` no se combina: el lienzo es el recorte de uno y el ROI de los otros no
+  tiene por qué caer adentro.
+- **Una señal de la planta corta los frames de una cámara a un pipeline, no el pipeline.**
+  Es la compuerta de frames: la declara el fork en `_build_frame_gates()` de `main.py`
+  —`gate(camera_slot, signals) -> bool`— y el template no declara ninguna. Es por cámara
+  porque un pipeline cubre varias y cada una puede tener su propia señal —tres
+  plataformas, tres señales de volteo—, y no es `enabled` porque ese es config: se guarda
+  en el archivo y apaga todas las cámaras. Cortar los frames y no el hilo deja el modelo
+  cargado, así que al abrirse el frame siguiente ya se infiere. Se consulta en los dos
+  caminos del frame: en el hilo de captura para los pipelines sin ciclo y en el de la GUI,
+  antes de pedir el permiso del scheduler, para los que tienen. Por eso recibe
+  `FrameSignals`, una foto inmutable que `main.py` **reemplaza entera y nunca modifica**:
+  un hilo de captura la lee sin lock y ve la vieja o la nueva, nunca mitad de cada una.
+  Va en `main.py` y no en `hooks.py` porque lee el estado vivo de la planta, que la corrida
+  de imágenes sueltas no tiene. Mientras está cerrada, los registros del pipeline quedan
+  con su último valor, su overlay se va del anotado en el frame siguiente —el composer lo
+  olvida, no espera a que venza— y el bit 6 de su palabra lo dice: la señal no siempre es
+  del PLC, y sin el bit una pausa se lee como un pipeline sano. Así un veredicto como el
+  del grano aparece sólo mientras el proceso corre.
 - **Un veredicto del frame no es una detección ni una métrica.** Lo que dice una
   clasificación de la imagen entera —el estado de la cinta— viaja en `labels`, que es
   texto: no tiene forma ni posición, y si tiene que llegar al PLC lo traduce a bit el
@@ -678,7 +717,9 @@ siguen vienen del template.
   cableado publica los registros de salud y, del dict del analyzer, las claves que existen
   como registro; una que no existe no se publica y se avisa una vez. Así el nombre de la
   métrica es el contrato con el integrador y no hay una tabla de traducción que mantener.
-  Dos cámaras que publican la misma métrica se pisan: ahí el nombre lleva el slot adelante.
+  Las métricas se guardan por par (cámara, pipeline), y dos pares que publican la misma se
+  pisan en el registro —se avisa una vez, con los dos pares—: ahí el nombre lleva el slot
+  adelante.
 - **El latido no espera al hardware.** La primera lectura del monitor de sistema bloquea
   unos segundos, así que el ciclo de registros publica el heartbeat y las palabras de
   estado desde el primer tick y agrega las métricas de hardware cuando llegan: un PLC que
@@ -741,7 +782,9 @@ describe qué se mide en esta cinta, es de este proyecto.**
   maquinaria y se cross-portean como el resto; la lista está en «Lo que ya volvió» de
   `docs/template_divergences.md`.
 - **De `main.py` se completó el bloque marcado**: el contexto del dataset y el widget del
-  monitor —que es la grilla de cámaras, sin widget propio—. El analyzer y los annotators,
+  monitor —que es la grilla de cámaras, sin widget propio—. El tercer método del bloque,
+  `_build_frame_gates()`, queda vacío como en el template: la cinta no tiene una señal de
+  planta que corte los frames. El analyzer y los annotators,
   que antes también estaban ahí, son de `hooks.py` desde que la corrida de imágenes sueltas
   los usa igual que la app.
 - **`main.py` diverge además fuera de ese bloque**, y es lo que hay que mirar al
@@ -797,6 +840,10 @@ La tabla completa, archivo por archivo, está en `README.md`.
 - **De la licencia falta la mitad que no es código**: la clave pública real, que la genera
   el repositorio de firma al compilar, y compilar. Sin eso el estado es `unlicensed_build` y
   no se restringe nada. El diseño completo está en `.claude/plans/licensing.md`.
+- **La palabra de estado del pipeline no tiene dirección.** El template la arma por slot
+  (`formats/pipeline_status.py`) y el cableado publica `pipeline_1_state_bitfield` si el mapa
+  tiene esa fila; el de este equipo no la tiene, así que no llega al PLC. Agregarla es una
+  fila en `register_map.yaml` —91-97 están libres— y una decisión con el integrador.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
 - **El ground truth de esta cinta.** El template ya trae las dos piezas —la cámara

@@ -2,7 +2,7 @@
 
 Generado por `python ci/suite_index.py` desde `test/`. No editar a mano: se regenera, y el hook de commit avisa si quedó desactualizado.
 
-**68 archivos, 377 grupos, 1865 funciones de test.** pytest informa más casos porque cuenta cada parametrización por separado.
+**71 archivos, 395 grupos, 1974 funciones de test.** pytest informa más casos porque cuenta cada parametrización por separado.
 
 Cómo se corre (desde la raíz, con el intérprete del venv):
 
@@ -14,13 +14,13 @@ Cómo se corre (desde la raíz, con el intérprete del venv):
 
 | Carpeta | Archivos | Tests |
 |---|---:|---:|
-| [test/](#test) | 6 | 280 |
+| [test/](#test) | 6 | 320 |
 | [test/build/](#testbuild) | 2 | 43 |
 | [test/camera/](#testcamera) | 3 | 151 |
 | [test/ci/](#testci) | 2 | 22 |
-| [test/formats/](#testformats) | 4 | 75 |
+| [test/formats/](#testformats) | 5 | 90 |
 | [test/image_collector/](#testimage_collector) | 2 | 77 |
-| [test/inference/](#testinference) | 11 | 300 |
+| [test/inference/](#testinference) | 13 | 350 |
 | [test/inference/models/](#testinferencemodels) | 5 | 120 |
 | [test/license/](#testlicense) | 8 | 138 |
 | [test/modbus/](#testmodbus) | 3 | 138 |
@@ -28,7 +28,7 @@ Cómo se corre (desde la raíz, con el intérprete del venv):
 | [test/telemetry/backends/](#testtelemetrybackends) | 3 | 85 |
 | [test/tools/camera/](#testtoolscamera) | 5 | 119 |
 | [test/tools/image/](#testtoolsimage) | 2 | 43 |
-| [test/ui/](#testui) | 8 | 61 |
+| [test/ui/](#testui) | 8 | 65 |
 | [test/video/](#testvideo) | 3 | 182 |
 
 ## test/
@@ -188,7 +188,7 @@ Tests del controlador de GPIO: lectura del config, modo simulado, comando de sal
 
 </details>
 
-### [test_main.py](../test/test_main.py) — 77 tests
+### [test_main.py](../test/test_main.py) — 117 tests
 
 Tests del cableado: la salida del proceso y el manejo de señales.
 
@@ -200,7 +200,13 @@ Tests del cableado: la salida del proceso y el manejo de señales.
 | `TestInterruptSignals` |  | 3 |
 | `TestModbusServerWiring` | Que el motivo por el que el mapa no cargó llegue al servidor. | 3 |
 | `TestInferenceFields` | Los fields de un punto de telemetría de inferencia. | 14 |
-| `TestFramePath` | El frame de cámara no pasa entero por la GUI: la inferencia y el video crudo lo toman en el hilo de captura, y la GUI recibe sólo el último de cada cámara cuando puede. | 7 |
+| `TestFramePath` | El frame de cámara no pasa entero por la GUI: la inferencia y el video crudo lo toman en el hilo de captura, y la GUI recibe sólo el último de cada cámara cuando puede. | 8 |
+| `TestEngines` | Un hilo por pipeline habilitado y licenciado, con la clase que pide su `type`. | 6 |
+| `TestMetricRegisters` | Las métricas se guardan por par (cámara, pipeline), no por cámara. | 3 |
+| `TestPipelineWords` | Una palabra por pipeline del config: el que no corre dice por qué. | 9 |
+| `TestMergedAnnotated` | Una cámara que miran varios pipelines muestra un solo anotado, con todas las capas. | 4 |
+| `TestFrameGates` | Una señal de la planta corta los frames de una cámara a un pipeline, y sólo a ése. | 12 |
+| `TestGatedOverlay` | El overlay de un proceso cortado se va en el acto, y una cámara sin nada se ve en vivo. | 5 |
 | `TestDatasetGating` | Con la recolección apagada, o sin esa cámara, el resultado no se serializa: corre por frame en la GUI. | 3 |
 | `TestHourlyMeans` | Lo que entra a las ventanas de la hora con cada tick, y cómo se publica. | 7 |
 | `TestLensInterval` |  | 4 |
@@ -250,12 +256,58 @@ Tests del cableado: la salida del proceso y el manejo de señales.
   - `test_confidence_only_averages_the_reliable_ones`
 - `TestFramePath`
   - `test_an_uncycled_engine_gets_the_frame_in_the_capture_thread`
+  - `test_an_engine_only_gets_its_own_cameras`
   - `test_a_cycled_engine_waits_for_the_gui`
   - `test_the_raw_stream_gets_the_frame_only_with_clients`
   - `test_the_gui_is_notified_once_while_a_frame_waits`
   - `test_the_gui_takes_the_latest_frame`
   - `test_after_the_gui_takes_it_the_next_frame_notifies_again`
   - `test_each_camera_has_its_own_mailbox`
+- `TestEngines`
+  - `test_each_slot_gets_the_class_its_type_declares`
+  - `test_two_slots_of_the_same_type_get_their_own_engine`
+  - `test_a_disabled_pipeline_gets_no_engine`
+  - `test_an_unlicensed_feature_gets_no_engine`
+  - `test_an_unlicensed_pipeline_is_remembered_for_its_status_word`
+  - `test_each_result_records_whether_its_pair_was_valid`
+- `TestMetricRegisters`
+  - `test_two_pipelines_on_one_camera_keep_their_own_metrics`
+  - `test_two_pairs_publishing_the_same_metric_are_warned_once`
+  - `test_one_pair_per_metric_is_not_warned`
+- `TestPipelineWords`
+  - `test_a_healthy_pipeline_is_zero`
+  - `test_an_unlicensed_pipeline_says_so`
+  - `test_a_disabled_pipeline_says_so`
+  - `test_a_mock_pipeline_is_marked_synthetic`
+  - `test_an_invalid_last_result_on_any_camera_is_reported`
+  - `test_another_pipeline_invalid_result_is_not_counted`
+  - `test_every_declared_pipeline_gets_its_word`
+  - `test_without_a_row_in_the_map_nothing_is_published`
+  - `test_the_words_go_out_while_the_license_is_not_valid`
+- `TestMergedAnnotated`
+  - `test_one_pipeline_per_camera_shows_the_engine_frame_unchanged`
+  - `test_two_pipelines_on_one_camera_show_one_merged_frame`
+  - `test_an_older_result_is_not_shown`
+  - `test_the_dataset_gets_each_pipeline_own_annotated_frame`
+- `TestFrameGates`
+  - `test_the_template_declares_no_gates`
+  - `test_a_closed_gate_stops_that_camera_for_that_pipeline_only`
+  - `test_the_gate_receives_the_camera_and_the_current_inputs`
+  - `test_new_inputs_replace_the_snapshot_instead_of_changing_it`
+  - `test_the_snapshot_cannot_be_modified`
+  - `test_a_gated_cycled_pipeline_takes_no_permit`
+  - `test_an_open_gate_on_a_cycled_pipeline_takes_the_permit`
+  - `test_a_failing_gate_lets_frames_through_and_warns_once`
+  - `test_the_last_decision_feeds_the_pipeline_word`
+  - `test_a_reopened_gate_clears_the_bit`
+  - `test_a_gate_on_a_cycled_pipeline_is_warned_at_startup`
+  - `test_a_gate_for_a_pipeline_without_thread_is_warned_at_startup`
+- `TestGatedOverlay`
+  - `test_closing_the_gate_drops_the_overlay_on_the_next_frame`
+  - `test_a_camera_with_nothing_fresh_shows_the_live_frame`
+  - `test_nobody_watching_means_nothing_is_pushed`
+  - `test_a_fresh_result_keeps_the_annotated_frame`
+  - `test_a_result_that_arrives_after_the_gate_closed_is_not_shown`
 - `TestDatasetGating`
   - `test_nothing_is_built_with_the_collector_off`
   - `test_the_result_goes_to_the_dataset_with_the_collector_on`
@@ -1006,6 +1058,39 @@ Tests de las dos palabras de GPIO: estado por canal, bits de falla de lectura y 
 
 </details>
 
+### [test_pipeline_status.py](../test/formats/test_pipeline_status.py) — 15 tests
+
+Tests de la palabra de estado de un pipeline: con todos los bits en 0 sus números son una medición, y cualquier bit dice por qué no.
+
+| Grupo | Tests |
+|---|---:|
+| `TestBitLayout` | 3 |
+| `TestPack` | 8 |
+| `TestDescribe` | 4 |
+
+<details><summary>Tests</summary>
+
+- `TestBitLayout`
+  - `test_bits_are_distinct`
+  - `test_word_mask_covers_exactly_the_used_bits`
+  - `test_every_bit_has_a_description`
+- `TestPack`
+  - `test_everything_fine_is_zero`
+  - `test_each_affirmative_input_is_negated`
+  - `test_synthetic_sets_its_bit`
+  - `test_a_closed_gate_sets_its_bit`
+  - `test_flags_accumulate`
+  - `test_word_stays_inside_the_mask`
+  - `test_is_keyword_only`
+  - `test_every_flag_is_required`
+- `TestDescribe`
+  - `test_zero_is_ok`
+  - `test_lists_the_active_bits`
+  - `test_unknown_bit_reports_the_raw_word`
+  - `test_every_bit_describes_itself`
+
+</details>
+
 ### [test_system_status.py](../test/formats/test_system_status.py) — 16 tests
 
 Tests de la palabra de estado del sistema: con cualquier bit en 1 las mediciones de proceso no son aptas para control.
@@ -1290,13 +1375,57 @@ Tests de los annotators del proyecto: el rectángulo de cinta por cámara, el pa
 
 </details>
 
-### [test_engine.py](../test/inference/test_engine.py) — 82 tests
+### [test_composer.py](../test/inference/test_composer.py) — 24 tests
+
+Tests del composer: qué resultado pone el frame de una cámara y qué overlays van encima.
+
+| Grupo | Qué prueba | Tests |
+|---|---|---:|
+| `TestDriving` |  | 5 |
+| `TestOthers` |  | 7 |
+| `TestCompose` |  | 5 |
+| `TestFreshness` | Qué sigue vigente en una cámara, y qué se olvida en el acto. | 7 |
+
+<details><summary>Tests</summary>
+
+- `TestDriving`
+  - `test_the_first_result_of_a_camera_drives`
+  - `test_a_newer_result_drives`
+  - `test_an_older_result_does_not_drive`
+  - `test_an_older_result_still_shows_up_on_the_next_frame`
+  - `test_each_camera_has_its_own_clock`
+- `TestOthers`
+  - `test_it_excludes_the_own_pipeline`
+  - `test_it_excludes_other_cameras`
+  - `test_it_keeps_only_the_latest_result_of_each_pipeline`
+  - `test_a_stale_result_is_dropped`
+  - `test_a_short_interval_has_a_floor`
+  - `test_new_intervals_keep_what_was_stored`
+  - `test_the_stored_result_has_no_frames`
+- `TestCompose`
+  - `test_with_one_pipeline_the_engine_frame_goes_out_unchanged`
+  - `test_a_result_that_does_not_drive_shows_nothing`
+  - `test_the_others_are_drawn_and_the_timestamp_goes_last`
+  - `test_the_own_annotated_frame_is_not_modified`
+  - `test_a_pipeline_without_painter_is_skipped`
+- `TestFreshness`
+  - `test_a_camera_with_a_recent_result_has_something_fresh`
+  - `test_a_camera_whose_results_expired_has_nothing_fresh`
+  - `test_another_camera_does_not_count`
+  - `test_a_forgotten_pair_stops_being_drawn_at_once`
+  - `test_forgetting_keeps_the_other_pipelines`
+  - `test_a_slow_pipeline_stays_fresh_between_its_results`
+  - `test_a_pause_after_forgetting_is_not_taken_as_the_period`
+
+</details>
+
+### [test_engine.py](../test/inference/test_engine.py) — 94 tests
 
 Tests del hilo de inferencia: fan-in de varias cámaras, always-fresh por cámara, recorte del ROI, compuertas de validez, analyzer inyectado y parada limpia.
 
 | Grupo | Qué prueba | Tests |
 |---|---|---:|
-| `TestConstruction` |  | 4 |
+| `TestConstruction` |  | 7 |
 | `TestQueue` |  | 10 |
 | `TestConfigCache` | El config se lee una vez, no por frame: cada `get` es un lock global y una copia. | 2 |
 | `TestRoiAndIllumination` |  | 7 |
@@ -1306,6 +1435,7 @@ Tests del hilo de inferencia: fan-in de varias cámaras, always-fresh por cámar
 | `TestLabels` |  | 4 |
 | `TestAnalyzer` |  | 5 |
 | `TestAnnotation` |  | 13 |
+| `TestDrawOnto` | El overlay de un pipeline encima del anotado de otro: lo que arma el combinado. | 9 |
 | `TestLifecycle` |  | 5 |
 | `TestSynchronousProcess` | `process()` corre el ciclo del hilo sobre un frame suelto, sin arrancarlo. | 6 |
 
@@ -1314,6 +1444,9 @@ Tests del hilo de inferencia: fan-in de varias cámaras, always-fresh por cámar
 - `TestConstruction`
   - `test_the_slot_comes_from_the_pipeline`
   - `test_cameras_are_read_from_its_own_section`
+  - `test_it_has_the_cameras_it_declares`
+  - `test_without_a_list_it_has_every_camera`
+  - `test_asking_for_a_foreign_camera_does_not_warn`
   - `test_status_is_available_before_starting`
   - `test_status_reports_the_models_of_the_pipeline`
 - `TestQueue`
@@ -1392,6 +1525,16 @@ Tests del hilo de inferencia: fan-in de varias cámaras, always-fresh por cámar
   - `test_a_failing_annotator_keeps_the_standard_frame`
   - `test_the_annotator_also_sees_invalid_results`
   - `test_the_gate_receives_the_camera_slot`
+- `TestDrawOnto`
+  - `test_it_draws_the_boxes_on_the_canvas`
+  - `test_it_draws_the_roi`
+  - `test_it_runs_the_annotator`
+  - `test_it_draws_no_timestamp`
+  - `test_it_does_not_adjust_the_canvas`
+  - `test_with_crop_to_roi_it_draws_nothing`
+  - `test_with_the_overlay_off_it_draws_nothing`
+  - `test_the_timestamp_is_drawn_on_request`
+  - `test_the_timestamp_obeys_the_config`
 - `TestLifecycle`
   - `test_the_thread_loads_and_unloads_the_pipeline`
   - `test_it_stops_with_frames_still_queued`
@@ -1474,16 +1617,17 @@ Tests de la cuenta del proceso: reparto por clase contado por unión, los dos de
 
 </details>
 
-### [test_offline.py](../test/inference/test_offline.py) — 14 tests
+### [test_offline.py](../test/inference/test_offline.py) — 16 tests
 
 Tests del runner offline: los pipelines del config corridos sobre una imagen suelta.
 
-| Grupo | Tests |
-|---|---:|
-| `TestPipelines` | 7 |
-| `TestLoading` | 3 |
-| `TestPreprocessor` | 2 |
-| `TestHooks` | 2 |
+| Grupo | Qué prueba | Tests |
+|---|---|---:|
+| `TestPipelines` |  | 7 |
+| `TestPipelineClass` | Cada slot corre la clase de su `type`, igual que en la app: la arma la fábrica. | 2 |
+| `TestLoading` |  | 3 |
+| `TestPreprocessor` |  | 2 |
+| `TestHooks` | El runner usa los hooks de `build_hooks()`, los mismos que la app. | 2 |
 
 <details><summary>Tests</summary>
 
@@ -1495,6 +1639,9 @@ Tests del runner offline: los pipelines del config corridos sobre una imagen sue
   - `test_a_disabled_pipeline_is_not_built`
   - `test_a_pipeline_only_takes_its_own_cameras`
   - `test_a_camera_no_pipeline_takes_gives_no_results`
+- `TestPipelineClass`
+  - `test_each_slot_runs_the_class_its_type_declares`
+  - `test_an_unregistered_type_runs_nothing_in_its_place`
 - `TestLoading`
   - `test_without_loading_the_result_says_there_is_no_model`
   - `test_unloading_leaves_the_pipelines_without_model`
@@ -1504,7 +1651,7 @@ Tests del runner offline: los pipelines del config corridos sobre una imagen sue
   - `test_an_image_that_is_already_a_reference_frame_skips_it`
 - `TestHooks`
   - `test_the_project_analyzer_computes_the_metrics`
-  - `test_the_project_annotator_draws_its_references`
+  - `test_the_project_annotator_draws_on_the_annotated_frame`
 
 </details>
 
@@ -1636,6 +1783,34 @@ Tests de la maquinaria del pipeline: carga de las etapas por slot, tiempos por e
   - `test_a_model_with_the_classes_swapped_does_not_load`
   - `test_a_model_with_other_classes_does_not_load`
   - `test_a_model_that_declares_nothing_loads`
+
+</details>
+
+### [test_pipeline_factory.py](../test/inference/test_pipeline_factory.py) — 12 tests
+
+Tests de la fábrica de pipelines y del NullPipeline.
+
+| Grupo | Qué prueba | Tests |
+|---|---|---:|
+| `TestPipelineFactory` |  | 8 |
+| `TestUnregisteredType` | Un `type` mal escrito no puede caer en el default: correría un proceso que nadie eligió. | 4 |
+
+<details><summary>Tests</summary>
+
+- `TestPipelineFactory`
+  - `test_without_type_the_slot_runs_the_default`
+  - `test_an_empty_type_runs_the_default`
+  - `test_a_registered_type_gives_its_class`
+  - `test_the_type_is_normalized`
+  - `test_the_pipeline_keeps_its_slot_as_identity`
+  - `test_two_slots_of_the_same_type_are_two_instances`
+  - `test_the_default_is_registered`
+  - `test_the_factory_does_not_load_the_models`
+- `TestUnregisteredType`
+  - `test_it_gives_a_null_pipeline`
+  - `test_the_null_pipeline_never_loads`
+  - `test_the_null_pipeline_detects_nothing`
+  - `test_the_null_pipeline_keeps_its_slot`
 
 </details>
 
@@ -3088,7 +3263,7 @@ Tests de los constructores del formulario: la tarjeta de una pestaña no depende
 
 </details>
 
-### [test_inference_tab.py](../test/ui/test_inference_tab.py) — 9 tests
+### [test_inference_tab.py](../test/ui/test_inference_tab.py) — 13 tests
 
 Tests de la pestaña de inferencia: qué secciones edita y que `load()`/`save()` no deformen lo que hay en el config.
 
@@ -3097,6 +3272,7 @@ Tests de la pestaña de inferencia: qué secciones edita y que `load()`/`save()`
 | `TestOverlay` | 1 |
 | `TestClassNames` | 2 |
 | `TestRoundTrip` | 1 |
+| `TestPipelineType` | 4 |
 | `TestSections` | 3 |
 | `TestSlotTabs` | 2 |
 
@@ -3109,6 +3285,11 @@ Tests de la pestaña de inferencia: qué secciones edita y que `load()`/`save()`
   - `test_save_does_not_add_them_when_the_config_leaves_them_out`
 - `TestRoundTrip`
   - `test_the_model_and_the_pipeline_go_back_as_they_were`
+- `TestPipelineType`
+  - `test_without_type_it_shows_and_saves_the_default`
+  - `test_a_registered_type_goes_back_as_it_was`
+  - `test_an_unregistered_type_is_not_lost_on_save`
+  - `test_the_combo_offers_the_registered_types`
 - `TestSections`
   - `test_models_and_pipelines_have_a_bar_each_models_first`
   - `test_one_sub_tab_per_slot`

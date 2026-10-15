@@ -12,8 +12,9 @@ lo ancho, la barra muestra flechas en vez de cortar rótulos (`build_slot_tabs()
 `system/inference/pipeline.py`, porque encadenar dos modelos es lógica del proceso. De
 esta pestaña sale de dónde se carga cada modelo y qué cámaras entran a cada pipeline.
 
-Los tipos de modelo que ofrece el combo salen de `REGISTERED_MODELS`, así que un fork
-que registra su modelo en la fábrica lo ve acá sin tocar la UI.
+Los tipos de modelo y de pipeline que ofrecen los combos salen de `REGISTERED_MODELS` y
+`REGISTERED_PIPELINES`, así que un fork que registra el suyo en la fábrica lo ve acá sin
+tocar la UI.
 
 Tres cosas de la sección no están en esta pantalla, y no es un olvido:
 
@@ -39,6 +40,7 @@ from collections.abc import Callable, Iterable
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from system.inference.models.model_factory import REGISTERED_MODELS
+from system.inference.pipeline_factory import DEFAULT_PIPELINE, REGISTERED_PIPELINES
 
 from system.config_manager import ConfigManager
 
@@ -109,6 +111,8 @@ class InferenceTab(AbstractConfigTab):
         page, form = build_form_page()
         fields = {
             "enabled": add_check_row(form, tr("field_enabled"), True),
+            "type": add_form_row(form, tr("inf_pipeline_type"),
+                                 build_combo_box(list(REGISTERED_PIPELINES), "")),
             "cameras": add_form_row(form, tr("inf_pipeline_cameras"),
                                     build_line_edit("", "camera_1, camera_2")),
             "interval_s": add_form_row(
@@ -153,6 +157,8 @@ class InferenceTab(AbstractConfigTab):
         for pipeline_slot, fields in self._pipeline_forms.items():
             prefix = f"inference.pipelines.{pipeline_slot}"
             fields["enabled"].setChecked(bool(self._config.get(f"{prefix}.enabled", True)))
+            set_combo_value(fields["type"],
+                            self._config.get(f"{prefix}.type") or DEFAULT_PIPELINE)
             fields["cameras"].setText(join_list(self._config.get(f"{prefix}.cameras", [])))
             fields["interval_s"].setValue(float(self._config.get(f"{prefix}.interval_s", 0.0)))
             fields["min_detections"].setValue(
@@ -182,6 +188,7 @@ class InferenceTab(AbstractConfigTab):
         for pipeline_slot, fields in self._pipeline_forms.items():
             prefix = f"inference.pipelines.{pipeline_slot}"
             self._config.set(f"{prefix}.enabled", fields["enabled"].isChecked())
+            self._config.set(f"{prefix}.type", fields["type"].currentText())
             self._config.set(f"{prefix}.cameras", split_list(fields["cameras"].text()))
             self._config.set(f"{prefix}.interval_s", fields["interval_s"].value())
             self._config.set(f"{prefix}.min_detections", fields["min_detections"].value())

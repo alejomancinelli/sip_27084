@@ -146,6 +146,9 @@ inference:
   pipelines:
     pipeline_1:
       enabled: true
+      # Qué clase corre este slot: ver REGISTERED_PIPELINES en pipeline_factory.py.
+      # `default` es el `Pipeline` de la cinta, de system/inference/pipeline.py.
+      type: default
       feature: core
       cameras: [camera_1]
       interval_s: 0.0           # período mínimo entre frames de una misma cámara; 0 = todos

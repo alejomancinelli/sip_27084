@@ -2,8 +2,8 @@
 Inferencia fuera de la app: los pipelines del config, corridos sobre imágenes sueltas.
 
 Maquinaria genérica: reutilizable entre proyectos. Arma cada pipeline habilitado igual que
-la app —el mismo `Pipeline`, el mismo preprocessor y los mismos hooks del proyecto— y corre
-el ciclo del motor con `InferenceThread.process()`, sin arrancar el hilo. El resultado de
+la app —la misma clase por slot, de `create_pipeline()`, el mismo preprocessor y los mismos
+hooks del proyecto— y corre el ciclo del motor con `InferenceThread.process()`, sin arrancar el hilo. El resultado de
 una imagen es el que saldría en vivo si esa imagen llegara de la cámara: no hay un segundo
 camino de inferencia que pueda divergir del primero.
 
@@ -33,7 +33,8 @@ from system.logger import logger
 
 from .engine import InferenceThread
 from .hooks import build_hooks
-from .pipeline import Pipeline
+from .abstract_pipeline import AbstractPipeline
+from .pipeline_factory import create_pipeline
 from .preprocessing import build_preprocessor
 from .result import InferenceResult
 
@@ -50,13 +51,13 @@ class OfflineRunner:
         preprocessor = build_preprocessor(config) if apply_preprocessor else None
         hooks = build_hooks(config)
 
-        self._pipelines: list[Pipeline] = []
+        self._pipelines: list[AbstractPipeline] = []
         self._engines: list[InferenceThread] = []
         for pipeline_slot in (config.get("inference.pipelines", {}) or {}):
             if not config.get(f"inference.pipelines.{pipeline_slot}.enabled", True):
                 logger.info(f"[Offline] {pipeline_slot} deshabilitado: no se corre.")
                 continue
-            pipeline = Pipeline(config, pipeline_slot)
+            pipeline = create_pipeline(config, pipeline_slot)
             # Sin `annotate_gate`: acá el anotado se dibuja siempre, porque es lo que se
             # viene a mirar.
             self._engines.append(InferenceThread(
@@ -94,4 +95,4 @@ class OfflineRunner:
         devuelve lista vacía.
         """
         return [engine.process(frame_bgr, camera_slot) for engine in self._engines
-                if not engine.camera_slots or camera_slot in engine.camera_slots]
+                if engine.has_camera(camera_slot)]

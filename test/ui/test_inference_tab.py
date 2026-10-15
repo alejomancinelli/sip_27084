@@ -14,6 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt                                           # noqa: E402
 from PySide6.QtWidgets import QApplication, QTabWidget                  # noqa: E402
 
+from system.inference.pipeline_factory import (                         # noqa: E402
+    DEFAULT_PIPELINE, REGISTERED_PIPELINES,
+)
 from ui.views.config.inference_tab import InferenceTab                  # noqa: E402
 from ui.widgets.form import build_slot_tabs                             # noqa: E402
 
@@ -83,6 +86,30 @@ class TestRoundTrip:
         assert config.written[f"inference.models.{_MODEL}.type"] == "mock"
         assert config.written[f"inference.pipelines.{_PIPELINE}.cameras"] == ["camera_1"]
         assert config.written[f"inference.pipelines.{_PIPELINE}.frames_per_cycle"] == 3
+
+
+class TestPipelineType:
+    def test_without_type_it_shows_and_saves_the_default(self):
+        tab, config = _tab()
+        tab.save()
+        assert config.written[f"inference.pipelines.{_PIPELINE}.type"] == DEFAULT_PIPELINE
+
+    def test_a_registered_type_goes_back_as_it_was(self):
+        tab, config = _tab(**{f"inference.pipelines.{_PIPELINE}.type": DEFAULT_PIPELINE})
+        tab.save()
+        assert config.written[f"inference.pipelines.{_PIPELINE}.type"] == DEFAULT_PIPELINE
+
+    def test_an_unregistered_type_is_not_lost_on_save(self):
+        """Abrir la pestaña y guardar no puede cambiar qué clase corre el slot."""
+        tab, config = _tab(**{f"inference.pipelines.{_PIPELINE}.type": "person"})
+        tab.save()
+        assert config.written[f"inference.pipelines.{_PIPELINE}.type"] == "person"
+
+    def test_the_combo_offers_the_registered_types(self):
+        tab, _ = _tab()
+        combo = tab._pipeline_forms[_PIPELINE]["type"]
+        options = [combo.itemText(i) for i in range(combo.count())]
+        assert options == list(REGISTERED_PIPELINES)
 
 
 def _tab_labels(tabs: QTabWidget) -> list[str]:

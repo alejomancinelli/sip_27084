@@ -98,23 +98,10 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 
 Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva.
 
-### En el PR #41
+Hoy no hay ninguna pendiente: lo último que nació acá volvió con el PR #41.
 
-Salieron del merge del template del 2026-10-14 y están en el
-[PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41), abierto, junto
-con el arreglo de C4 y el de los tests de Sentech —que acá siguen dando 18 errores en
-Windows hasta traerlo: sin stapipy en el venv, sus fixtures no encuentran `st_driver.st`—.
-Las dos de la tabla son de cableado y no tocan la maquinaria de `system/`.
-
-| Archivo | Qué se cambió | Por qué es genérico |
-|---|---|---|
-| `main.py` (fuera del bloque del fork) | El motor recibe `canvas_adjust=self._for_display`: el anotado se ve con el mismo ajuste de `video.display` que el stream crudo | El motor del template ya acepta `canvas_adjust`, pero su `main.py` no lo pasa, así que con un gamma de visualización el anotado se ve más oscuro que el crudo |
-| `manual_test/ui/ui_app.py` | Arma los hooks con `build_hooks(config)` y el pipeline con `Pipeline(config, slot)`, como `main.py` y `offline.py` | El del template le pasa `compute_metrics` a mano: la demo de la UI mide con otro analyzer y sin los annotators del fork |
-
-Sin tests propios: la primera es una línea de cableado y la segunda una prueba manual.
-
-**En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
-la de acá. Si no la trae, conservarla y abrir el PR.
+**En un merge:** si el template ya trae una de las anotadas, quedarse con la del template y
+borrarla de acá. Si no la trae, conservarla y abrir el PR.
 
 ### Lo que ya volvió
 
@@ -167,6 +154,21 @@ Por ese último, el analyzer y los annotators de la cinta se mudaron de `main.py
 `system/inference/hooks.py`, y `BeltPipeline` pasó a llamarse `Pipeline` y a leer el umbral
 de fondo oscuro del config, que es como lo arma `offline.py`.
 
+Con el [PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41), traído en
+el merge del 2026-10-15, volvió el `canvas_adjust=self._for_display` del motor en `main.py`,
+los hooks y el pipeline del proyecto en `manual_test/ui/ui_app.py`, el `test_offline.py` que
+arma los slots desde `Pipeline.model_slots` —el arreglo de C4— y los tests de Sentech que
+corren sin stapipy. Desde ahí `test_offline.py` es idéntico al del template.
+
+En el mismo merge entró el [#42](https://github.com/alejomancinelli/cv_projects_template/pull/42),
+que no nació acá: varios pipelines por cámara. Los pipelines se instancian por
+`inference.pipelines.<slot>.type` con `pipeline_factory.py` —el `Pipeline` de la cinta es el
+`default`—, el anotado de una cámara lo combina `composer.py`, las métricas se guardan por
+par (cámara, pipeline), y llegaron la palabra de estado por pipeline
+(`formats/pipeline_status.py`) y las compuertas de frames (`_build_frame_gates()` de
+`main.py`). Esta cinta no usa ninguna compuerta, y la palabra del pipeline no llega al PLC
+porque el mapa no tiene la fila `pipeline_1_state_bitfield`.
+
 ---
 
 ## C. Límites mal puestos — arreglar, no conservar
@@ -215,24 +217,15 @@ después de `offset_detections`.
 
 ---
 
-### C4. La prueba de la corrida offline nombra cosas del template
+### ~~C4~~ — resuelto en el template
 
-**Dónde:** `test/inference/test_offline.py` y `manual_test/offline_inference/config.yaml`,
-que llegaron con el PR #40.
-
-`offline.py` es maquinaria, pero su test y el config de su prueba manual declaran el modelo
-en el slot `model_1` —el de `Pipeline.model_slots` del template— y prueban los hooks del
-template —`max_load_y_px`, `detection_count`—. Con el pipeline de la cinta, que pide el slot
-`segmenter`, el modelo no carga y seis tests fallan. Acá se adaptaron al slot y a los hooks
-de la cinta, así que en el próximo merge van a chocar.
-
-**El arreglo** es del template y está en el
-[PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41): el test arma los
-slots desde `Pipeline.model_slots` y prueba los hooks con espías en lugar de suponer qué
-métricas salen, y el `README.md` del template suma el config de
-`manual_test/offline_inference/` y `test_hooks.py` a lo que el fork reescribe. Cuando se
-traiga, quedarse con el `test_offline.py` del template —pasa sin editar contra esta cinta—
-y conservar el config de la prueba manual de acá.
+`test/inference/test_offline.py` y `manual_test/offline_inference/config.yaml` llegaron con
+el PR #40 nombrando el slot `model_1` y los hooks del template, y acá se habían adaptado a
+la cinta. El [PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41) hizo
+que el test arme los slots desde `Pipeline.model_slots` y pruebe los hooks con espías, así
+que el del template pasa sin editar contra esta cinta y es el que quedó. El config de la
+prueba manual sigue siendo de acá —slot `segmenter` y `process:` de la cinta—, y el
+`README.md` ya lo lista entre lo que el proyecto reescribe.
 
 ## Dónde más hay divergencia, sin ser ninguna de las tres
 
