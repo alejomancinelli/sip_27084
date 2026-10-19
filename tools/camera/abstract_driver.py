@@ -51,7 +51,9 @@ class AbstractCameraDriver(ABC):
     def disconnect(self):
         """Libera los recursos crudos del host."""
 
-    def interrupt(self):
+    # Vacío a propósito y no abstracto: un driver cuyo connect() vuelve enseguida no lo
+    # redefine.
+    def interrupt(self):  # noqa: B027
         """
         Pide, desde otro hilo, que un `connect()` en curso vuelva cuanto antes.
 
@@ -111,7 +113,8 @@ class AbstractCameraDriver(ABC):
         self._capture_enabled = enabled
         self._apply_capture_enabled()
 
-    def _apply_capture_enabled(self):
+    # Vacío a propósito y no abstracto: el hook es opcional para cada driver.
+    def _apply_capture_enabled(self):  # noqa: B027
         """
         Hook para cortar o retomar la captura en el hardware.
 

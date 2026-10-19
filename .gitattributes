@@ -5,5 +5,9 @@
 # copied from Windows: with CRLF, bash fails on the shebang line.
 *.sh text eol=lf
 
+# Git hooks are shell scripts without an extension, and Git for Windows runs them
+# through bash too: same reason, LF on every platform.
+.githooks/* text eol=lf
+
 # Windows PowerShell 5.1 expects CRLF.
 *.ps1 text eol=crlf

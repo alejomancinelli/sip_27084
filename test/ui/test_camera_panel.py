@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication                              # noqa: 
 from ui.widgets.camera_panel import CameraPanel                         # noqa: E402
 
 _SLOT = "camera_1"
-_FRAME_SHAPE = (1536, 2048, 3)      # un 3 MP, como el de la cinta
+_FRAME_SHAPE = (1536, 2048, 3)      # un sensor de 3 MP
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -29,7 +29,7 @@ def qt_app():
 
 class _MockConfig:
     def get(self, key: str, default: object = None) -> object:
-        return {f"cameras.{_SLOT}.name": "Cinta"}.get(key, default)
+        return {f"cameras.{_SLOT}.name": "Entrada"}.get(key, default)
 
 
 def _frame() -> np.ndarray:

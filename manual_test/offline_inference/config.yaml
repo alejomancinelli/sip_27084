@@ -1,0 +1,61 @@
+# Config de la prueba manual run_images.py. NO es el config de la app: sólo trae lo que
+# la corrida de imágenes sueltas lee —las cámaras, `process:` y la inferencia—, con el
+# modelo mock para que ande en cualquier equipo sin GPU ni pesos.
+#
+# Para correr el modelo del fork no se copia nada acá: se le pasa el config de la app con
+# `--config config.yaml`, que es la prueba que importa.
+#
+# Las rutas relativas (`path` de un modelo) se anclan a la raíz del repo, no a esta carpeta.
+
+cameras:
+  # La cámara decide el ROI, el mínimo de iluminación y el preprocessor de la imagen. Las
+  # imágenes sueltas de `images/` son de la primera cámara o de la que diga `--camera`, y
+  # las de `images/camera_2/` son de camera_2.
+  camera_1:
+    roi:
+      enabled: false
+      x_px: 0
+      y_px: 0
+      width_px: 0
+      height_px: 0
+    illumination_min: 5         # brillo medio mínimo del ROI 0–100; por debajo, `dark_frame`
+    calibration:
+      camera_matrix: []         # 3x3; [] = sin corrección de lente
+      dist_coeffs: []
+    image_adjust:
+      brightness_factor: 1.0    # x0.1–x5.0; 1.0 = sin cambio
+      clahe_clip: 0.0
+
+process:
+  # Lo leen system/inference/hooks.py y el pipeline, igual que en la app.
+  belt_roi_px: {}               # {camera_1: {x_px: .., y_px: .., width_px: .., height_px: ..}}
+  dark_background_threshold: {} # {camera_1: {desmenuzado: 60, pellet: 0}}; {} = sin refinar
+
+inference:
+  overlay:
+    enabled: true
+    draw_boxes: true
+    draw_masks: true
+    draw_labels: true
+    draw_roi: true
+    draw_timestamp: false       # la hora de la corrida, no la de la imagen: no informa nada
+    font_scale: 0.6
+    thickness: 2
+    class_colors_bgr: []
+  pipelines:
+    pipeline_1:
+      enabled: true
+      cameras: []               # [] = todas
+      min_detections: 0
+      min_result_confidence_pct: 0
+  models:
+    # El slot es el que declara `Pipeline.model_slots` de la cinta. Sin `class_names`: las
+    # clases salen de `CLASS_NAMES` de system/inference/pipeline.py.
+    segmenter:
+      type: mock
+      path: ''
+      min_confidence_pct: 50
+      max_side_px: 0
+      params:
+        detection_count: 3
+        with_masks: true

@@ -1,0 +1,27 @@
+# Configuración de las herramientas de desarrollo: pytest y Ruff.
+#
+# No empaqueta nada: la app no se instala con pip, corre desde el árbol o desde el
+# binario de build/. Los comandos que usan esta configuración están en ci/check.py.
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+# -ra resume al final lo saltado y lo fallido; --strict-markers convierte un marker mal
+# escrito en un error en vez de un test que nunca se filtra.
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    # Lo emiten los bindings SWIG de pypylon al importarse, y no es nada que el proyecto
+    # pueda arreglar: sin el filtro tapa los warnings propios, uno por worker de xdist.
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["packages", "data", "models"]
+
+[tool.ruff.lint]
+# Sólo lint, sin formatter ni orden de imports: los forks cross-portean la maquinaria,
+# y reformatear el template haría chocar cada línea en el próximo merge.
+#   F  pyflakes: nombres sin definir, imports y variables sin usar
+#   E9 errores de sintaxis
+#   B  bugbear: patrones que suelen ser un bug
+select = ["F", "E9", "B"]

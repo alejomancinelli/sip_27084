@@ -70,7 +70,7 @@ def main() -> int:
               "dejar afuera al cliente.")
 
     path = save_request(config, str(_REQUEST_PATH))
-    print(f"\n── Solicitud ──")
+    print("\n── Solicitud ──")
     print(f"  Escrita en {path}")
     print("  Mandarla al repositorio de firma para que emita el .lic.\n")
 

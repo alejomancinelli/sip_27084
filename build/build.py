@@ -260,7 +260,7 @@ def main() -> int:
         dist = os.path.join(out_dir, "main.dist")
         print(f"\n  {_size_mb(dist):.0f} MB en {_count(dist)} archivos, {elapsed / 60:.1f} min")
         dist_arg = f"{args.out}/main.dist"
-    print(f"\n  Ahora el entregable:")
+    print("\n  Ahora el entregable:")
     print(f"    {_shown([sys.executable, 'build/make_release.py', '--dist', dist_arg])}")
     return 0
 

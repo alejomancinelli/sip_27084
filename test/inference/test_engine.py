@@ -15,7 +15,8 @@ from PySide6.QtCore import Qt
 from system.inference.abstract_pipeline import AbstractPipeline
 from system.inference.engine import InferenceThread
 from system.inference.result import (REASON_DARK_FRAME, REASON_ERROR, REASON_FEW_DETECTIONS,
-                                     REASON_LOW_CONFIDENCE, REASON_NO_MODEL, Detection)
+                                     REASON_LOW_CONFIDENCE, REASON_NO_MODEL, Detection,
+                                     InferenceResult)
 
 _PIPELINE = "pipeline_1"
 _SLOT = "camera_1"
@@ -166,6 +167,22 @@ class TestConstruction:
     def test_cameras_are_read_from_its_own_section(self):
         config = _MockConfig(**{f"inference.pipelines.{_PIPELINE}.cameras": [_SLOT, _OTHER_SLOT]})
         assert _engine(_FakePipeline(), config).camera_slots == (_SLOT, _OTHER_SLOT)
+
+    def test_it_has_the_cameras_it_declares(self):
+        config = _MockConfig(**{f"inference.pipelines.{_PIPELINE}.cameras": [_SLOT]})
+        engine = _engine(_FakePipeline(), config)
+        assert engine.has_camera(_SLOT) is True
+        assert engine.has_camera(_OTHER_SLOT) is False
+
+    def test_without_a_list_it_has_every_camera(self):
+        assert _engine(_FakePipeline()).has_camera(_OTHER_SLOT) is True
+
+    def test_asking_for_a_foreign_camera_does_not_warn(self, caplog):
+        """Es la pregunta de quien reparte frames: el aviso es de `push_frame`."""
+        config = _MockConfig(**{f"inference.pipelines.{_PIPELINE}.cameras": [_SLOT]})
+        with caplog.at_level("WARNING"):
+            _engine(_FakePipeline(), config).has_camera(_OTHER_SLOT)
+        assert _OTHER_SLOT not in caplog.text
 
     def test_status_is_available_before_starting(self):
         status = _engine(_FakePipeline()).get_status()
@@ -707,6 +724,81 @@ class TestAnnotation:
         assert seen == [_SLOT]
 
 
+def _other_result(roi_px: tuple | None = None) -> InferenceResult:
+    """Resultado de otro pipeline, con una caja, para dibujarlo encima de un lienzo."""
+    return InferenceResult(
+        camera_slot=_SLOT, pipeline_slot="pipeline_2", roi_px=roi_px,
+        detections=[Detection(class_index=0, class_name="person", confidence_pct=90.0,
+                              bbox_px=(100, 100, 160, 180))])
+
+
+class TestDrawOnto:
+    """El overlay de un pipeline encima del anotado de otro: lo que arma el combinado."""
+
+    def test_it_draws_the_boxes_on_the_canvas(self):
+        canvas = _frame()
+        _engine(_FakePipeline()).draw_onto(canvas, _other_result())
+        assert not np.array_equal(canvas[100, 100:160], _frame()[100, 100:160])
+
+    def test_it_draws_the_roi(self):
+        canvas = _frame()
+        _engine(_FakePipeline()).draw_onto(canvas, _other_result(roi_px=(5, 5, 50, 50)))
+        assert not np.array_equal(canvas[5, 5:55], _frame()[5, 5:55])
+
+    def test_it_runs_the_annotator(self):
+        seen = []
+
+        def annotator(frame_bgr, result):
+            seen.append(result.pipeline_slot)
+            frame_bgr[0, 0] = (0, 0, 255)
+
+        canvas = _frame()
+        _engine(_FakePipeline(), annotator=annotator).draw_onto(canvas, _other_result())
+        assert seen == ["pipeline_2"]
+        assert tuple(canvas[0, 0]) == (0, 0, 255)
+
+    def test_it_draws_no_timestamp(self):
+        """La hora es del frame: la pone una vez quien lo arma, al final."""
+        canvas = _frame()
+        _engine(_FakePipeline()).draw_onto(canvas, _other_result())
+        assert tuple(canvas[-1, -1]) == (128, 128, 128)
+
+    def test_it_does_not_adjust_the_canvas(self):
+        """El lienzo ya viene ajustado para mirar: otra pasada lo aclararía dos veces."""
+        canvas = _frame()
+        engine = _engine(_FakePipeline(), canvas_adjust=lambda frame: np.full_like(frame, 255))
+        engine.draw_onto(canvas, _other_result())
+        assert tuple(canvas[0, 0]) == (128, 128, 128)
+
+    def test_with_crop_to_roi_it_draws_nothing(self):
+        """El lienzo es el recorte de otro pipeline: estas coordenadas no tienen por qué caer."""
+        calls = []
+        config = _MockConfig(**{"inference.overlay.crop_to_roi": True})
+        canvas = _frame()
+        engine = _engine(_FakePipeline(), config,
+                         annotator=lambda frame_bgr, result: calls.append(1))
+        engine.draw_onto(canvas, _other_result(roi_px=(5, 5, 50, 50)))
+        assert np.array_equal(canvas, _frame())
+        assert calls == []
+
+    def test_with_the_overlay_off_it_draws_nothing(self):
+        config = _MockConfig(**{"inference.overlay.enabled": False})
+        canvas = _frame()
+        _engine(_FakePipeline(), config).draw_onto(canvas, _other_result())
+        assert np.array_equal(canvas, _frame())
+
+    def test_the_timestamp_is_drawn_on_request(self):
+        canvas = _frame()
+        _engine(_FakePipeline()).draw_timestamp(canvas, _other_result())
+        assert tuple(int(c) for c in canvas[-1, -1]) == (0, 0, 0)
+
+    def test_the_timestamp_obeys_the_config(self):
+        config = _MockConfig(**{"inference.overlay.draw_timestamp": False})
+        canvas = _frame()
+        _engine(_FakePipeline(), config).draw_timestamp(canvas, _other_result())
+        assert np.array_equal(canvas, _frame())
+
+
 # ── Ciclo de vida ────────────────────────────────────────────────────────────
 
 class TestLifecycle:
@@ -740,3 +832,70 @@ class TestLifecycle:
     def test_the_inference_time_is_measured(self):
         result = _process_one(_engine(_FakePipeline(delay_s=0.02)), _frame())
         assert result.inference_time_ms >= 20
+
+
+# ── Corrida sincrónica ───────────────────────────────────────────────────────
+
+class TestSynchronousProcess:
+    """`process()` corre el ciclo del hilo sobre un frame suelto, sin arrancarlo."""
+
+    def test_it_returns_the_result_without_starting_the_thread(self):
+        engine = _engine(_FakePipeline([(0, 90.0, (0, 0, 10, 10))]))
+        result = engine.process(_frame(), _SLOT)
+        assert result.is_valid and result.detection_count == 1
+        assert engine.isRunning() is False
+
+    def test_it_runs_the_same_cycle_as_the_thread(self):
+        """ROI, analyzer y overlay incluidos: el resultado es el que saldría en vivo."""
+        # Sin hora ni panel: dibujan el instante y el tiempo de inferencia, que cambian
+        # entre dos corridas aunque el ciclo sea el mismo.
+        config = _MockConfig(**{
+            f"cameras.{_SLOT}.roi": {
+                "enabled": True, "x_px": 100, "y_px": 50, "width_px": 80, "height_px": 60},
+            "inference.overlay.draw_timestamp": False,
+            "inference.overlay.draw_summary": False,
+        })
+        live = _process_one(_engine(_FakePipeline([(0, 90.0, (10, 10, 20, 20))]), config,
+                                    analyzer=lambda result: {"count": result.detection_count}),
+                            _frame())
+        offline = _engine(_FakePipeline([(0, 90.0, (10, 10, 20, 20))]), config,
+                          analyzer=lambda result: {"count": result.detection_count}
+                          ).process(_frame(), _SLOT)
+
+        assert offline.roi_px == live.roi_px
+        assert offline.detections[0].bbox_px == live.detections[0].bbox_px
+        assert offline.metrics == live.metrics == {"count": 1}
+        np.testing.assert_array_equal(offline.annotated_bgr, live.annotated_bgr)
+
+    def test_it_does_not_emit_the_result(self):
+        engine = _engine(_FakePipeline())
+        collector = _Collector()
+        engine.result_ready.connect(collector.on_result, Qt.ConnectionType.DirectConnection)
+        engine.process(_frame(), _SLOT)
+        assert collector.count() == 0
+
+    def test_it_does_not_add_to_the_counters_of_the_thread(self):
+        engine = _engine(_FakePipeline(raises=True))
+        engine.process(_frame(), _SLOT)
+        status = engine.get_status()
+        assert (status["processed"], status["invalid"]) == (0, 0)
+        assert status["last_inference_time_ms"] == 0.0
+
+    def test_it_does_not_load_the_pipeline(self):
+        """Cargar es de quien construyó el pipeline; sin cargar sale como en vivo."""
+        pipeline = _FakePipeline(loaded=False)
+        result = _engine(pipeline).process(_frame(), _SLOT)
+        assert pipeline.load_calls == 0
+        assert result.invalid_reason == REASON_NO_MODEL
+
+    def test_it_refuses_to_run_while_the_thread_is_running(self):
+        pipeline = _FakePipeline()
+        engine = _engine(pipeline)
+        engine.start()
+        try:
+            assert _wait_until(lambda: pipeline.load_calls == 1)
+            with pytest.raises(RuntimeError):
+                engine.process(_frame(), _SLOT)
+        finally:
+            engine.requestInterruption()
+            assert engine.wait(_WAIT_TIMEOUT_MS)

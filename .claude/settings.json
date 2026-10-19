@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe ci/check.py *)",
+      "Bash(.venv/Scripts/python.exe ci/suite_index.py *)",
+      "Bash(.venv/Scripts/python.exe -m pytest *)",
+      "Bash(.venv/Scripts/python.exe -m ruff check *)",
+      "Bash(.venv/bin/python ci/check.py *)",
+      "Bash(.venv/bin/python ci/suite_index.py *)",
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(.venv/bin/python -m ruff check *)",
+      "PowerShell(.venv\\Scripts\\python.exe ci\\check.py *)",
+      "PowerShell(.venv\\Scripts\\python.exe ci/check.py *)",
+      "PowerShell(.venv\\Scripts\\python.exe ci\\suite_index.py *)",
+      "PowerShell(.venv\\Scripts\\python.exe ci/suite_index.py *)",
+      "PowerShell(.venv\\Scripts\\python.exe -m pytest *)",
+      "PowerShell(.venv\\Scripts\\python.exe -m ruff check *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff *)",
+      "PowerShell(git log *)"
+    ],
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "PowerShell(git commit *)",
+      "PowerShell(git push *)"
+    ],
+    "deny": [
+      "Read(./.env)"
+    ]
+  }
+}

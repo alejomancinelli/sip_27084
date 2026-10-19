@@ -37,8 +37,10 @@ cambiarlo se cambia ahí:
 | Color de algo que se dibuja | `ui/theme.py` (`get_palette`, `get_color`) | el widget lo pide en su `set_dark()` |
 | Color de una serie de gráfica | `ui/theme.py` (`SERIES_COLORS`) | `RealtimeChart(series_role="cpu")` |
 | Color de una detección | `system/inference/overlay.py` | **no es de la UI**: el frame llega anotado |
+| Estilo del anotado (máscaras, texto, grosor, paleta) | `inference.overlay` en `config.yaml` | **no se edita desde la UI**: ninguna pestaña lo muestra |
 | Texto que ve el operador | `ui/strings.py` | `tr("clave")`; nunca un literal |
 | Medida (ancho, alto, margen) | constante `_ALGO_PX` del módulo que la usa | si la usan dos módulos, va en `ui/widgets/form.py` |
+| Ancho de una pestaña | `_CARD_WIDTH_PX` en `ui/widgets/form.py` | uno solo para toda tarjeta centrada, en Configuración y en Diagnóstico: no se ajusta por pestaña |
 | Alto de una pestaña | no se declara: la envuelve un área con scroll | ver «Agregar una pestaña» |
 | Estado de un servicio | `ui/service_status.py` | `describe(service, status)` |
 | Estado de un chip | `ui/widgets/status_chip.py` (`CHIP_*`) | `chip.set_state(CHIP_OK)` |
@@ -296,6 +298,28 @@ la imagen.
 Un combo así se conecta por `currentIndexChanged` y no por `currentTextChanged`: el
 índice es lo que identifica la opción cuando el texto no la identifica.
 
+### Una sub-pestaña por slot
+
+Cuando una sección tiene slots —cámaras, modelos, pipelines—, cada slot es una
+sub-pestaña de una barra armada con `build_slot_tabs()`, y el formulario de cada una
+sale de `build_form_page()`. Así una pestaña con slots se ve igual en todas, y la barra
+se porta igual con muchos: con más slots de los que entran a lo ancho muestra flechas de
+desplazamiento y no corta ningún rótulo, porque un slot cortado a la mitad no se
+distingue de otro.
+
+Dos familias de slots no comparten barra. Inferencia tiene dos secciones, «Modelos» y
+«Pipelines», cada una con la suya, y los pipelines van debajo porque nombran modelos.
+
+```python
+box, form = build_group_box(tr("inf_box_models"))
+tabs = build_slot_tabs()
+for model_slot in self._config.get("inference.models", {}) or {}:
+    page, page_form = build_form_page()
+    ...                                   # add_form_row(page_form, ...)
+    tabs.addTab(page, model_slot)
+form.addRow(tabs)
+```
+
 ## Agregar una pestaña de diagnóstico
 
 Una pestaña de diagnóstico **muestra, no edita**: recibe lo que le empujan y no tiene
@@ -388,9 +412,9 @@ lo que el operador eligió en el selector.
 - **Los intrínsecos del lente** se muestran pero no se editan: una matriz 3x3 y hasta 14
   coeficientes no son un formulario, y equivocar un dígito ahí mueve todas las coordenadas
   del proyecto. Se editan en el `config.yaml`.
-- **Casi no hay tests de `ui/`.** La suite corre sin GUI y así se queda, con dos
-  excepciones que se ganaron el lugar: `theme.py`, que no necesita widgets, y la pestaña de
-  proceso, que sí los construye con la plataforma `offscreen` de Qt. Esa última está
-  testeada porque su forma de fallar es cara y silenciosa: abrir el panel y guardar sin
-  tocar nada tiene que dejar el `config.yaml` igual, y lo que se pierde cuando no lo deja
-  es la calibración del proceso.
+- **Pocos tests de `ui/`, y sólo los que se ganaron el lugar.** La suite corre sin ventana:
+  `theme.py` no necesita widgets, y el resto —las pestañas de proceso, sistema, inferencia
+  y dataset, el formulario, el panel de cámara y la tabla de logs— se construye con la
+  plataforma `offscreen` de Qt. Están porque su forma de fallar es cara y silenciosa: la
+  de la pestaña de proceso, por ejemplo, es que abrir el panel y guardar sin tocar nada
+  cambie el `config.yaml`, y lo que se pierde ahí es la calibración del proceso.

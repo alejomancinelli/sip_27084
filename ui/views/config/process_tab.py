@@ -29,14 +29,16 @@ guarda. Ver `ui/dialogs/roi_dialog.py`.
 """
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 from system.inference.pipeline import CLASS_NAMES
 
 from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
-from ui.widgets.form import add_form_row, add_hint_row, build_group_box, build_spin_box
+from ui.widgets.form import (
+    add_form_row, add_hint_row, build_group_box, build_slot_tabs, build_spin_box,
+)
 
 _MAX_FRAME_SIDE_PX = 8192
 _MAX_LUMA = 255              # el umbral se compara contra un nivel de gris de 8 bits
@@ -81,7 +83,7 @@ class ProcessTab(AbstractConfigTab):
             note.setWordWrap(True)
             layout.addWidget(note)
         else:
-            tabs = QTabWidget()
+            tabs = build_slot_tabs()
             for camera_slot in camera_slots:
                 form = _CameraProcessForm(self._config, camera_slot)
                 form.open_roi_requested.connect(self.open_roi_requested)

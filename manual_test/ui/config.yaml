@@ -1,3 +1,16 @@
+# Config de la prueba manual de la interfaz. NO es el de la app: lo lee sólo
+# `ui_app.py`, que está al lado, y el panel de configuración de la prueba escribe acá.
+#
+# Está poblado a propósito con los casos que hacen visible el comportamiento de la UI:
+# cuatro cámaras en tres estados distintos, tres pipelines —uno apagado, y dos de clases
+# distintas sobre la misma cámara—, tres modelos —uno con un tipo que la fábrica no
+# registra— y todas las secciones con
+# valores realistas para que las siete pestañas tengan algo que mostrar.
+#
+# OJO: guardar desde la pantalla reescribe este archivo y **se pierden estos
+# comentarios**, porque `ConfigManager.save()` vuelca el diccionario en memoria y el YAML
+# no los conserva. La copia comentada es la que está en git.
+
 project:
   client: Prueba Manual
   project_id: ui_demo
@@ -72,6 +85,17 @@ inference:
       min_detections: 0
       min_result_confidence_pct: 0
       frames_per_cycle: 1
+    pipeline_3:
+      # Un segundo proceso sobre `camera_1`, con otra clase de pipeline y su propio modelo:
+      # el anotado de esa cámara tiene que mostrar las dos capas juntas y sin parpadeo.
+      # `demo_person` lo registra `ui_app.py`, no la fábrica del template.
+      enabled: true
+      type: demo_person
+      cameras: [camera_1]
+      interval_s: 0.1           # cinco veces más seguido que pipeline_1
+      min_detections: 0
+      min_result_confidence_pct: 0
+      frames_per_cycle: 1
   models:
     segmenter:
       type: mock
@@ -88,8 +112,21 @@ inference:
       max_side_px: 1280
       class_names: []
       params: {}
+    model_3:
+      # El de pipeline_3: otras clases y otra cantidad, para que sus cajas no caigan
+      # encima de las de `segmenter`, y sin máscaras, para distinguir las dos capas.
+      type: mock
+      path: ''
+      min_confidence_pct: 0
+      max_side_px: 0
+      class_names: [persona]
+      params:
+        detection_count: 3
+        with_masks: false
+
 image_collector:
   enabled: false
+  cameras: []
   mode: on_demand
   interval_min_s: 60
   interval_max_s: 600

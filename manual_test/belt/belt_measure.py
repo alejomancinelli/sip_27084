@@ -56,11 +56,10 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from system.config_manager import ConfigManager                         # noqa: E402
 from system.inference import annotations, metrics, overlay              # noqa: E402
-from system.inference.pipeline import CLASS_NAMES, BeltPipeline         # noqa: E402
+from system.inference.pipeline import CLASS_NAMES, Pipeline             # noqa: E402
+from system.inference.preprocessing import build_preprocessor           # noqa: E402
 from system.inference.result import InferenceResult                     # noqa: E402
 from tools.camera.camera_factory import create_camera                   # noqa: E402
-from tools.image.enhance import build_image_adjust                      # noqa: E402
-from tools.image.undistort import build_undistorter                     # noqa: E402
 
 _CONFIG_PATH = Path(__file__).with_name("config.yaml")
 _WINDOW_NAME = "Cinta - medicion"
@@ -82,11 +81,11 @@ def main(argv: list | None = None) -> int:
         dark_background_threshold = {}
         print()
         print("Sin refinamiento: las máscaras salen como las da el modelo.")
-    pipeline = BeltPipeline(config, args.pipeline,
-                            dark_background_threshold=dark_background_threshold)
+    pipeline = Pipeline(config, args.pipeline,
+                        dark_background_threshold=dark_background_threshold)
     pipeline.load()
     _report_pipeline(pipeline)
-    preprocess = _build_preprocessor(config)
+    preprocess = build_preprocessor(config)
     print(f"Preprocessor: {preprocess.__name__ if preprocess else 'ninguno, se mide el crudo'}"
           f"{' (no se aplica a --frames: vienen ajustadas)' if args.adjusted else ''}")
     if not pipeline.is_loaded:
@@ -192,33 +191,7 @@ def _run_over_camera(args, config, camera_slot, pipeline, analyze, annotate,
 
 # ── Medición y presentación ──────────────────────────────────────────────────
 
-def _build_preprocessor(config: ConfigManager):
-    """
-    Corrector de lente y después ajuste de imagen, como los encadena `main.py`, o None.
-
-    Es lo que hace que este script mida el mismo frame que la app: sin esto el modelo y el
-    umbral de fondo oscuro verían el frame crudo, que no es el que mide el equipo.
-    """
-    camera_slots = tuple(config.get("cameras", {}) or {})
-    steps = [step for step in (
-        build_undistorter({slot: config.get(f"cameras.{slot}.calibration", {}) or {}
-                           for slot in camera_slots}),
-        build_image_adjust({slot: config.get(f"cameras.{slot}.image_adjust", {}) or {}
-                            for slot in camera_slots}),
-    ) if step is not None]
-    if not steps:
-        return None
-
-    def preprocess(frame_bgr: np.ndarray, camera_slot: str) -> np.ndarray:
-        for step in steps:
-            frame_bgr = step(frame_bgr, camera_slot)
-        return frame_bgr
-
-    preprocess.__name__ = " + ".join(getattr(step, "__name__", repr(step)) for step in steps)
-    return preprocess
-
-
-def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: BeltPipeline,
+def _measure(frame_bgr: np.ndarray, camera_slot: str, pipeline: Pipeline,
              analyze, preprocess=None) -> InferenceResult:
     """
     Un resultado completo, por el mismo camino que el motor: preprocessor, pipeline y
@@ -291,7 +264,7 @@ class _Diagnosis:
         print(f"      luma p5/p25/p50/p75/p95 = {percentiles}")
 
 
-def _report_pipeline(pipeline: BeltPipeline):
+def _report_pipeline(pipeline: Pipeline):
     """Qué cargó y con qué clases: es lo primero que hay que confirmar contra el `.engine`."""
     status = pipeline.get_status()
     print(f"\nPipeline '{status['pipeline_slot']}' - cargado: {status['loaded']}")

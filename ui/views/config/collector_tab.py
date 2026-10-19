@@ -2,7 +2,15 @@
 Pestaña de dataset: la sección `image_collector:`.
 
 `enabled` se prende y se apaga en caliente, pero el modo no: cambiarlo exige reiniciar
-el recolector, y la nota al pie lo dice donde se lo elige.
+la aplicación, y la nota al pie lo dice donde se lo elige.
+
+«A pedido» se ofrece sólo si algún pipeline tiene ciclo de medición: en ese modo guarda
+quien orquesta el ciclo, una vez por medición, y sin ciclo no guarda nunca. La regla de
+qué es tener ciclo es `has_measurement_cycle()` del scheduler, y no se re-deduce acá. Si
+el config ya dice `on_demand` sin ciclo, la opción se muestra igual con un aviso debajo:
+ocultarla y guardar cambiaría el modo en silencio. Se evalúa en `load()`, así que un
+`frames_per_cycle` cambiado en la pestaña de inferencia lo mueve recién al guardar, que
+es cuando el panel recarga.
 
 Con la recolección apagada no se edita nada más: los campos se atenúan como en las otras
 pestañas, porque un valor que se puede escribir mientras el subsistema está apagado
@@ -10,10 +18,18 @@ promete algo que no va a pasar.
 
 Los dos intervalos tienen una condición más: sólo hacen algo en modo `interval`, así que
 están habilitados únicamente cuando la recolección está prendida **y** el modo es ese.
+
+Las cámaras que se guardan son un checkbox por slot de `cameras:`. Todas marcadas guarda
+`image_collector.cameras: []`, que también incluye a las que se agreguen después; si no,
+la lista de las marcadas. Un slot de la lista que ya no está en `cameras:` vuelve al
+archivo tal cual. La última marcada no se puede desmarcar: la lista vacía significa
+todas, y no guardar ninguna es apagar la recolección.
 """
 
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QSignalBlocker
+from PySide6.QtWidgets import QCheckBox, QVBoxLayout, QWidget
 
+from system.camera.capture_scheduler import has_measurement_cycle
 from system.config_manager import ConfigManager
 
 from ui.strings import tr
@@ -49,6 +65,7 @@ class CollectorTab(AbstractConfigTab):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.addWidget(self._build_general_box())
+        layout.addWidget(self._build_cameras_box())
         layout.addWidget(self._build_dedup_box())
         layout.addStretch()
         self._wire_enabled()
@@ -58,12 +75,16 @@ class CollectorTab(AbstractConfigTab):
 
     def _build_general_box(self) -> QWidget:
         box, form = build_group_box(tr("col_box_general"))
+        self._general_form = form
+        self._has_cycle = True
         self._enabled = add_check_row(form, tr("field_enabled"), False)
         self._mode_combo = add_form_row(
             form, tr("col_mode"),
             build_value_combo_box({tr(key): value for key, value in _MODES.items()},
                                   _MODE_ON_DEMAND),
         )
+        self._no_cycle_warning = add_hint_row(form, tr("col_mode_no_cycle"))
+        self._no_cycle_warning.setObjectName("warningBanner")
         add_hint_row(form, tr("col_mode_note"))
         self._interval_min = add_form_row(
             form, tr("col_interval_min"), build_spin_box(1, _MAX_INTERVAL_S, 60)
@@ -80,6 +101,19 @@ class CollectorTab(AbstractConfigTab):
         self._save_original = add_check_row(form, tr("col_save_original"), True)
         self._save_annotated = add_check_row(form, tr("col_save_annotated"), False)
         self._save_json = add_check_row(form, tr("col_save_json"), True)
+        return box
+
+    def _build_cameras_box(self) -> QWidget:
+        box, form = build_group_box(tr("col_box_cameras"))
+        self._camera_checks: dict[str, QCheckBox] = {}
+        # Slots de la lista del config que no están en `cameras:`: no tienen checkbox y
+        # vuelven al archivo como estaban.
+        self._unlisted_cameras: list[str] = []
+        for camera_slot in (self._config.get("cameras", {}) or {}):
+            check = add_check_row(form, str(camera_slot), True)
+            check.toggled.connect(lambda checked, check=check: self._keep_one_checked(check))
+            self._camera_checks[str(camera_slot)] = check
+        add_hint_row(form, tr("col_cameras_note"))
         return box
 
     def _build_dedup_box(self) -> QWidget:
@@ -106,19 +140,19 @@ class CollectorTab(AbstractConfigTab):
             self._mode_combo, self._interval_min, self._interval_max,
             self._max_images, self._min_free_space,
             self._save_original, self._save_annotated, self._save_json,
-            self._dedup_enabled,
+            *self._camera_checks.values(), self._dedup_enabled,
         ])
         # Los intervalos dependen además del modo, y eso se resuelve después del toggle,
         # que es el que los deja habilitados sin mirar el modo.
         self._enabled.toggled.connect(self._refresh_interval_fields)
         self._mode_combo.currentIndexChanged.connect(self._refresh_interval_fields)
+        self._mode_combo.currentIndexChanged.connect(self._refresh_no_cycle_warning)
 
     # ── Contrato de la pestaña ───────────────────────────────────────────────
 
     def load(self):
         self._enabled.setChecked(bool(self._config.get("image_collector.enabled", False)))
-        set_combo_data(self._mode_combo,
-                       self._config.get("image_collector.mode", _MODE_ON_DEMAND))
+        self._load_mode()
         self._interval_min.setValue(int(self._config.get("image_collector.interval_min_s", 60)))
         self._interval_max.setValue(int(self._config.get("image_collector.interval_max_s", 600)))
         self._max_images.setValue(int(self._config.get("image_collector.max_images", 10000)))
@@ -134,6 +168,7 @@ class CollectorTab(AbstractConfigTab):
         self._save_json.setChecked(
             bool(self._config.get("image_collector.save_inference_json", True))
         )
+        self._load_cameras()
         self._dedup_enabled.setChecked(
             bool(self._config.get("image_collector.dedup.enabled", True))
         )
@@ -156,6 +191,7 @@ class CollectorTab(AbstractConfigTab):
         self._config.set("image_collector.save_original", self._save_original.isChecked())
         self._config.set("image_collector.save_annotated", self._save_annotated.isChecked())
         self._config.set("image_collector.save_inference_json", self._save_json.isChecked())
+        self._config.set("image_collector.cameras", self._get_selected_cameras())
         self._config.set("image_collector.dedup.enabled", self._dedup_enabled.isChecked())
         self._config.set("image_collector.dedup.history_len", self._history_len.value())
         self._config.set("image_collector.dedup.hamming_threshold", self._hamming.value())
@@ -168,3 +204,44 @@ class CollectorTab(AbstractConfigTab):
                      and self._mode_combo.currentData() == _MODE_INTERVAL)
         for spin in (self._interval_min, self._interval_max):
             spin.setEnabled(is_usable)
+
+    def _load_mode(self):
+        """Arma las opciones del modo según haya ciclo, y elige la del config."""
+        mode = self._config.get("image_collector.mode", _MODE_ON_DEMAND)
+        self._has_cycle = has_measurement_cycle(self._config)
+        with QSignalBlocker(self._mode_combo):
+            self._mode_combo.clear()
+            for key, value in _MODES.items():
+                if value == _MODE_ON_DEMAND and not self._has_cycle and mode != value:
+                    continue
+                self._mode_combo.addItem(tr(key), value)
+            set_combo_data(self._mode_combo, mode)
+        self._refresh_no_cycle_warning()
+
+    def _refresh_no_cycle_warning(self):
+        """El aviso, sólo con «A pedido» elegido y ningún pipeline con ciclo."""
+        is_useless = not self._has_cycle and self._mode_combo.currentData() == _MODE_ON_DEMAND
+        self._general_form.setRowVisible(self._no_cycle_warning, is_useless)
+
+    def _load_cameras(self):
+        """Marca las cámaras de la lista; vacía —o que no es lista— las marca todas."""
+        cameras = self._config.get("image_collector.cameras", []) or []
+        selected = [str(slot) for slot in cameras] if isinstance(cameras, (list, tuple)) else []
+        self._unlisted_cameras = [slot for slot in selected if slot not in self._camera_checks]
+        for camera_slot, check in self._camera_checks.items():
+            with QSignalBlocker(check):
+                check.setChecked(not selected or camera_slot in selected)
+
+    def _get_selected_cameras(self) -> list[str]:
+        """Lo que va a `image_collector.cameras`: [] con todas marcadas, si no la lista."""
+        checked = [slot for slot, check in self._camera_checks.items() if check.isChecked()]
+        if len(checked) == len(self._camera_checks):
+            return []
+        return checked + self._unlisted_cameras
+
+    def _keep_one_checked(self, check: QCheckBox):
+        """Vuelve a marcar la última cámara desmarcada: ninguna se guardaría como todas."""
+        if any(other.isChecked() for other in self._camera_checks.values()):
+            return
+        with QSignalBlocker(check):
+            check.setChecked(True)

@@ -338,11 +338,8 @@ _TEXTS: dict[str, dict[str, str]] = {
                                      "estourada e outra na sombra, e custa bem mais que a gama."},
 
     # ── Inferencia (configuración) ───────────────────────────────────────────
-    "inf_box_model":          {"es": "Modelo",         "en": "Model",         "pt": "Modelo"},
-    "inf_box_pipeline":       {"es": "Pipeline",       "en": "Pipeline",      "pt": "Pipeline"},
-    "inf_box_overlay":        {"es": "Anotado del resultado",
-                               "en": "Result overlay",
-                               "pt": "Anotação do resultado"},
+    "inf_box_models":         {"es": "Modelos",        "en": "Models",        "pt": "Modelos"},
+    "inf_box_pipelines":      {"es": "Pipelines",      "en": "Pipelines",     "pt": "Pipelines"},
     "inf_model_type":         {"es": "Tipo:",          "en": "Type:",         "pt": "Tipo:"},
     "inf_model_path":         {"es": "Pesos:",         "en": "Weights:",      "pt": "Pesos:"},
     "inf_min_confidence":     {"es": "Confianza mínima por detección (%):",
@@ -351,9 +348,7 @@ _TEXTS: dict[str, dict[str, str]] = {
     "inf_max_side":           {"es": "Redimensionar (px, 0 = nativo):",
                                "en": "Resize (px, 0 = native):",
                                "pt": "Redimensionar (px, 0 = nativo):"},
-    "inf_class_names":        {"es": "Nombres de clase:",
-                               "en": "Class names",
-                               "pt": "Nomes de classe"},
+    "inf_pipeline_type":      {"es": "Tipo:",          "en": "Type:",         "pt": "Tipo:"},
     "inf_pipeline_cameras":   {"es": "Cámaras (coma, vacío = todas):",
                                "en": "Cameras (comma, empty = all):",
                                "pt": "Câmeras (vírgula, vazio = todas):"},
@@ -366,19 +361,6 @@ _TEXTS: dict[str, dict[str, str]] = {
     "inf_min_result_conf":    {"es": "Confianza mínima del resultado (%):",
                                "en": "Minimum result confidence (%):",
                                "pt": "Confiança mínima do resultado (%):"},
-    "inf_draw_timestamp":     {"es": "Dibujar la hora","en": "Draw timestamp","pt": "Desenhar a hora"},
-    "inf_overlay_note":       {"es": "Las cajas, las máscaras, las etiquetas y el recuadro del ROI "
-                                     "van siempre: apagarlas deja un stream anotado que no muestra "
-                                     "nada. Sus claves siguen en el config.yaml por si un proyecto "
-                                     "necesita apagarlas.",
-                               "en": "Boxes, masks, labels and the ROI outline are always drawn: "
-                                     "turning them off leaves an annotated stream showing nothing. "
-                                     "Their keys remain in config.yaml in case a project needs to "
-                                     "disable them.",
-                               "pt": "As caixas, as máscaras, as etiquetas e o contorno do ROI vão "
-                                     "sempre: desligá-las deixa um stream anotado que não mostra "
-                                     "nada. Suas chaves seguem no config.yaml caso um projeto "
-                                     "precise desligá-las."},
     "inf_frames_per_cycle":   {"es": "Imágenes por medición:",
                                "en": "Frames per measurement:",
                                "pt": "Imagens por medição:"},
@@ -400,20 +382,6 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "pt": "Com 1 imagem por medição as outras três não fazem "
                                      "nada. Desligar a captura libera a rede, mas deixa o "
                                      "vídeo ao vivo sem imagem até a medição seguinte."},
-    "inf_crop_to_roi":        {"es": "Anotar sólo el recorte del ROI",
-                               "en": "Annotate only the ROI crop",
-                               "pt": "Anotar apenas o recorte do ROI"},
-    "inf_mask_style":         {"es": "Dibujo de la máscara:",
-                               "en": "Mask drawing:",   "pt": "Desenho da máscara:"},
-    "inf_mask_alpha":         {"es": "Opacidad del relleno:",
-                               "en": "Fill opacity:",   "pt": "Opacidade do preenchimento:"},
-    "inf_font_scale":         {"es": "Escala de fuente:",
-                               "en": "Font scale:",    "pt": "Escala da fonte:"},
-    "inf_font_scale_auto":    {"es": "automática",
-                               "en": "automatic",      "pt": "automática"},
-    "inf_thickness":          {"es": "Grosor de línea (px):",
-                               "en": "Line thickness (px):",
-                               "pt": "Espessura da linha (px):"},
 
     # ── Proceso (configuración) ──────────────────────────────────────────────
     "process_box_belt":       {"es": "Rectángulo de cinta",
@@ -512,15 +480,42 @@ _TEXTS: dict[str, dict[str, str]] = {
     "col_save_json":          {"es": "Guardar el JSON de inferencia",
                                "en": "Save the inference JSON",
                                "pt": "Salvar o JSON de inferência"},
+    "col_box_cameras":        {"es": "Cámaras",        "en": "Cameras",       "pt": "Câmeras"},
+    "col_cameras_note":       {"es": "Con todas marcadas se guardan todas, incluidas las que "
+                                     "se agreguen después. Con alguna desmarcada se guardan "
+                                     "sólo las marcadas, y una cámara nueva no entra hasta "
+                                     "marcarla.",
+                               "en": "With all checked, every camera is saved, including any "
+                                     "added later. With any unchecked, only the checked ones "
+                                     "are saved, and a new camera is left out until it is "
+                                     "checked.",
+                               "pt": "Com todas marcadas, todas são salvas, inclusive as que "
+                                     "forem adicionadas depois. Com alguma desmarcada, só as "
+                                     "marcadas são salvas, e uma câmera nova fica de fora até "
+                                     "ser marcada."},
     "col_history_len":        {"es": "Historial comparado (guardados):",
                                "en": "Compared history (saves):",
                                "pt": "Histórico comparado (salvamentos):"},
     "col_hamming":            {"es": "Umbral Hamming (0–64):",
                                "en": "Hamming threshold (0–64):",
                                "pt": "Limiar de Hamming (0–64):"},
-    "col_mode_note":          {"es": "Cambiar el modo exige reiniciar el recolector.",
-                               "en": "Changing the mode requires restarting the collector.",
-                               "pt": "Alterar o modo exige reiniciar o coletor."},
+    "col_mode_note":          {"es": "Cambiar el modo toma efecto al reiniciar la aplicación. "
+                                     "A pedido guarda una imagen por ciclo de medición, y se "
+                                     "ofrece sólo si algún pipeline mide de a varios frames.",
+                               "en": "Changing the mode takes effect when the application "
+                                     "restarts. On demand saves one image per measurement "
+                                     "cycle, and is offered only if some pipeline measures "
+                                     "several frames at a time.",
+                               "pt": "Alterar o modo tem efeito ao reiniciar a aplicação. "
+                                     "Sob demanda salva uma imagem por ciclo de medição, e só "
+                                     "é oferecido se algum pipeline mede vários frames por "
+                                     "vez."},
+    "col_mode_no_cycle":      {"es": "A pedido no guarda nada: ningún pipeline tiene ciclo de "
+                                     "medición. Usar Por intervalo.",
+                               "en": "On demand saves nothing: no pipeline has a measurement "
+                                     "cycle. Use By interval.",
+                               "pt": "Sob demanda não salva nada: nenhum pipeline tem ciclo de "
+                                     "medição. Usar Por intervalo."},
 
     # ── Telemetría (configuración) ───────────────────────────────────────────
     "tel_box_influxdb":       {"es": "InfluxDB",       "en": "InfluxDB",      "pt": "InfluxDB"},
@@ -586,6 +581,20 @@ _TEXTS: dict[str, dict[str, str]] = {
                                "en": "Application name:",
                                "pt": "Nome da aplicação:"},
     "sys_device_id":          {"es": "Id del equipo:", "en": "Device id:",    "pt": "Id do equipamento:"},
+    "sys_device_id_note":     {"es": "El nombre de la app y el id del equipo se cambian en "
+                                     "config.yaml. El id identifica al equipo en la telemetría: "
+                                     "cambiarlo puede partir la historia en dos series, y dos "
+                                     "equipos con el mismo id se echan del broker MQTT.",
+                               "en": "The application name and the device id are changed in "
+                                     "config.yaml. The id identifies the device in telemetry: "
+                                     "changing it can split the history into two series, and "
+                                     "two devices with the same id kick each other off the "
+                                     "MQTT broker.",
+                               "pt": "O nome da aplicação e o id do equipamento são alterados "
+                                     "em config.yaml. O id identifica o equipamento na "
+                                     "telemetria: alterá-lo pode dividir o histórico em duas "
+                                     "séries, e dois equipamentos com o mesmo id se derrubam "
+                                     "do broker MQTT."},
     "sys_log_level":          {"es": "Nivel de log:",  "en": "Log level:",    "pt": "Nível de log:"},
     "sys_logs_path":          {"es": "Carpeta de logs:",
                                "en": "Logs folder:",   "pt": "Pasta de logs:"},

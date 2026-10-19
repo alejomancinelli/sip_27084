@@ -14,7 +14,7 @@ cámara y lo que guarda el dataset, no cómo se ve en pantalla.
 """
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 
 from system.config_manager import ConfigManager
 from tools.camera.camera_catalog import CAMERA_CATALOG
@@ -24,8 +24,8 @@ from ui.strings import tr
 from ui.views.config.abstract_tab import AbstractConfigTab
 from ui.widgets.form import (
     add_check_row, add_form_row, add_hint_row, build_combo_box, build_double_spin_box,
-    build_group_box, build_line_edit, build_readonly_line_edit, build_spin_box,
-    build_value_combo_box, set_combo_data, wire_enable_toggle,
+    build_group_box, build_line_edit, build_readonly_line_edit, build_slot_tabs,
+    build_spin_box, build_value_combo_box, set_combo_data, wire_enable_toggle,
 )
 
 # Clave de idioma -> valor de `rotation` en el config. El valor es el que entiende el
@@ -62,7 +62,7 @@ class CamerasTab(AbstractConfigTab):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        tabs = QTabWidget()
+        tabs = build_slot_tabs()
         layout.addWidget(tabs)
 
         for camera_slot in (self._config.get("cameras", {}) or {}):

@@ -3,7 +3,6 @@ espacio del frame de cámara y serialización.
 """
 
 import numpy as np
-import pytest
 
 from system.inference.result import Detection, InferenceResult, offset_detections
 

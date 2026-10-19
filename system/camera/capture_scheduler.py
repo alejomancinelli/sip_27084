@@ -47,6 +47,9 @@ Qué fija el contrato:
     motor descartó dejan el ciclo colgado para siempre mientras el heartbeat sigue latiendo.
   - **El scheduler no toca las cámaras**: pide por `capture_wanted` y el cableado aplica.
     Un subsistema de nivel 3 no llama a otro.
+  - **Qué es «tener ciclo» se decide en un solo lugar**: `has_measurement_cycle()`, la
+    función de módulo que también consulta quien necesita saberlo sin un scheduler —la
+    pestaña de dataset, para no ofrecer un modo que no guardaría nada—.
 
 Vive en el hilo de la GUI, que es donde Qt entrega las señales de los hilos de captura y
 de inferencia, así que su estado no necesita lock.
@@ -73,6 +76,28 @@ _MEAN_SUFFIX = "_mean"
 
 # Motivo con el que sale un ciclo del que no se pudo medir nada.
 REASON_EMPTY_CYCLE = "empty_cycle"
+
+
+def _is_cycle(frames_per_cycle: object) -> bool:
+    """La regla de «tener ciclo»: más de un frame por medición. Un valor vacío es 1."""
+    return max(1, int(frames_per_cycle or _DEFAULT_FRAMES_PER_CYCLE)) > 1
+
+
+def has_measurement_cycle(config_manager: ConfigManager) -> bool:
+    """
+    True si algún pipeline habilitado de `inference.pipelines` mide de a varios frames.
+
+    Uno deshabilitado no cuenta aunque declare ciclo: no produce resultados, así que no
+    hay ciclo que cierre ni guardado que pedir.
+    """
+    for pipeline_slot in (config_manager.get("inference.pipelines", {}) or {}):
+        prefix = f"inference.pipelines.{pipeline_slot}"
+        if not config_manager.get(f"{prefix}.enabled", True):
+            continue
+        if _is_cycle(config_manager.get(f"{prefix}.frames_per_cycle",
+                                        _DEFAULT_FRAMES_PER_CYCLE)):
+            return True
+    return False
 
 
 def _describe(metrics: dict) -> str:
@@ -175,7 +200,7 @@ class CaptureScheduler(QObject):
 
     def is_cycled(self, pipeline_slot: str) -> bool:
         """True si este pipeline mide de a varios frames y hay que forzarle el intervalo."""
-        return self._read_frames_per_cycle(pipeline_slot) > 1
+        return _is_cycle(self._read_frames_per_cycle(pipeline_slot))
 
     def take_frame(self, camera_slot: str, pipeline_slot: str) -> bool:
         """

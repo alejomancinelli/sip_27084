@@ -34,6 +34,6 @@ Los valores con escala viajan multiplicados por ella: un registro con escala x10
 | 88 | 40088 | cpu_temp_c | Temperatura de CPU | °C | - | health |
 | 89 | 40089 | gpu_temp_c | Temperatura de GPU | °C | - | health |
 | 90 | 40090 | power_w | Consumo estimado | W | - | health |
-| 97 | 40097 | clock_epoch_s_high | Reloj del equipo, palabra alta (epoch UTC = alta*65536 + baja) | s | - | health |
-| 98 | 40098 | clock_epoch_s_low | Reloj del equipo, palabra baja | s | - | health |
-| 99 | 40099 | license_days_remaining | Días hasta el vencimiento de la licencia | días | - | health |
+| 98 | 40098 | clock_epoch_s_high | Reloj del equipo, palabra alta (epoch UTC = alta*65536 + baja) | s | - | health |
+| 99 | 40099 | clock_epoch_s_low | Reloj del equipo, palabra baja | s | - | health |
+| 100 | 40100 | license_days_remaining | Días hasta el vencimiento de la licencia | días | - | health |

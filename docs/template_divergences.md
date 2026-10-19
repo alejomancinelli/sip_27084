@@ -83,7 +83,9 @@ escala temperaturas y disco ×10; acá van en las direcciones viejas y sin escal
 
 **Cómo revertir:** no se revierte. Un mapa de registros es un contrato con el integrador y
 se cambia cuando el integrador cambia su programa, no cuando se actualiza el template. Lo
-único que se tomó del template es el bitfield del registro 51 y los registros 97-99.
+único que se tomó del template es el bitfield del registro 51 y el reloj y la licencia,
+que acá ocupan las tres últimas direcciones expuestas, 98-100: las mismas que el template
+desde el PR #37.
 
 ---
 
@@ -94,50 +96,14 @@ puntos de extensión que cualquier fork necesita, y **conviene que vuelvan al te
 vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» en el
 `README.md`.
 
-Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva. Las primeras son
-del build compilado en la Jetson, con el detalle en `.claude/plans/jetson-compilation.md`;
-las que siguen salieron de la revisión del template y del proyecto del 2026-10-08.
+Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva.
 
 | Archivo | Qué se cambió | Por qué es genérico |
 |---|---|---|
-| `build/build.py` | En Linux el build es acelerado (`_ACCELERATED`): compila `system`, `tools` y `ui` con `no_site` y `--file-reference-choice=runtime`; lo de terceros —`cryptography` incluida— va suelto | En cualquier Jetson el standalone de torch no termina con 8 GB, y CUDA, TensorRT y Python salen del JetPack igual |
-| `build/make_release.py` | El entregable acelerado: `program/site-packages` copiado del venv sin lo de build, symlinks de apt como symlinks, lanzadores con `PYTHONPATH`, verificador de cámara que busca los paquetes donde viajan | Es la otra mitad del build acelerado |
-| `build/requirements.txt`, `build/README.md`, `build/.gitignore` | Nuitka 4.2.2 declarado; la forma de Linux documentada | Ídem |
-| `system/paths.py` | `APP_DIR` acelerado desde `__compiled__.containing_dir`, no desde `sys.executable` | Acelerado, `sys.executable` es el intérprete del equipo de build |
-| `system/license/verify.py` | Autocontrol del verificador con el vector 1 de la RFC 8032 antes de cada verificación | Con `cryptography` suelta, vaciar su `verify()` es el ataque de un rato en cualquier fork |
-| `system/system_monitor.py` | Potencia del INA3221 desde `in1_input × curr1_input` | JetPack 6 no publica `power1_input`: toda Jetson con JetPack 6 reporta 0 W |
-| `main.py` (fuera del bloque del fork) | El handler de SIGINT/SIGTERM agenda el cierre con `QTimer.singleShot(0, app.quit)` en vez de cerrar (`_build_interrupt_handler()`) | Compilado, el handler corre con el lock del config tomado y Qt 6 emite `aboutToQuit` en el acto: el cierre se trababa y abortaba en cualquier fork |
-| `tools/camera/abstract_driver.py`, `tools/camera/st_driver.py`, `system/camera/capture_thread.py` | `interrupt()` en el contrato del driver; `StDriver` despierta con él `connect()` y los reintentos; `CaptureThread.requestInterruption()` lo llama | Sin cámara, un cierre durante `connect()` dejaba el hilo vivo hasta 20 s y Qt abortaba, también desde fuentes |
-| `system/inference/engine.py`, `system/inference/models/abstract_model.py` | Docstrings: la lógica por cámara va al pipeline, que recibe `camera_slot` en `_run()`; el `classifier` queda para lo que depende de la posición en el frame | Contradecían el contrato del pipeline desde que `_run()` recibe la cámara |
-| `system/inference/engine.py`, `tools/camera/abstract_driver.py` | `push_frame()` guarda el frame sin copiarlo, y el contrato de `get_frame()` declara que el array es propio y que nadie lo modifica in-place | La copia suponía un driver que reusa su buffer, y ninguno lo hace: ~140 MB/s tirados a 3 MP y 15 fps |
-| `system/telemetry/persistence.py` | El comentario de `_PUBLISH_INTERVAL_S` ya no dice que la cola topea el ritmo en 10 puntos/s | El hilo drena la cola de continuo |
-| `system/modbus/server.py` | `update_block()` escribe el bloque entero bajo un solo lock, y la FC03 del PLC toma ese mismo lock | Una lectura en medio del bloque veía medio reloj: un salto de 18 h cada vez que la palabra baja da la vuelta |
-| `requirements.txt`, `setup/venv-setup/verify_env.py` | `pymodbus==3.15.0`, y `verify_env.py` falla si la lectura del PLC deja de pasar por `async_OLD_getValues` | El lock de lectura cuelga de ese método interno de pymodbus |
-| `system/gpio_control.py` | El polling espera el intervalo entero, en tramos; una entrada que falla se avisa al empezar y al recuperarse | Con más de 200 ms se leía igual a 5 Hz, y una línea muerta llenaba el log |
-| `tools/camera/abstract_driver.py`, `mock_driver.py`, `rtsp_driver.py`, `st_driver.py`, `system/camera/capture_thread.py` | Reloj monotónico para intervalos, plazos y fps; el fps medido vuelve a 0 cuando dejan de llegar frames | Un ajuste de NTP al arrancar movía todo, y una cámara trabada seguía informando sus fps |
-| `system/telemetry/backends/influxdb_backend.py`, `abstract_backend.py`, `system/telemetry/persistence.py` | Ante un corte, hasta 6000 puntos en memoria y reintento cada 30 s con timeout de 5 s; un 4xx no se reintenta | Un batch fallido se perdía y cada intento bloqueaba el hilo de telemetría 10 s |
-| `system/inference/models/abstract_model.py` | Propiedad `class_names`: los nombres de los pesos, o los del config | Para que un pipeline confronte las clases que espera con las del modelo |
-| `main.py` (fuera del bloque del fork) | `frame_ready` conectado directo: en el hilo de captura el frame va a los motores sin ciclo y, sólo con clientes, al video crudo; la GUI recibe el último de cada cámara por un buzón con un aviso en vuelo como mucho | Cada frame pasaba por la cola de la GUI sin tope: una GUI ocupada juntaba frames de 9 MB y atrasaba la inferencia |
-| `main.py` (fuera del bloque del fork) | Sin recolección prendida no se arma el JSON ni el contexto del dataset; a la telemetría entra el resultado sin frames ni detecciones | Por resultado y en la GUI: `to_dict()` sobre cientos de detecciones, y dos frames de 9 MB retenidos hasta el tick |
-| `system/image_collector/collector.py` | El job guarda referencias a los frames, no copias | Con el contrato del driver nadie los modifica, y copiar eran 18 MB por medición |
-| `system/config_manager.py`, `system/inference/engine.py` | `ConfigManager.revision`, y el motor relee su config sólo cuando cambia | Unos veinte `get` por frame, cada uno con el lock global y una copia |
-| `system/video/http_server.py` | Un anotado sin clientes se guarda sin codificar y se codifica cuando alguien lo pide; el último sobrevive al último cliente | Con la pantalla en anotado era un resize y un JPEG por frame para nadie |
-| `ui/widgets/camera_panel.py` | No pinta oculto, y achica el frame con OpenCV antes de pasarlo a Qt | Convertía los 3 MP enteros a pixmap por frame en la GUI |
-| `ui/widgets/log_table.py` | Una fila por evento en vez de reconstruir la tabla | 200 × 4 items por línea de log, en ráfaga |
 | `manual_test/cameras/camera_live_view.py` | Sin ventana de OpenCV (wheel headless, o Linux sin `DISPLAY`) corre el mismo ciclo contra el driver, imprime tamaño del frame y fps entregados, y publica el frame crudo por `HttpVideoServer` en el puerto 8192; el cierre ya no levanta `cv2.error` | El wheel headless es el del venv de cualquier Jetson: el visor se caía al crear la ventana, y el segundo error del `finally` tapaba el primero |
-| `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
 
-Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
-`test/test_system_monitor.py`, `test/test_main.py`, `test/camera/test_capture_thread.py`,
-`test/tools/camera/test_st_driver.py`, `test/build/`, `test/inference/test_engine.py`,
-`test/modbus/test_server.py`, `test/test_gpio_control.py`,
-`test/tools/camera/test_mock_driver.py`, `test/telemetry/backends/test_influxdb_backend.py`,
-`test/inference/models/test_abstract_model.py`, `test/test_config_manager.py`,
-`test/video/test_http_server.py`, `test/ui/test_camera_panel.py` y
-`test/ui/test_log_table.py`.
-
-**En un merge:** si el template ya trae una de estas, quedarse con la del template y borrar
-la de acá. Si no la trae, conservarla y abrir el PR.
+**En un merge:** si el template ya trae una de las anotadas, quedarse con la del template y
+borrarla de acá. Si no la trae, conservarla y abrir el PR.
 
 ### Lo que ya volvió
 
@@ -155,6 +121,55 @@ aislado, `verify_env.py` —salvo su bloque del fork—, el build y el entregabl
 el borrado de las claves del build, `probe_codec()` y el `nvvidconv` de los codecs `_hw`,
 el filtro de registros de `ui_app.py`, el timestamp del overlay y el STC-MCS312POE del
 catálogo.
+
+Con el [PR #36](https://github.com/alejomancinelli/cv_projects_template/pull/36), mergeado
+el 2026-10-09, volvió lo del build compilado en la Jetson, con el detalle en
+`.claude/plans/jetson-compilation.md`: el build acelerado de Linux (`build/build.py`,
+`build/make_release.py`, `build/requirements.txt`, `build/README.md`, `build/.gitignore`),
+el `APP_DIR` acelerado de `system/paths.py`, el autocontrol de `system/license/verify.py`,
+la potencia del INA3221 en `system/system_monitor.py`, el handler de señales que agenda el
+cierre en `main.py` e `interrupt()` en el contrato del driver, en `StDriver` y en
+`CaptureThread`. Se trajo con el merge del 2026-10-14, junto con el arreglo de
+`test/test_paths.py` para comparar rutas absolutas en Windows.
+
+Con los PR [#37](https://github.com/alejomancinelli/cv_projects_template/pull/37) y
+[#38](https://github.com/alejomancinelli/cv_projects_template/pull/38), traídos en el mismo
+merge, volvió lo de la revisión de la GUI del 2026-10-14 y lo de la revisión del costo por
+frame del 2026-10-08: `system.device_id` de sólo lectura, la recolección por cámara
+(`image_collector.cameras` y `should_collect()`), `has_measurement_cycle()` y el «A pedido»
+que sólo se ofrece con ciclo, la sección `inference.overlay` y los `class_names` fuera de
+la UI, `build_slot_tabs()` y `build_form_page()` con el ancho común de tarjeta, el frame que
+no se copia en `push_frame()` ni en el recolector, el bloque Modbus escrito bajo un solo
+lock con `pymodbus==3.15.0`, el polling de GPIO por tramos, el reloj monotónico de la
+captura, el buffer de InfluxDB ante un corte, `class_names` en el contrato del modelo, el
+`frame_ready` directo con el buzón de la GUI, el dataset que no se arma con la recolección
+apagada, `ConfigManager.revision`, el anotado HTTP codificado a pedido, el `CameraPanel`
+que no pinta oculto y la `LogTable` de una fila por evento. Desde ahí son idénticos a los
+del template, salvo `main.py`, que diverge por A1 y por las medias de la hora.
+
+En el mismo merge entraron dos PR que no nacieron acá: el
+[#39](https://github.com/alejomancinelli/cv_projects_template/pull/39), con el lint y la
+suite locales (`ci/check.py` y los hooks de `.githooks/`), y el
+[#40](https://github.com/alejomancinelli/cv_projects_template/pull/40), con el driver
+`video_file`, la corrida de imágenes sueltas y los hooks del proyecto fuera de `main.py`.
+Por ese último, el analyzer y los annotators de la cinta se mudaron de `main.py` a
+`system/inference/hooks.py`, y `BeltPipeline` pasó a llamarse `Pipeline` y a leer el umbral
+de fondo oscuro del config, que es como lo arma `offline.py`.
+
+Con el [PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41), traído en
+el merge del 2026-10-15, volvió el `canvas_adjust=self._for_display` del motor en `main.py`,
+los hooks y el pipeline del proyecto en `manual_test/ui/ui_app.py`, el `test_offline.py` que
+arma los slots desde `Pipeline.model_slots` —el arreglo de C4— y los tests de Sentech que
+corren sin stapipy. Desde ahí `test_offline.py` es idéntico al del template.
+
+En el mismo merge entró el [#42](https://github.com/alejomancinelli/cv_projects_template/pull/42),
+que no nació acá: varios pipelines por cámara. Los pipelines se instancian por
+`inference.pipelines.<slot>.type` con `pipeline_factory.py` —el `Pipeline` de la cinta es el
+`default`—, el anotado de una cámara lo combina `composer.py`, las métricas se guardan por
+par (cámara, pipeline), y llegaron la palabra de estado por pipeline
+(`formats/pipeline_status.py`) y las compuertas de frames (`_build_frame_gates()` de
+`main.py`). Esta cinta no usa ninguna compuerta, y la palabra del pipeline no llega al PLC
+porque el mapa no tiene la fila `pipeline_1_state_bitfield`.
 
 ---
 
@@ -203,6 +218,16 @@ queda para el `classifier` es lo que necesite coordenadas del frame completo, po
 después de `offset_detections`.
 
 ---
+
+### ~~C4~~ — resuelto en el template
+
+`test/inference/test_offline.py` y `manual_test/offline_inference/config.yaml` llegaron con
+el PR #40 nombrando el slot `model_1` y los hooks del template, y acá se habían adaptado a
+la cinta. El [PR #41](https://github.com/alejomancinelli/cv_projects_template/pull/41) hizo
+que el test arme los slots desde `Pipeline.model_slots` y pruebe los hooks con espías, así
+que el del template pasa sin editar contra esta cinta y es el que quedó. El config de la
+prueba manual sigue siendo de acá —slot `segmenter` y `process:` de la cinta—, y el
+`README.md` ya lo lista entre lo que el proyecto reescribe.
 
 ## Dónde más hay divergencia, sin ser ninguna de las tres
 

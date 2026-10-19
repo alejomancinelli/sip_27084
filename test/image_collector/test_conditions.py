@@ -1,8 +1,6 @@
 """Tests de las condiciones de guardado del recolector de dataset."""
 
 import inspect
-import os
-import sys
 
 import numpy as np
 import pytest

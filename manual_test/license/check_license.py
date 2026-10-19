@@ -234,7 +234,7 @@ def _parse_now(text: str | None) -> datetime:
     try:
         parsed = datetime.fromisoformat(candidate)
     except ValueError:
-        raise SystemExit(f"--now no es una fecha ISO: {text!r}")
+        raise SystemExit(f"--now no es una fecha ISO: {text!r}") from None
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)

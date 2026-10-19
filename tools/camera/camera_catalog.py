@@ -36,6 +36,11 @@ CAMERA_CATALOG: dict[str, dict] = {
             "generic",
         ],
     },
+    "replay": {
+        "label": "Video grabado",
+        "driver": "video_file",
+        "models": ["file"],
+    },
     "mock": {
         "label": "Simulado (Mock)",
         "driver": "mock",

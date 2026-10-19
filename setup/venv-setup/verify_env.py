@@ -63,13 +63,19 @@ REQUIRED = [
     ("paho.mqtt", "pip: paho-mqtt"),
     # Without it the license verifier rejects every license instead of degrading.
     ("cryptography", "pip: cryptography"),
-    ("pytest", "pip: pytest"),
 ]
 
 # At least one is needed to capture from real hardware; which one is per installation.
 CAMERA_SDKS = [
     ("pypylon.pylon", "pip: pypylon"),
     ("stapipy", "SentechSDK wheel in packages/ - setup/cameras/"),
+]
+
+# Development only: the tests and the lint. A plant machine does not install them, so
+# they are reported and never required.
+DEVELOPMENT = [
+    ("pytest", "pip: requirements-dev.txt (venv-setup with -Dev / --dev)"),
+    ("ruff", "pip: requirements-dev.txt (venv-setup with -Dev / --dev)"),
 ]
 
 
@@ -375,7 +381,7 @@ def _check_inference(config: dict) -> list[str]:
     errors, present = _check_modules(INFERENCE_MODULES, IS_JETSON)
     if len(present) < len(INFERENCE_MODULES):
         if not IS_JETSON:
-            print(f"        not a Jetson: the mock model covers inference here")
+            print("        not a Jetson: the mock model covers inference here")
         return errors
     try:
         problem = probe_inference_device()
@@ -411,6 +417,7 @@ def main() -> int:
     if not cameras:
         print(f"[{WARN}] {'camera SDKs':<18} none - only the 'mock' driver can capture. "
               f"See setup/cameras/.")
+    _check_modules(DEVELOPMENT, False)
 
     print(_DIVIDER)
     config = _load_config()

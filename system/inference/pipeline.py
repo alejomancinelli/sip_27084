@@ -34,8 +34,11 @@ devuelve de mayor a menor: sin reordenar, donde pellet y desmenuzado se pisan �
 frontera que decide la composición— ganaría la menos confiable. Se ordena una sola vez acá
 para que los dos consumidores, que comparten el orden, sigan diciendo lo mismo.
 
-Los umbrales llegan **leídos**, como los del analyzer y los annotators: los lee `main.py`
-de la sección `process` y esta clase se testea con tres números y sin archivo.
+Los umbrales salen de `process.dark_background_threshold`, y es esta clase la que los lee:
+la arman igual la app y la corrida de imágenes sueltas (`offline.py`), con
+`create_pipeline(config, pipeline_slot)` de `pipeline_factory.py` —que la registra como
+`default`—, y leerlos acá es lo que hace que las dos midan con el mismo umbral. Un test los pasa ya leídos por `dark_background_threshold` y se arma con tres
+números y sin archivo.
 
 **Las clases de esta cinta están en el código, no en el config.** De cada nombre sale el de
 su métrica —`pct_pellet_norm`— y con él el registro que lee el PLC, así que no es algo que
@@ -62,12 +65,13 @@ _SEGMENTER_SLOT = "segmenter"
 CLASS_NAMES = ("desmenuzado", "pellet")
 
 
-class BeltPipeline(AbstractPipeline):
+class Pipeline(AbstractPipeline):
     """
     Una etapa —el segmentador de la cinta— más el descarte de fondo oscuro por cámara.
 
-    `dark_background_threshold` es `{camera_slot: {clase: luma_mínima}}`. Una cámara que no
-    figura, o una clase con umbral 0, no se refina.
+    `dark_background_threshold` es `{camera_slot: {clase: luma_mínima}}`; sin pasarlo se lee
+    de `process.dark_background_threshold`. Una cámara que no figura, o una clase con
+    umbral 0, no se refina.
     """
 
     model_slots = (_SEGMENTER_SLOT,)
@@ -75,7 +79,10 @@ class BeltPipeline(AbstractPipeline):
     def __init__(self, config_manager, pipeline_slot: str, *,
                  dark_background_threshold: dict | None = None):
         super().__init__(config_manager, pipeline_slot)
-        self._dark_background_threshold = dark_background_threshold or {}
+        if dark_background_threshold is None:
+            dark_background_threshold = config_manager.get(
+                "process.dark_background_threshold", {}) or {}
+        self._dark_background_threshold = dark_background_threshold
         self._class_mismatch = ""
 
     @property

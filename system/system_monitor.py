@@ -182,7 +182,7 @@ def _parse_nvidia_smi(csv_line: str) -> dict:
     if len(values) != len(_NVIDIA_SMI_METRICS):
         return {}
     metrics = {}
-    for key, value in zip(_NVIDIA_SMI_METRICS, values):
+    for key, value in zip(_NVIDIA_SMI_METRICS, values, strict=True):
         try:
             metrics[key] = int(float(value))
         except ValueError:

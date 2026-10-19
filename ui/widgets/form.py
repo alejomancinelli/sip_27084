@@ -14,15 +14,16 @@ alimenta cada campo.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGraphicsOpacityEffect,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox, QVBoxLayout,
-    QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy, QSpinBox,
+    QStyle, QTabWidget, QVBoxLayout, QWidget,
 )
 
 _LABEL_MIN_WIDTH_PX = 240    # ancho mínimo de la etiqueta, para alinear todas las filas
 _ROW_MIN_HEIGHT_PX = 28      # alto mínimo de una fila, para que todas midan igual
 _BOX_MIN_WIDTH_PX = 640      # ancho mínimo de un QGroupBox
 _CARD_MIN_WIDTH_PX = 720     # ancho mínimo de la tarjeta de una pestaña
-_CARD_MAX_WIDTH_PX = 1600    # ancho máximo de la tarjeta; de ahí en más queda centrada
+_CARD_WIDTH_PX = 1000        # ancho de toda tarjeta centrada; de ahí en más, fondo a los lados
+_FULL_CARD_MAX_WIDTH_PX = 6400   # tope de una tarjeta a todo el ancho, para una tabla
 _CARD_MARGIN_PX = 14
 _DISABLED_OPACITY = 0.35     # opacidad de un campo que su checkbox de habilitado apagó
 
@@ -34,11 +35,38 @@ def build_group_box(title: str) -> tuple[QGroupBox, QFormLayout]:
     """Devuelve un QGroupBox con su QFormLayout, listos para agregarle filas."""
     box = QGroupBox(title)
     box.setMinimumWidth(_BOX_MIN_WIDTH_PX)
+    form = _build_form_layout()
+    box.setLayout(form)
+    return box, form
+
+
+def build_form_page() -> tuple[QWidget, QFormLayout]:
+    """Devuelve una página con su QFormLayout, para el formulario de una sub-pestaña."""
+    page = QWidget()
+    form = _build_form_layout()
+    page.setLayout(form)
+    return page, form
+
+
+def build_slot_tabs() -> QTabWidget:
+    """
+    Barra de sub-pestañas, una por slot —cámara, modelo, pipeline—.
+
+    Con más slots de los que entran a lo ancho, Qt muestra flechas de desplazamiento en la
+    barra y no corta ningún rótulo: un slot cortado a la mitad no se distingue de otro. Se
+    fija explícito para que no dependa del estilo ni del tema.
+    """
+    tabs = QTabWidget()
+    tabs.setUsesScrollButtons(True)
+    tabs.setElideMode(Qt.ElideNone)
+    return tabs
+
+
+def _build_form_layout() -> QFormLayout:
     form = QFormLayout()
     form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
     form.setSpacing(8)
-    box.setLayout(form)
-    return box, form
+    return form
 
 
 def add_form_row(form: QFormLayout, label: str, widget: QWidget) -> QWidget:
@@ -198,12 +226,23 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     `center` deja el contenido centrado con fondo a los lados, que es lo que quieren
     los grupos de campos; en False ocupa todo el ancho, para una tabla. `scroll`
     agrega la barra vertical, para las pestañas que no entran en pantalla.
+
+    **Toda tarjeta centrada mide lo mismo, en todas las pestañas**: se estira hasta
+    `_CARD_WIDTH_PX` y por debajo de eso ocupa lo que haya, con el mínimo de
+    `_CARD_MIN_WIDTH_PX`. Si tomara el ancho que pide su contenido, cada pestaña tendría el
+    suyo y el fondo saltaría al cambiar de una a otra. No es un ancho fijo: con el scroll
+    horizontal apagado, en una pantalla chica cortaría los campos.
+
+    Por lo mismo, una tarjeta centrada con scroll queda en el mismo lugar haya barra
+    vertical o no: sin barra se reserva su ancho a la derecha. Si no, la pestaña larga
+    quedaría corrida medio ancho de barra respecto de la corta.
     """
     card = QWidget()
     card.setObjectName(_CARD_OBJECT_NAME)
     card.setAttribute(Qt.WA_StyledBackground, True)
     card.setMinimumWidth(_CARD_MIN_WIDTH_PX)
-    card.setMaximumWidth(_CARD_MAX_WIDTH_PX if center else _CARD_MAX_WIDTH_PX * 4)
+    card.setMaximumWidth(_CARD_WIDTH_PX if center else _FULL_CARD_MAX_WIDTH_PX)
+    card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     card_layout = QVBoxLayout(card)
     card_layout.setContentsMargins(_CARD_MARGIN_PX, _CARD_MARGIN_PX,
                                    _CARD_MARGIN_PX, _CARD_MARGIN_PX)
@@ -212,21 +251,50 @@ def wrap_in_card(inner: QWidget, *, center: bool = True, scroll: bool = False) -
     wrapper = QWidget()
     wrapper_layout = QHBoxLayout(wrapper)
     wrapper_layout.setContentsMargins(0, 0, 0, 0)
+    # La tarjeta tiene el stretch: crece primero hasta su tope, y lo que sobra va a los
+    # costados.
     if center:
-        wrapper_layout.addStretch()
-    wrapper_layout.addWidget(card)
+        wrapper_layout.addStretch(0)
+    wrapper_layout.addWidget(card, 1)
     if center:
-        wrapper_layout.addStretch()
+        wrapper_layout.addStretch(0)
 
     if not scroll:
         return wrapper
 
-    area = QScrollArea()
+    area = _BarReservingScrollArea(wrapper_layout) if center else QScrollArea()
     area.setWidgetResizable(True)
     area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     area.viewport().setAutoFillBackground(False)
     area.setWidget(wrapper)
     return area
+
+
+class _BarReservingScrollArea(QScrollArea):
+    """
+    Área con scroll que, sin barra vertical, reserva su ancho a la derecha del contenido.
+
+    Con margen o con barra el contenido tiene el mismo ancho, así que reservarlo no hace
+    aparecer ni desaparecer la barra: no oscila.
+    """
+
+    def __init__(self, content_layout: QHBoxLayout, parent=None):
+        super().__init__(parent)
+        self._content_layout = content_layout
+        self.verticalScrollBar().rangeChanged.connect(self._reserve_bar_width)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Un contenido que nunca necesita barra no cambia el rango, y el margen se pone acá.
+        self._reserve_bar_width()
+
+    def _reserve_bar_width(self):
+        bar = self.verticalScrollBar()
+        # El ancho se pide al estilo y no a la barra, que oculta no tiene medida; con el
+        # QSS aplicado, el estilo devuelve el ancho que declara la hoja.
+        width_px = 0 if bar.maximum() > 0 else self.style().pixelMetric(
+            QStyle.PM_ScrollBarExtent, None, bar)
+        self._content_layout.setContentsMargins(0, 0, width_px, 0)
 
 
 def wire_enable_toggle(check: QCheckBox, dependents: list):

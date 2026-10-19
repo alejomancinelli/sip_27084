@@ -15,6 +15,7 @@ from .mock_driver import MockDriver
 from .null_driver import NullDriver
 from .rtsp_driver import RtspDriver
 from .st_driver import StDriver
+from .video_file_driver import VideoFileDriver
 
 # Registro único: la clave es el valor que lleva `driver` en config.yaml.
 # NullDriver no figura acá — no se elige por config, es la salida ante un fallo.
@@ -22,6 +23,7 @@ _DRIVER_CLASSES: dict[str, type[AbstractCameraDriver]] = {
     "basler_gige": BaslerDriver,
     "st_gige": StDriver,
     "rtsp": RtspDriver,
+    "video_file": VideoFileDriver,
     "mock": MockDriver,
 }
 

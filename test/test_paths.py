@@ -67,7 +67,8 @@ class TestProgramLocation:
     def test_standalone_it_is_the_executable_folder(self):
         compiled = SimpleNamespace(standalone=True, containing_dir="/planta")
         executable = os.path.join(os.sep, "planta", "program", "main.bin")
-        assert paths._locate_program(compiled, executable, "x") == os.path.dirname(executable)
+        assert paths._locate_program(compiled, executable, "x") == os.path.abspath(
+            os.path.dirname(executable))
 
     def test_accelerated_it_ignores_the_build_interpreter(self):
         """
@@ -77,7 +78,7 @@ class TestProgramLocation:
         program = os.path.join(os.sep, "planta", "program")
         compiled = SimpleNamespace(standalone=False, containing_dir=program)
         build_interpreter = os.path.join(os.sep, "home", "dev", ".venv", "bin", "python")
-        assert paths._locate_program(compiled, build_interpreter, "x") == program
+        assert paths._locate_program(compiled, build_interpreter, "x") == os.path.abspath(program)
 
 
 class TestResolve:

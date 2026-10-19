@@ -8,7 +8,7 @@ project:
 
 system:
   app_name: Detección de calidad de pellet
-  device_id: jetson-1
+  device_id: jetson-1           # client_id de MQTT; se fija al instalar, no desde la UI
   log_level: INFO               # DEBUG | INFO | WARNING | ERROR
   hard_exit: false
   # Termina el proceso al salir sin desarmar el intérprete. Hace falta sólo cuando el
@@ -85,9 +85,10 @@ video:
 
 process:
   # Parámetros de lo que se mide en la cinta. Ningún módulo de la maquinaria lee esta
-  # sección: la lee `main.py` y se la pasa al analyzer (system/inference/metrics.py) y a
-  # los annotators (system/inference/annotations.py), que así se testean con tres números
-  # y sin archivo.
+  # sección: la lee system/inference/hooks.py y se la pasa al analyzer (metrics.py) y a los
+  # annotators (annotations.py) de esa misma carpeta, que así se testean con tres números y
+  # sin archivo. El umbral de fondo oscuro lo lee el pipeline (pipeline.py), y el contexto
+  # del dataset, `main.py`.
   #
   # `belt_roi_px` alimenta a dos consumidores —se dibuja y se mide contra él— y por eso se
   # lee una sola vez: el operador y el PLC no pueden estar mirando cosas distintas.
@@ -122,7 +123,9 @@ inference:
   # cada pipeline.
   overlay:
     # Dibujado del resultado sobre el frame. Sale una sola vez y el mismo array viaja a
-    # la UI, al stream `annotated` y al dataset.
+    # la UI, al stream `annotated` y al dataset. La sección entera se edita sólo acá: la
+    # UI no la muestra, porque varios valores son de la instalación —`font_scale` se
+    # calibra para el frame de cada cámara—.
     enabled: true
     draw_boxes: false           # con cientos de instancias las cajas tapan la imagen
     draw_masks: true
@@ -143,6 +146,9 @@ inference:
   pipelines:
     pipeline_1:
       enabled: true
+      # Qué clase corre este slot: ver REGISTERED_PIPELINES en pipeline_factory.py.
+      # `default` es el `Pipeline` de la cinta, de system/inference/pipeline.py.
+      type: default
       feature: core
       cameras: [camera_1]
       interval_s: 0.0           # período mínimo entre frames de una misma cámara; 0 = todos
@@ -176,9 +182,16 @@ image_collector:
   # el frame de cámara en original/, el anotado en annotated/ y la metadata de
   # inferencia en un .json al lado del anotado.
   enabled: false                # se prende y se apaga en caliente
+  cameras: []                   # slots que se guardan; [] = todas, también las que se agreguen
+                                # después. Con una lista, una cámara nueva no entra hasta sumarla
+  # on_demand: cada guardado lo pide quien orquesta el ciclo de medición, una vez por
+  # medición; sin ningún pipeline con `frames_per_cycle` > 1 no guarda nunca. interval: el
+  # recolector guarda por su cuenta un frame por cámara cada tanto, que es lo que sirve acá:
+  # esta cinta infiere de continuo, con una medición por frame. Cambiar el modo toma efecto
+  # al reiniciar la aplicación.
   mode: interval                # on_demand | interval
-  interval_min_s: 60            # ventana al azar entre guardados
-  interval_max_s: 600
+  interval_min_s: 60            # solo en modo interval: ventana al azar entre guardados
+  interval_max_s: 600           # iguales al mínimo = guardado periódico
   max_images: 10000             # tope por cámara; al llegar se borra el guardado más viejo
   min_free_space_gb: 5          # por debajo de esto se hace lugar y, si no alcanza, no se guarda
   save_original: true

@@ -203,10 +203,10 @@ integraciones:
 
 | Registro | Contenido |
 |---|---|
-| `clock_epoch_s_high` (97 / 40097) | palabra alta, bits 31-16 |
-| `clock_epoch_s_low` (98 / 40098) | palabra baja, bits 15-0 |
+| `clock_epoch_s_high` (98 / 40098) | palabra alta, bits 31-16 |
+| `clock_epoch_s_low` (99 / 40099) | palabra baja, bits 15-0 |
 
-    epoch = (40097 * 65536) + 40098
+    epoch = (40098 * 65536) + 40099
 
 Alta primero, en la dirección más baja. Si el PLC lo lee como DINT y da un número absurdo,
 está invirtiendo las palabras: casi todos los drivers tienen un `word swap` para eso.

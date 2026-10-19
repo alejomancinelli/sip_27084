@@ -2,8 +2,8 @@
 Dibujos propios de la instalación, encima del anotado estándar.
 
 Módulo puro: sin Qt, sin ConfigManager y sin I/O. Cada factory devuelve un annotator —una
-función que recibe el frame ya anotado y el resultado, y dibuja in-place— y `main.py` los
-compone y se los pasa al motor:
+función que recibe el frame ya anotado y el resultado, y dibuja in-place— y `hooks.py` los
+compone para el motor:
 
     engine = InferenceThread(config, pipeline, analyzer=analyzer,
                              annotator=chain(
@@ -17,7 +17,7 @@ Separado de `overlay` porque ese archivo se copia al próximo proyecto sin cambi
 no.
 
 Las factories reciben la geometría en píxeles y los nombres de clase ya leídos, y no tocan
-el config: quién lee la sección `process` es `main.py`. El mismo valor alimenta al
+el config: quién lee la sección `process` es `hooks.py`. El mismo valor alimenta al
 annotator que dibuja el rectángulo de cinta y al analyzer que calcula la carga contra ese
 rectángulo, así que se lee una vez y no pueden discrepar. Así un annotator se testea con
 tres números y sin archivo, y la misma función sirve para una cámara o para diez.
@@ -67,7 +67,7 @@ def belt_roi_annotator(roi_px_by_camera: dict[str, dict]) -> Annotator:
     Marca el rectángulo de cinta: la referencia contra la que se mide la carga.
 
     Es el mismo `process.belt_roi_px` que recibe el analyzer, leído una sola vez en
-    `main.py`, para que el operador no pueda estar mirando un rectángulo distinto del que
+    `hooks.py`, para que el operador no pueda estar mirando un rectángulo distinto del que
     se usó para calcular el porcentaje que salió al PLC.
 
     Se dibuja siempre, haya o no detecciones: una referencia que aparece y desaparece no
@@ -125,7 +125,7 @@ def composition_panel_annotator(class_names: list, class_colors_bgr: tuple = (),
             return
         lines = ["Composicion:"]
         colors_bgr = [_PANEL_NEUTRAL_BGR]
-        for class_name, label, color_bgr in zip(names, labels, class_colors):
+        for class_name, label, color_bgr in zip(names, labels, class_colors, strict=True):
             value_pct = result.metrics.get(f"pct_{class_name}_norm")
             if value_pct is None:
                 continue

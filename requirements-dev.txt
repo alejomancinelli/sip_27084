@@ -1,0 +1,22 @@
+# Dependencias de desarrollo: la app más lo que corre los tests y el lint.
+#
+#   Windows:  .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+#   Linux:    .venv/bin/python -m pip install -r requirements-dev.txt
+#
+# El equipo de planta instala sólo requirements.txt: nada de esto va en la entrega.
+
+-r requirements.txt
+
+pytest>=7.4
+
+# Baraja el orden de los tests en cada corrida y siembra random y numpy por test: un
+# test que depende de lo que dejó otro falla acá y no en la máquina de un compañero.
+# La semilla sale en el encabezado: una corrida se repite con --randomly-seed=N.
+pytest-randomly>=3.15
+
+# Corre la suite en paralelo: ci/check.py le pasa -n auto, y baja de un minuto a ~15 s.
+pytest-xdist>=3.5
+
+# Lint. Versión fija: las reglas cambian entre versiones, y un lint que pasa en una
+# máquina y falla en otra con el mismo código es ruido.
+ruff==0.17.0

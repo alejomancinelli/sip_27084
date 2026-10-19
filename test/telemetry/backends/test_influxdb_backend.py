@@ -5,8 +5,6 @@ El cliente de InfluxDB es un doble: no hace falta la librería instalada ni un
 servidor levantado para verificar el contrato del backend."""
 
 import logging
-import os
-import sys
 
 import pytest
 
