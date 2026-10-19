@@ -98,9 +98,7 @@ vez de quedarse acá divergiendo. Ver «Cómo devolver una mejora al template» 
 
 Una mejora genérica que nace acá se anota en esta tabla hasta que vuelva.
 
-| Archivo | Qué se cambió | Por qué es genérico |
-|---|---|---|
-| `manual_test/cameras/camera_live_view.py` | Sin ventana de OpenCV (wheel headless, o Linux sin `DISPLAY`) corre el mismo ciclo contra el driver, imprime tamaño del frame y fps entregados, y publica el frame crudo por `HttpVideoServer` en el puerto 8192; el cierre ya no levanta `cv2.error` | El wheel headless es el del venv de cualquier Jetson: el visor se caía al crear la ventana, y el segundo error del `finally` tapaba el primero |
+Hoy no hay ninguna pendiente: lo último que nació acá volvió con el PR #43.
 
 **En un merge:** si el template ya trae una de las anotadas, quedarse con la del template y
 borrarla de acá. Si no la trae, conservarla y abrir el PR.
@@ -170,6 +168,8 @@ par (cámara, pipeline), y llegaron la palabra de estado por pipeline
 (`formats/pipeline_status.py`) y las compuertas de frames (`_build_frame_gates()` de
 `main.py`). Esta cinta no usa ninguna compuerta, y la palabra del pipeline no llega al PLC
 porque el mapa no tiene la fila `pipeline_1_state_bitfield`.
+
+Con el [PR #43](https://github.com/alejomancinelli/cv_projects_template/pull/43), traído en el merge del 2026-10-19, volvió `manual_test/cameras/camera_live_view.py`: sin ventana de OpenCV corre el mismo ciclo contra el driver y publica el frame crudo por HTTP. Desde ahí es idéntico al del template.
 
 ---
 
