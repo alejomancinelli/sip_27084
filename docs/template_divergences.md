@@ -124,6 +124,7 @@ las que siguen salieron de la revisión del template y del proyecto del 2026-10-
 | `system/video/http_server.py` | Un anotado sin clientes se guarda sin codificar y se codifica cuando alguien lo pide; el último sobrevive al último cliente | Con la pantalla en anotado era un resize y un JPEG por frame para nadie |
 | `ui/widgets/camera_panel.py` | No pinta oculto, y achica el frame con OpenCV antes de pasarlo a Qt | Convertía los 3 MP enteros a pixmap por frame en la GUI |
 | `ui/widgets/log_table.py` | Una fila por evento en vez de reconstruir la tabla | 200 × 4 items por línea de log, en ráfaga |
+| `manual_test/cameras/camera_live_view.py` | Sin ventana de OpenCV (wheel headless, o Linux sin `DISPLAY`) corre el mismo ciclo contra el driver, imprime tamaño del frame y fps entregados, y publica el frame crudo por `HttpVideoServer` en el puerto 8192; el cierre ya no levanta `cv2.error` | El wheel headless es el del venv de cualquier Jetson: el visor se caía al crear la ventana, y el segundo error del `finally` tapaba el primero |
 | `config.yaml` (comentarios que vienen del template) | El comentario de `ui.language` dice que toma efecto al reiniciar, y se sacó `draw_summary`, que nadie lee | Los dos errores están en el `config.yaml` del template |
 
 Con los tests de cada uno: `test/test_paths.py`, `test/license/test_verify.py`,
