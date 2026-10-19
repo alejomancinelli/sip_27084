@@ -25,9 +25,9 @@ De qué se ocupa, en este orden, por cada frame:
   3. Descarta lo que no vale una pasada del modelo: sin modelo cargado, o iluminación por
      debajo de `cameras.<slot>.illumination_min`.
   4. Corre el pipeline y devuelve las detecciones al espacio del frame de referencia.
-  5. Le pasa las detecciones al `classifier`, si hay uno: es donde se filtra y se etiqueta
-     con lo que depende de la cámara, que el modelo no puede saber porque es uno solo para
-     todas las del pipeline.
+  5. Le pasa las detecciones al `classifier`, si hay uno: ya están en el espacio del frame
+     de referencia, así que es donde se filtra y se etiqueta por posición absoluta —una
+     zona a ignorar, una regla por dónde cae la detección—.
   6. Promedia la confianza y decide si el resultado es confiable
      (`min_result_confidence_pct`, `min_detections`).
   7. Llama al analyzer —sólo si el resultado es confiable— y dibuja el frame anotado.
@@ -51,11 +51,13 @@ orden), el `classifier` (qué detecciones cuentan y qué clase les toca), el `an
 significan las detecciones) y el `annotator` (qué se dibuja además de lo que salió de la
 inferencia). Todas son opcionales salvo el pipeline, y sin ellas el ciclo funciona igual.
 
-El `classifier` existe porque `predict()` no recibe identidad de cámara: el modelo es uno
-por slot de pipeline y lo comparten todas sus cámaras, así que no puede aplicar nada
-calibrado por montaje —una escala de píxel, un filtro de tamaño, una clase por medida—. Y
-el analyzer tampoco puede, porque no modifica el resultado. Corre entre el pipeline y el
-promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
+El `classifier` existe para lo que depende de **dónde** cae una detección en el frame de
+referencia: corre después de devolverlas a ese espacio, y el pipeline las ve en el recorte
+del ROI. Lo que depende de la cámara pero alcanza con el recorte —una escala de píxel, un
+filtro de tamaño, una clase por medida— ya lo puede hacer el pipeline, que recibe el
+`camera_slot` en `_run()`. El modelo no, porque es uno por slot y lo comparten todas las
+cámaras del pipeline; y el analyzer tampoco, porque no modifica el resultado. Corre entre
+el pipeline y el promedio de confianza, así que lo que descarta no cuenta para `min_detections` ni para la
 confianza del resultado, y la clase que deja en `class_index` es la que después colorean
 el overlay y `analysis.count_by_class`.
 """
@@ -63,6 +65,7 @@ el overlay y `analysis.count_by_class`.
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -81,6 +84,7 @@ _STATUS_INTERVAL_S = 2.0     # período de la telemetría de `status_updated`
 _WAIT_TICK_S = 0.2           # espera sin frames; período de reacción a la interrupción
 _WARN_PERIOD_S = 10.0        # techo de los avisos que salen del camino por frame
 _DEFAULT_INTERVAL_S = 0.0    # 0 = se infiere cada frame que llega
+_NO_REVISION = object()      # todavía no se leyó nada del config
 
 
 class InferenceThread(QThread):
@@ -108,7 +112,8 @@ class InferenceThread(QThread):
                  classifier: Callable[[list, str], list] | None = None,
                  analyzer: Callable[[InferenceResult], dict] | None = None,
                  annotator: Callable[[np.ndarray, InferenceResult], None] | None = None,
-                 annotate_gate: Callable[[str], bool] | None = None):
+                 annotate_gate: Callable[[str], bool] | None = None,
+                 canvas_adjust: Callable[[np.ndarray], np.ndarray] | None = None):
         super().__init__()
         self.pipeline_slot = pipeline.pipeline_slot
         self._config = config_manager
@@ -118,6 +123,11 @@ class InferenceThread(QThread):
         self._analyzer = analyzer
         self._annotator = annotator
         self._annotate_gate = annotate_gate
+        # Cómo tiene que verse el lienzo del anotado. El anotado es de los tres caminos el
+        # único que mira una persona y que además se dibuja acá, así que el ajuste de
+        # visualización tiene que entrar antes del dibujo: aplicado después le correría el
+        # color a las máscaras y a las referencias. La medición no lo ve.
+        self._canvas_adjust = canvas_adjust
 
         # Último frame de cada cámara esperando su turno, y el turno mismo: el índice
         # rota sobre los slots pendientes para que ninguna cámara tape a las otras.
@@ -126,6 +136,10 @@ class InferenceThread(QThread):
         self._frame_available = threading.Event()
         self._next_slot_index = 0
         self._last_push_s: dict[str, float] = {}
+
+        # Valores del config ya leídos, válidos mientras no cambie su `revision`.
+        self._settings: dict = {}
+        self._settings_revision: object = _NO_REVISION
 
         self._counters = {"processed": 0, "dropped": 0, "invalid": 0}
         self._last_inference_time_ms = 0.0
@@ -137,14 +151,26 @@ class InferenceThread(QThread):
 
     @property
     def is_enabled(self) -> bool:
-        """True si el pipeline está habilitado en el config. Se lee en cada push."""
-        return bool(self._config.get(f"inference.pipelines.{self.pipeline_slot}.enabled", True))
+        """True si el pipeline está habilitado en el config. Se consulta en cada push."""
+        return bool(self._setting(f"inference.pipelines.{self.pipeline_slot}.enabled", True))
 
     @property
     def camera_slots(self) -> tuple[str, ...]:
         """Cámaras que entran a este pipeline; vacío = todas las que le pusheen."""
-        cameras = self._config.get(f"inference.pipelines.{self.pipeline_slot}.cameras", []) or []
-        return tuple(str(slot) for slot in cameras)
+        key = f"inference.pipelines.{self.pipeline_slot}.cameras"
+        return self._cached(key, lambda: tuple(
+            str(slot) for slot in (self._config.get(key, []) or [])))
+
+    def has_camera(self, camera_slot: str) -> bool:
+        """
+        True si esa cámara entra a este pipeline. Sin lista declarada, entran todas.
+
+        Barata y sin avisos: es para quien reparte frames entre varios motores y le
+        pregunta a cada uno antes de empujar. `push_frame` descarta igual un frame ajeno,
+        pero lo avisa, porque ahí sí es un error de cableado.
+        """
+        camera_slots = self.camera_slots
+        return not camera_slots or camera_slot in camera_slots
 
     def push_frame(self, frame_bgr: np.ndarray | None, camera_slot: str, *,
                    ignore_interval: bool = False):
@@ -152,8 +178,9 @@ class InferenceThread(QThread):
         Deja el frame de una cámara para que se infiera. Barata y thread-safe.
 
         Es el slot de `CaptureThread.frame_ready` y respeta el orden de su payload, así
-        que `main.py` las conecta directo. El frame se copia acá, porque el driver reusa
-        su buffer en cuanto la llamada vuelve.
+        que `main.py` las conecta directo. El frame se guarda sin copiar: el driver entrega
+        un array propio y nadie lo modifica después (ver `AbstractCameraDriver.get_frame`),
+        y copiar 3 MP a 15 fps es memoria que se tira cada vez que el frame se reemplaza.
 
         Descarta sin avisar el frame que llega antes de que venza `interval_s`, y cuenta
         en `dropped` el que reemplaza a uno que el hilo todavía no consumió.
@@ -173,7 +200,7 @@ class InferenceThread(QThread):
                 return
             self._last_push_s[camera_slot] = now_s
             replaced = camera_slot in self._pending
-            self._pending[camera_slot] = frame_bgr.copy()
+            self._pending[camera_slot] = frame_bgr
         if replaced:
             self._count("dropped")
         self._frame_available.set()
@@ -198,6 +225,70 @@ class InferenceThread(QThread):
         conecta después no tiene nada que ver, y no es que llegue tarde: nunca se dibujó.
         """
         return self._annotate(result, respect_gate=False)
+
+    def draw_onto(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """
+        Dibuja in-place el resultado de este pipeline sobre el anotado de otro.
+
+        Es para la cámara que miran varios pipelines: el frame lo pone uno y los demás
+        dibujan encima su ROI, sus detecciones y el annotator, con las mismas opciones que
+        su propio anotado. Corre en el hilo del que llama y no pasa por el gate: quien la
+        llama ya tiene un anotado, así que alguien está mirando.
+
+        Tres cosas que `annotate()` hace y esto no:
+          - **No ajusta el lienzo.** Ya viene ajustado para mirar por el motor que lo
+            dibujó; otra pasada lo aclararía dos veces.
+          - **No dibuja la hora.** Es del frame, no de cada resultado: la pone una vez quien
+            arma el frame, al final, con `draw_timestamp()`.
+          - **No dibuja nada con `crop_to_roi`.** El lienzo es el recorte de otro pipeline y
+            las coordenadas de éste no tienen por qué caer adentro.
+        """
+        if not self._setting("inference.overlay.enabled", True):
+            return
+        options = self._cached("overlay_options", self._read_overlay_options)
+        if options.crop_to_roi:
+            return
+        try:
+            if options.draw_roi and result.roi_px is not None:
+                overlay.draw_roi(canvas_bgr, result.roi_px)
+            overlay.draw_detections(canvas_bgr, result.detections, options=options)
+        except Exception as e:
+            self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
+            return
+        self._run_annotator(canvas_bgr, result)
+
+    def draw_timestamp(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """Dibuja in-place la hora del resultado, si el config la pide. Va última: no se tapa."""
+        options = self._cached("overlay_options", self._read_overlay_options)
+        if not options.draw_timestamp:
+            return
+        try:
+            overlay.draw_timestamp(canvas_bgr, result.timestamp_s, options=options)
+        except Exception as e:
+            self._warn_throttled("timestamp", f"No se pudo dibujar la hora: {e}.")
+
+    def process(self, frame_bgr: np.ndarray, camera_slot: str) -> InferenceResult:
+        """
+        Corre el ciclo completo sobre un frame en el hilo del que llama, sin el hilo propio.
+
+        Es el mismo ciclo que corre `run()` —preprocessor, ROI, compuertas, pipeline,
+        classifier, analyzer y overlay— y por eso el resultado es el que saldría en vivo:
+        no hay un segundo camino de inferencia que pueda divergir del primero. Existe para
+        correr imágenes sueltas fuera de la app.
+
+        No emite `result_ready` ni suma a los contadores de `get_status()`, que cuentan lo
+        que procesó el hilo. Cargar el pipeline es de quien lo construyó: sin cargar, el
+        resultado sale inválido con el motivo `no_model`, como en vivo.
+
+        Levanta RuntimeError con el hilo corriendo: el pipeline es una sola instancia y no
+        es reentrante.
+        """
+        if self.isRunning():
+            raise RuntimeError(
+                f"[Inference/{self.pipeline_slot}] process() con el hilo corriendo: el "
+                f"pipeline no admite dos frames a la vez."
+            )
+        return self._process(frame_bgr, camera_slot)
 
     def get_status(self) -> dict:
         """
@@ -265,6 +356,7 @@ class InferenceThread(QThread):
 
             camera_slot, frame_bgr = job
             result = self._process(frame_bgr, camera_slot)
+            self._publish(result)
             self.result_ready.emit(result)
             self._emit_status_if_due()
 
@@ -274,9 +366,8 @@ class InferenceThread(QThread):
     # ── Cola de frames ───────────────────────────────────────────────────────
 
     def _accepts(self, camera_slot: str) -> bool:
-        """True si esa cámara está asignada al pipeline. Sin lista declarada, todas."""
-        camera_slots = self.camera_slots
-        if not camera_slots or camera_slot in camera_slots:
+        """`has_camera()`, avisando si no: un frame ajeno que llega acá es un cableado mal hecho."""
+        if self.has_camera(camera_slot):
             return True
         self._warn_throttled(
             f"foreign_{camera_slot}",
@@ -323,7 +414,7 @@ class InferenceThread(QThread):
         reason = self._gate_frame(result, camera_slot)
         if not reason:
             try:
-                detections = self._pipeline.run(region_bgr)
+                detections = self._pipeline.run(region_bgr, camera_slot)
             except Exception as e:
                 logger.error(
                     f"[Inference/{self.pipeline_slot}] Fallo en el pipeline para "
@@ -346,8 +437,6 @@ class InferenceThread(QThread):
         if result.is_valid:
             result.metrics = self._run_analyzer(result)
         result.annotated_bgr = self._annotate(result)
-
-        self._publish(result)
         return result
 
     def _gate_frame(self, result: InferenceResult, camera_slot: str) -> str:
@@ -365,7 +454,7 @@ class InferenceThread(QThread):
             )
             return REASON_NO_MODEL
 
-        illumination_min = int(self._config.get(f"cameras.{camera_slot}.illumination_min", 0) or 0)
+        illumination_min = int(self._setting(f"cameras.{camera_slot}.illumination_min", 0) or 0)
         if result.illumination_pct < illumination_min:
             # A nivel DEBUG a propósito: con la luz apagada esto pasa en cada frame.
             logger.debug(
@@ -384,8 +473,8 @@ class InferenceThread(QThread):
         como medición.
         """
         section = f"inference.pipelines.{self.pipeline_slot}"
-        min_detections = int(self._config.get(f"{section}.min_detections", 0) or 0)
-        min_confidence_pct = float(self._config.get(f"{section}.min_result_confidence_pct", 0) or 0)
+        min_detections = int(self._setting(f"{section}.min_detections", 0) or 0)
+        min_confidence_pct = float(self._setting(f"{section}.min_result_confidence_pct", 0) or 0)
 
         if result.detection_count < min_detections:
             return REASON_FEW_DETECTIONS
@@ -465,30 +554,73 @@ class InferenceThread(QThread):
         `respect_gate` en False lo saltea: lo usa `annotate()`, que dibuja una vez por
         medición y no una vez por frame. Lo que apaga el config no se saltea nunca.
 
-        Primero el anotado estándar y después el annotator del proyecto, que dibuja encima
-        sus referencias. Un annotator que falla no se lleva puesto el frame: queda lo que
-        haya alcanzado a dibujar más todo lo estándar.
+        Primero el anotado estándar, después el annotator del proyecto, que dibuja encima
+        sus referencias, y al final el timestamp. El timestamp va último porque es lo único
+        que no puede quedar tapado: una referencia que cruza el borde del frame —el
+        rectángulo de una cinta, un límite de carga— le pasaría por encima. Un annotator que
+        falla no se lleva puesto el frame: queda lo que haya alcanzado a dibujar más todo lo
+        estándar.
         """
-        if not self._config.get("inference.overlay.enabled", True):
+        if not self._setting("inference.overlay.enabled", True):
             return None
         if (respect_gate and self._annotate_gate is not None
                 and not self._annotate_gate(result.camera_slot)):
             return None
+        options = self._cached("overlay_options", self._read_overlay_options)
         try:
-            annotated = overlay.annotate(result, self._read_overlay_options())
+            annotated = overlay.annotate(result, replace(options, draw_timestamp=False),
+                                         canvas_adjust=self._canvas_adjust)
         except Exception as e:
             self._warn_throttled("overlay", f"No se pudo anotar el frame: {e}.")
             return None
+        if annotated is None:
+            return None
 
-        if annotated is not None and self._annotator is not None:
-            name = getattr(self._annotator, "__name__", repr(self._annotator))
-            try:
-                self._annotator(annotated, result)
-            except Exception as e:
-                self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
+        self._run_annotator(annotated, result)
+        self.draw_timestamp(annotated, result)
         return annotated
 
+    def _run_annotator(self, canvas_bgr: np.ndarray, result: InferenceResult):
+        """El annotator del proyecto. Uno que falla deja lo que alcanzó a dibujar."""
+        if self._annotator is None:
+            return
+        name = getattr(self._annotator, "__name__", repr(self._annotator))
+        try:
+            self._annotator(canvas_bgr, result)
+        except Exception as e:
+            self._warn_throttled("annotator", f"El annotator {name} falló: {e}.")
+
     # ── Lectura de config ────────────────────────────────────────────────────
+
+    def _setting(self, key_path: str, default: object = None) -> object:
+        """
+        Valor del config, releído sólo cuando la config cambió.
+
+        Esto corre varias veces por frame, en el hilo de captura y en el de inferencia, y
+        cada `get` toma el lock global del config y copia lo que devuelve: unas veinte
+        copias bajo lock por frame, peleando con la GUI. Un cambio desde la pantalla sigue
+        tomando efecto en el frame siguiente, porque mueve `revision`. Lo que devuelve se
+        comparte entre llamadas, así que no se modifica.
+        """
+        return self._cached(key_path, lambda: self._config.get(key_path, default))
+
+    def _cached(self, name: str, compute: Callable[[], object]) -> object:
+        """
+        `compute()` la primera vez y lo guardado después, mientras no cambie `revision`.
+
+        Sin lock a propósito: dos hilos que vean cambiar la revisión a la vez arman cada
+        uno su caché, y el que pierde sólo calculó de más. Un config sin `revision` —un
+        doble de test— se lee una sola vez.
+        """
+        revision = getattr(self._config, "revision", None)
+        settings = self._settings
+        if revision != self._settings_revision:
+            settings = {}
+            self._settings = settings
+            self._settings_revision = revision
+        if name not in settings:
+            settings[name] = compute()
+        return settings[name]
 
     def _get_interval_s(self) -> float:
         """
@@ -497,7 +629,7 @@ class InferenceThread(QThread):
         Se cuenta desde el push anterior aceptado y no desde el fin de la inferencia: así
         una inferencia lenta no acumula deuda que después se pague con una ráfaga.
         """
-        interval_s = self._config.get(
+        interval_s = self._setting(
             f"inference.pipelines.{self.pipeline_slot}.interval_s", _DEFAULT_INTERVAL_S)
         return max(0.0, float(interval_s or 0.0))
 
@@ -509,7 +641,7 @@ class InferenceThread(QThread):
         Un ancho o alto en 0 llega hasta el borde: es lo que permite recortar sólo de un
         lado sin tener que escribir el tamaño del sensor en el config.
         """
-        roi = self._config.get(f"cameras.{camera_slot}.roi", {}) or {}
+        roi = self._setting(f"cameras.{camera_slot}.roi", {}) or {}
         if not isinstance(roi, dict) or not roi.get("enabled", False):
             return None
 

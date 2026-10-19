@@ -7,8 +7,16 @@ forma del registro y vocabulario de `status`. Su sección de config es
 
 El token no sale de config.yaml: se lee de la variable de entorno INFLUXDB_TOKEN.
 
-No reintenta ni acumula: un batch que falla se pierde, con el motivo en el log y
-`status` en "error". El buffering, si el proyecto lo necesita, es de quien llama.
+**Un corte del servidor no pierde los puntos, hasta un tope.** Lo que no se pudo escribir
+queda en memoria y sale con el próximo intento: cada punto lleva el instante en que se
+midió, así que llega tarde pero cae en su lugar de la serie. Mientras el servidor está
+caído no se lo vuelve a llamar hasta `_RETRY_INTERVAL_S`: cada intento bloquea el hilo de
+telemetría hasta el timeout HTTP, y hacerlo en cada batch llenaba la cola de
+`persistence.py` de puntos descartados. Pasado `_PENDING_MAX_POINTS` se descartan los más
+viejos, y al cerrar se pierde lo pendiente: no hay buffer en disco.
+
+Un batch que el servidor **rechaza** —un 4xx como el conflicto de tipo de un campo— no se
+reintenta: fallaría siempre y arrastraría a todos los que vengan detrás.
 
 Sin la librería `influxdb-client` instalada el backend degrada a no-op y lo avisa
 por `status`; el llamador no tiene que preguntar si está disponible.
@@ -20,6 +28,8 @@ por `status`; el llamador no tiene que preguntar si está disponible.
 """
 
 import os
+import time
+from collections import deque
 
 from system.config_manager import ConfigManager
 from system.logger import logger
@@ -43,6 +53,10 @@ _TOKEN_ENV_VAR = "INFLUXDB_TOKEN"
 
 _NS_PER_S = 1_000_000_000
 
+_TIMEOUT_MS = 5000             # timeout HTTP de cada escritura; el de la librería es 10 s
+_RETRY_INTERVAL_S = 30.0       # espera entre intentos mientras el servidor no contesta
+_PENDING_MAX_POINTS = 6000     # puntos guardados durante un corte: ~10 min a 10 puntos/s
+
 
 class InfluxDBBackend(AbstractTelemetryBackend):
     """
@@ -60,6 +74,11 @@ class InfluxDBBackend(AbstractTelemetryBackend):
         self._write_api = None
         self._org = ""
         self._bucket = ""
+        # Lo que todavía no se pudo escribir. Lo toca sólo el hilo de telemetría.
+        self._pending: deque = deque(maxlen=_PENDING_MAX_POINTS)
+        self._retry_at_s = 0.0
+        self._outage_lost_points = 0
+        self._in_outage = False
 
     # ── API pública ──────────────────────────────────────────────────────────
 
@@ -101,7 +120,8 @@ class InfluxDBBackend(AbstractTelemetryBackend):
             return
 
         try:
-            self._client = InfluxDBClient(url=url, token=token, org=self._org)
+            self._client = InfluxDBClient(url=url, token=token, org=self._org,
+                                          timeout=_TIMEOUT_MS)
             self._write_api = self._client.write_api(write_options=SYNCHRONOUS)
         except Exception as e:
             logger.error(f"[InfluxDB] No se pudo crear el cliente para {url}: {e}")
@@ -121,28 +141,53 @@ class InfluxDBBackend(AbstractTelemetryBackend):
 
     def write(self, batch: list):
         """
-        Escribe un batch de registros. Los que no tengan measurement o fields se saltean.
+        Escribe un batch de registros, junto con lo que haya quedado pendiente de antes.
+        Los registros sin measurement o sin fields se saltean.
 
-        Los errores no se propagan: quedan en el log y en `status`.
+        Con el servidor caído sólo acumula, hasta que vence `_RETRY_INTERVAL_S`. Los errores
+        no se propagan: quedan en el log —una vez por corte— y en `status`.
         """
-        if self._write_api is None or not batch:
+        if self._write_api is None:
+            return
+        self._keep([point for point in (self._build_point(rec) for rec in batch or [])
+                    if point is not None])
+        if not self._pending or time.monotonic() < self._retry_at_s:
             return
 
-        points = [point for point in (self._build_point(rec) for rec in batch)
-                  if point is not None]
-        if not points:
-            return
-
+        points = list(self._pending)
         try:
             self._write_api.write(bucket=self._bucket, org=self._org, record=points)
-            self._status = STATUS_CONNECTED
-            logger.debug(f"[InfluxDB] {len(points)} puntos escritos.")
         except Exception as e:
             self._status = STATUS_ERROR
-            logger.warning(f"[InfluxDB] Error escribiendo {len(points)} puntos: {e}")
+            if not _is_retryable(e):
+                self._pending.clear()
+                logger.warning(f"[InfluxDB] El servidor rechazó {len(points)} puntos y se "
+                               f"descartan, porque reintentarlos fallaría igual: {e}")
+                return
+            self._retry_at_s = time.monotonic() + _RETRY_INTERVAL_S
+            if not self._in_outage:
+                self._in_outage = True
+                logger.warning(
+                    f"[InfluxDB] Error escribiendo {len(points)} puntos: {e}. Se guardan "
+                    f"hasta {_PENDING_MAX_POINTS} y se reintenta cada {_RETRY_INTERVAL_S:.0f} s.")
+            return
+
+        self._pending.clear()
+        self._status = STATUS_CONNECTED
+        if self._in_outage:
+            lost = (f", {self._outage_lost_points} perdidos por falta de lugar"
+                    if self._outage_lost_points else "")
+            logger.info(f"[InfluxDB] El servidor volvió: {len(points)} puntos escritos{lost}.")
+            self._in_outage = False
+            self._outage_lost_points = 0
+        else:
+            logger.debug(f"[InfluxDB] {len(points)} puntos escritos.")
 
     def close(self):
-        """Cierra el cliente y su write_api. Idempotente."""
+        """Cierra el cliente y su write_api. Idempotente. Lo pendiente se pierde, con aviso."""
+        if self._pending:
+            logger.warning(f"[InfluxDB] Se cierra con {len(self._pending)} puntos sin escribir.")
+            self._pending.clear()
         if self._client is not None:
             try:
                 self._client.close()
@@ -153,6 +198,16 @@ class InfluxDBBackend(AbstractTelemetryBackend):
         self._status = STATUS_DISABLED
 
     # ── Internos ─────────────────────────────────────────────────────────────
+
+    def _keep(self, points: list):
+        """Suma puntos a lo pendiente; lleno, se van los más viejos y se cuentan."""
+        overflow = len(self._pending) + len(points) - _PENDING_MAX_POINTS
+        if overflow > 0:
+            if not self._outage_lost_points:
+                logger.warning(f"[InfluxDB] {_PENDING_MAX_POINTS} puntos pendientes: se "
+                               f"descartan los más viejos hasta que el servidor vuelva.")
+            self._outage_lost_points += overflow
+        self._pending.extend(points)
 
     def _ping(self) -> bool:
         try:
@@ -185,3 +240,14 @@ class InfluxDBBackend(AbstractTelemetryBackend):
         if timestamp_s is not None:
             point = point.time(int(timestamp_s * _NS_PER_S), WritePrecision.NS)
         return point
+
+
+def _is_retryable(error: Exception) -> bool:
+    """
+    Si vale la pena reintentar lo que falló: todo salvo un 4xx del servidor.
+
+    Un 4xx dice que el batch está mal —tipo de campo, bucket, permisos— y fallaría igual
+    la próxima vez. El 429 es la excepción: es el servidor pidiendo que se espere.
+    """
+    status = getattr(error, "status", None)
+    return not (isinstance(status, int) and 400 <= status < 500 and status != 429)

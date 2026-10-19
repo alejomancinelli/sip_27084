@@ -18,7 +18,8 @@ Cualquier cliente MJPEG los consume: el navegador abriendo la URL,
 
 Tres cosas cuidan el CPU y el ancho de banda, y las tres importan porque el feed
 crudo llega al ritmo de la cámara y la codificación corre en el hilo que empuja:
-  - Sin clientes en un stream no se codifica nada: `push_*` sale enseguida.
+  - Sin clientes en un stream no se codifica nada: el crudo se descarta y el anotado se
+    guarda sin codificar, para codificarlo recién si un cliente lo pide.
   - Cada frame se reduce a `video.http.frame_width_px` antes de codificar.
   - Cada cliente recibe como máximo un frame cada `_SEND_PERIOD_S`.
 
@@ -102,6 +103,18 @@ def _downscale(frame_bgr: np.ndarray, frame_width_px: int) -> np.ndarray:
                       interpolation=cv2.INTER_AREA)
 
 
+def _encode(key: StreamKey, frame_bgr: np.ndarray, *,
+            jpeg_quality: int = _DEFAULT_JPEG_QUALITY,
+            frame_width_px: int = _DEFAULT_FRAME_WIDTH_PX) -> bytes | None:
+    """El frame reducido y codificado en JPEG, o None si no se pudo codificar."""
+    ok, buf = cv2.imencode(".jpg", _downscale(frame_bgr, frame_width_px),
+                           [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+    if not ok:
+        logger.warning(f"[HttpVideo] No se pudo codificar el frame de /{key[0]}/{key[1]}.")
+        return None
+    return buf.tobytes()
+
+
 def _build_part_header(jpeg_size: int) -> bytes:
     """Arma la cabecera multipart que precede a cada JPEG del stream."""
     return (
@@ -111,11 +124,11 @@ def _build_part_header(jpeg_size: int) -> bytes:
     ).encode()
 
 
-def _build_info_html(slots: tuple[str, ...]) -> bytes:
+def _build_info_html(names: tuple[str, ...]) -> bytes:
     """Página con un link por stream disponible."""
     links = "\n".join(
-        f'<a href="/{slot}/{mode}">/{slot}/{mode}</a>'
-        for slot in slots for mode in MODES
+        f'<a href="/{name}/{mode}">/{name}/{mode}</a>'
+        for name in names for mode in MODES
     ) or "<p>No hay cámaras configuradas.</p>"
     return f"""\
 <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -192,6 +205,8 @@ class _FrameStore:
     def __init__(self):
         self._jpegs: dict[StreamKey, bytes] = {}
         self._seqs: dict[StreamKey, int] = {}
+        # Frames guardados sin codificar, con los parámetros con que se codificarían.
+        self._kept: dict[StreamKey, tuple[np.ndarray, dict]] = {}
         self._is_closed = False
         self._cond = threading.Condition()
 
@@ -204,21 +219,44 @@ class _FrameStore:
                jpeg_quality: int = _DEFAULT_JPEG_QUALITY,
                frame_width_px: int = _DEFAULT_FRAME_WIDTH_PX):
         """Codifica el frame reducido y despierta a los clientes que esperan."""
-        ok, buf = cv2.imencode(".jpg", _downscale(frame_bgr, frame_width_px),
-                               [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-        if not ok:
-            logger.warning(f"[HttpVideo] No se pudo codificar el frame de /{key[0]}/{key[1]}.")
+        jpeg = _encode(key, frame_bgr, jpeg_quality=jpeg_quality,
+                       frame_width_px=frame_width_px)
+        if jpeg is None:
             return
-        jpeg = buf.tobytes()
         with self._cond:
-            self._jpegs[key] = jpeg
-            self._seqs[key] = self._seqs.get(key, 0) + 1
-            self._cond.notify_all()
+            self._kept.pop(key, None)
+            self._store_locked(key, jpeg)
+
+    def keep(self, key: StreamKey, frame_bgr: np.ndarray, **encoding):
+        """
+        Guarda el frame sin codificarlo: lo codifica `get()` cuando un cliente lo pida.
+
+        Es para el stream que nadie mira pero cuyo último frame tiene que estar cuando
+        alguien se conecte: guardar la referencia no cuesta nada, y codificar cada uno
+        para nadie costaba un resize y un JPEG por frame.
+        """
+        with self._cond:
+            self._kept[key] = (frame_bgr, encoding)
 
     def get(self, key: StreamKey) -> tuple[bytes | None, int]:
-        """Último JPEG del stream y su número de secuencia."""
+        """Último JPEG del stream y su número de secuencia, codificando el guardado si hay."""
+        with self._cond:
+            kept = self._kept.pop(key, None)
+            seq_at_pop = self._seqs.get(key, 0)
+        if kept is not None:
+            jpeg = _encode(key, kept[0], **kept[1])
+            with self._cond:
+                # Si mientras se codificaba llegó uno más nuevo, el guardado ya es viejo.
+                if jpeg is not None and self._seqs.get(key, 0) == seq_at_pop:
+                    self._store_locked(key, jpeg)
         with self._cond:
             return self._jpegs.get(key), self._seqs.get(key, 0)
+
+    def _store_locked(self, key: StreamKey, jpeg: bytes):
+        """Publica un JPEG y despierta a los clientes. Se llama con el Condition tomado."""
+        self._jpegs[key] = jpeg
+        self._seqs[key] = self._seqs.get(key, 0) + 1
+        self._cond.notify_all()
 
     def wait_for_change(self, key: StreamKey, last_seq: int, timeout_s: float):
         """Duerme hasta que el stream tenga algo más nuevo que `last_seq`, o venza el timeout."""
@@ -250,8 +288,10 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             self._send_info()
             return
         parts = self.path.strip("/").split("/")
-        if len(parts) == 2 and parts[0] in self.server.slots and parts[1] in MODES:
-            self._send_stream((parts[0], parts[1]))
+        # La ruta puede traer el nombre público de la cámara; el frame se guarda por slot.
+        camera_slot = self.server.slot_by_name.get(parts[0]) if len(parts) == 2 else None
+        if camera_slot is not None and parts[1] in MODES:
+            self._send_stream((camera_slot, parts[1]))
         else:
             self.send_error(404)
 
@@ -293,7 +333,10 @@ class _StreamingHandler(BaseHTTPRequestHandler):
             # y el hilo no muere hasta que el cliente cierre el socket.
             self.close_connection = True
             remaining = subs.unregister(key, token)
-            if remaining == 0:
+            # El anotado no se borra: es la última medición, y el que se conecte después
+            # tiene que verla sin esperar el ciclo siguiente. El crudo sí, porque el
+            # próximo frame llega enseguida y uno viejo mostraría una escena que ya pasó.
+            if remaining == 0 and key[1] != MODE_ANNOTATED:
                 store.clear(key)
             self.server.log_client_event(
                 f"Cliente desconectado de /{key[0]}/{key[1]} "
@@ -332,12 +375,12 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = sys.platform != "win32"
 
     def __init__(self, address: tuple[str, int], frame_store: _FrameStore,
-                 subscribers: _Subscribers, slots: tuple[str, ...],
+                 subscribers: _Subscribers, slot_by_name: dict,
                  config_manager: ConfigManager):
         self.frame_store = frame_store
         self.subscribers = subscribers
-        self.slots = slots
-        self.info_html = _build_info_html(slots)
+        self.slot_by_name = slot_by_name
+        self.info_html = _build_info_html(tuple(slot_by_name))
         self._config = config_manager
         super().__init__(address, _StreamingHandler)
 
@@ -374,13 +417,31 @@ class HttpVideoServer(AbstractVideoServer):
     y la codificación, que la paga el hilo que empuja el frame.
     """
 
+    CONFIG_KEY = "http"
+
     def __init__(self, config_manager: ConfigManager):
         super().__init__(config_manager)
+        self._names_by_slot: dict = {}
+        self._slot_by_name: dict = {}
         self._store = _FrameStore()
         self._subs = _Subscribers()
         self._server: _ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._is_active = False
+
+    def get_stream_urls(self) -> list[str]:
+        """
+        URLs de los streams, con la forma de ruta que este servidor sirve.
+
+        Las arma el servidor y no quien cablea: la ruta puede llevar el nombre público de
+        la cámara en vez del slot, y componerla afuera la dejaría definida en dos lugares
+        —que es como quedan desincronizadas—.
+        """
+        if self._status != STATUS_ACTIVE:
+            return []
+        port = int(self._config.get(f"video.{self.CONFIG_KEY}.port", _DEFAULT_PORT))
+        return [f"http://127.0.0.1:{port}/{name}/{mode}"
+                for name in self._names_by_slot.values() for mode in MODES]
 
     def get_client_count(self) -> int:
         """Clientes conectados, sumando todos los streams."""
@@ -397,17 +458,23 @@ class HttpVideoServer(AbstractVideoServer):
         # El chequeo de clientes va antes de leer el config: esto corre por frame de
         # cámara, así que sin nadie mirando tiene que salir lo más barato posible.
         #
-        # El anotado no pasa por ese chequeo. Llega uno por medición, no uno por frame, y
-        # descartarlo por no tener clientes en ese instante deja al que se conecta después
-        # esperando el ciclo entero —minutos— por una imagen que ya existía. El costo es
-        # acotado porque el frame anotado sólo existe si alguien lo mandó dibujar.
-        if key[1] != MODE_ANNOTATED and not self._is_watched(key):
+        # El anotado sin clientes no se descarta: puede ser uno por medición, y tirarlo
+        # dejaría al que se conecta después esperando el ciclo entero —minutos— por una
+        # imagen que ya existía. Tampoco se codifica: se guarda tal cual y se codifica
+        # recién si alguien lo pide. Con la pantalla en anotado llega uno por frame, y
+        # codificarlo para nadie era un resize y un JPEG a ritmo de cámara.
+        is_watched = self._is_watched(key)
+        if not is_watched and key[1] != MODE_ANNOTATED:
             return
-        jpeg_quality = self._config.get("video.http.jpeg_quality", _DEFAULT_JPEG_QUALITY)
-        frame_width_px = self._config.get("video.http.frame_width_px",
-                                          _DEFAULT_FRAME_WIDTH_PX)
-        self._store.update(key, frame_bgr,
-                           jpeg_quality=jpeg_quality, frame_width_px=frame_width_px)
+        encoding = {
+            "jpeg_quality": self._config.get("video.http.jpeg_quality", _DEFAULT_JPEG_QUALITY),
+            "frame_width_px": self._config.get("video.http.frame_width_px",
+                                               _DEFAULT_FRAME_WIDTH_PX),
+        }
+        if is_watched:
+            self._store.update(key, frame_bgr, **encoding)
+        else:
+            self._store.keep(key, frame_bgr, **encoding)
 
     # ── Ciclo de vida ────────────────────────────────────────────────────────
 
@@ -419,6 +486,9 @@ class HttpVideoServer(AbstractVideoServer):
             return
 
         self._slots = self._read_camera_slots()
+        stream_names = self._read_stream_names()
+        self._names_by_slot = {slot: stream_names.get(slot, slot) for slot in self._slots}
+        self._slot_by_name = {name: slot for slot, name in self._names_by_slot.items()}
         if not self._slots:
             logger.warning("[HttpVideo] No hay cámaras en el config: no hay streams que servir.")
 
@@ -430,7 +500,7 @@ class HttpVideoServer(AbstractVideoServer):
         port = self._config.get("video.http.port", _DEFAULT_PORT)
         try:
             server = _ThreadingHTTPServer((_HOST, port), self._store, self._subs,
-                                          self._slots, self._config)
+                                          self._slot_by_name, self._config)
         except OSError as e:
             self._status = STATUS_ERROR
             logger.error(f"[HttpVideo] No se pudo iniciar en puerto {port}: {e}")
@@ -446,8 +516,10 @@ class HttpVideoServer(AbstractVideoServer):
         self._is_active = True
         self._status = STATUS_ACTIVE
         logger.info(f"[HttpVideo] Servidor activo en http://{_HOST}:{port}")
-        for slot in self._slots:
-            logger.info(f"[HttpVideo]   /{slot}/{MODE_RAW} y /{slot}/{MODE_ANNOTATED}")
+        for slot, name in self._names_by_slot.items():
+            renamed = f"   (slot {slot})" if name != slot else ""
+            logger.info(f"[HttpVideo]   /{name}/{MODE_RAW} y /{name}/{MODE_ANNOTATED}"
+                        f"{renamed}")
 
     def stop(self):
         """Detiene el servidor, corta los streams abiertos y libera el puerto. Idempotente."""

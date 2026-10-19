@@ -2,10 +2,8 @@
 conectado, espera por número de secuencia, ciclo de vida y endpoints."""
 
 import logging
-import os
 import socket
 import struct
-import sys
 import threading
 import time
 from http.client import HTTPConnection, HTTPResponse
@@ -485,6 +483,27 @@ class TestPushGating:
         server.push_annotated("camera_1", _frame())
         assert server._store.get(_ANNOTATED_1)[0] is not None
 
+    def test_an_unwatched_annotated_frame_is_not_encoded_until_asked(self, monkeypatch):
+        """Con la pantalla en anotado llega uno por frame: codificarlo para nadie era caro."""
+        encoded = []
+        real_encode = hvs._encode
+        monkeypatch.setattr(hvs, "_encode",
+                            lambda *args, **kwargs: encoded.append(1) or real_encode(
+                                *args, **kwargs))
+        server = _watched_server()
+        for _ in range(5):
+            server.push_annotated("camera_1", _frame())
+        assert encoded == []
+        assert server._store.get(_ANNOTATED_1)[0] is not None
+        assert encoded == [1]
+
+    def test_a_kept_frame_does_not_replace_a_newer_encoded_one(self):
+        store = _FrameStore()
+        store.keep(_ANNOTATED_1, np.full((120, 160, 3), 10, np.uint8))
+        store.update(_ANNOTATED_1, np.full((120, 160, 3), 200, np.uint8))
+        jpeg, _ = store.get(_ANNOTATED_1)
+        assert cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR).mean() > 150
+
     def test_the_raw_stream_is_still_gated(self):
         """Es el que llega al ritmo de la cámara: ahí el ahorro es real."""
         server = _watched_server(_ANNOTATED_1)
@@ -537,7 +556,7 @@ class TestPushGating:
 
 class TestSlots:
     def test_slots_keep_the_config_order(self, server):
-        assert server._server.slots == ("camera_1", "camera_2")
+        assert tuple(server._server.slot_by_name.values()) == ("camera_1", "camera_2")
 
     def test_slots_include_disabled_cameras(self, monkeypatch):
         """`enabled` cambia en caliente: la ruta no puede aparecer y desaparecer."""
@@ -545,7 +564,7 @@ class TestSlots:
         server = HttpVideoServer(_MockConfig(cameras={"camera_1": {"enabled": False}}))
         server.start()
         try:
-            assert server._server.slots == ("camera_1",)
+            assert tuple(server._server.slot_by_name.values()) == ("camera_1",)
         finally:
             server.stop()
 
@@ -555,7 +574,7 @@ class TestSlots:
         server.start()
         try:
             assert server.status == "active"
-            assert server._server.slots == ()
+            assert server._server.slot_by_name == {}
         finally:
             server.stop()
 
@@ -701,6 +720,16 @@ class TestClientDisconnect:
         server.push_raw("camera_1", _frame())
         assert server._store.get(_RAW_1)[0] is None
 
+    def test_the_last_annotated_frame_survives_the_last_client(self, server):
+        """Es la última medición: el que se conecte después tiene que verla sin esperar."""
+        sock = _open_stream(server, "/camera_1/annotated")
+        assert _wait_until(lambda: server.has_annotated_clients("camera_1"))
+        server.push_annotated("camera_1", _frame())
+        _reset(sock)
+        assert _wait_until(lambda: not server.has_annotated_clients("camera_1"))
+        time.sleep(0.2)
+        assert server._store.get(_ANNOTATED_1)[0] is not None
+
     def test_one_client_leaving_does_not_cut_the_other(self, server):
         leaving = _open_stream(server, "/camera_1/raw")
         staying = _get(server, "/camera_1/raw")
@@ -778,3 +807,57 @@ class TestConnectionLogging:
             server.stop()
         assert _logged(caplog, "Servidor activo")
         assert _logged(caplog, "Servidor detenido")
+
+
+class TestStreamNames:
+    """
+    La ruta puede llevar un nombre distinto del slot.
+
+    Está para una instalación cuyas URLs ya están puestas en un tablero o un NVR: cambiar
+    la ruta rompe algo de afuera que el equipo no controla. Sólo afecta a la ruta — el slot
+    sigue siendo el mismo en los registros y en la telemetría.
+    """
+
+    def _server(self, monkeypatch, **overrides):
+        monkeypatch.setattr(hvs, "_HOST", _LOOPBACK)
+        config = _MockConfig(cameras={"camera_1": {}}, **overrides)
+        server = HttpVideoServer(config)
+        server.start()
+        return server
+
+    def test_the_route_uses_the_public_name(self, monkeypatch):
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "entrada"}})
+        try:
+            assert server._server.slot_by_name == {"entrada": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_the_urls_use_the_public_name(self, monkeypatch):
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "entrada"}})
+        try:
+            assert all("/entrada/" in url for url in server.get_stream_urls())
+        finally:
+            server.stop()
+
+    def test_without_the_key_the_route_is_the_slot(self, monkeypatch):
+        server = self._server(monkeypatch)
+        try:
+            assert server._server.slot_by_name == {"camera_1": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_an_empty_name_is_ignored(self, monkeypatch):
+        """Un nombre en blanco dejaría la cámara sin ruta que servir."""
+        server = self._server(monkeypatch,
+                              **{"video.http.stream_names": {"camera_1": "  "}})
+        try:
+            assert server._server.slot_by_name == {"camera_1": "camera_1"}
+        finally:
+            server.stop()
+
+    def test_a_stopped_server_publishes_no_urls(self, monkeypatch):
+        server = self._server(monkeypatch)
+        server.stop()
+        assert server.get_stream_urls() == []

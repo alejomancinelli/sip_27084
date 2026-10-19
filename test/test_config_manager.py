@@ -3,7 +3,6 @@ aislamiento de los valores que entrega, guardado atómico y acceso concurrente."
 
 import logging
 import os
-import sys
 import threading
 
 import pytest
@@ -232,6 +231,35 @@ class TestSet:
         assert cfg.get("cameras.camera_1.roi.x_px") == 0
 
 
+class TestRevision:
+    """Lo que un lector que cachea compara para saber si lo que guardó sigue valiendo."""
+
+    def test_a_set_moves_it(self, tmp_path):
+        cfg = _manager(_write_config(tmp_path))
+        before = cfg.revision
+        cfg.set("cameras.camera_1.name", "OTRO")
+        assert cfg.revision != before
+
+    def test_a_reload_moves_it(self, tmp_path):
+        cfg = _manager(_write_config(tmp_path))
+        before = cfg.revision
+        cfg.load()
+        assert cfg.revision != before
+
+    def test_reading_does_not_move_it(self, tmp_path):
+        cfg = _manager(_write_config(tmp_path))
+        before = cfg.revision
+        cfg.get("cameras.camera_1.name")
+        cfg.get("no.existe", 0)
+        assert cfg.revision == before
+
+    def test_a_refused_set_does_not_move_it(self, tmp_path):
+        cfg = _manager(_write_config(tmp_path))
+        before = cfg.revision
+        cfg.set("cameras.camera_1.name.foo", 1)
+        assert cfg.revision == before
+
+
 class TestSave:
     def test_saves_and_survives_a_reload(self, tmp_path):
         path = _write_config(tmp_path)
@@ -339,7 +367,7 @@ class TestThreadSafety:
         writer.start()
         try:
             for _ in range(300):
-                for slot, data in cfg.get("cameras", {}).items():
+                for slot, _data in cfg.get("cameras", {}).items():
                     assert slot
         except RuntimeError as error:
             errors.append(error)

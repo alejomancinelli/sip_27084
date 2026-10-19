@@ -49,7 +49,12 @@ sin ellos no se puede reanalizar: dentro de seis meses, con la escala cambiada, 
 puede saber con qué números se calculó lo que quedó escrito. Quién los arma es el
 cableado, que es el único que sabe qué mide esta instalación.
 
-Tres filtros deciden qué llega a disco, en este orden, en los dos modos:
+Cuatro filtros deciden qué llega a disco, en este orden, en los dos modos:
+  - `image_collector.cameras`: qué cámaras se guardan. Lista vacía = todas, así que
+    una cámara que se agregue después entra sola; con una lista explícita, no entra
+    hasta sumarla. Se aplica antes de armar el job, en `push_frame()` y en
+    `save_now()`, y `should_collect()` lo expone para que el llamador no arme lo que
+    se va a descartar.
   - `save_conditions`: predicados sobre el dict de inferencia (ver
     conditions). Lista vacía = pasa todo.
   - dedup por hash perceptual: descarta el frame casi idéntico a uno de los últimos
@@ -69,8 +74,8 @@ Cuatro puntos del contrato que no se ven en las firmas:
     y una cámara que dejó de pushear no se guarda dos veces. El último push gana, así
     que conviene conectar un solo productor por cámara — el de la inferencia si se
     quieren el frame anotado y el JSON, el de la captura si alcanza el frame crudo.
-  - `image_collector.enabled` se lee en cada guardado, así que prender y apagar la
-    recolección no exige reiniciar. El modo, en cambio, se lee en `start()`: cambiarlo
+  - `image_collector.enabled` y `image_collector.cameras` se leen en cada guardado, así
+    que prender y apagar la recolección, o una cámara, no exige reiniciar. El modo, en cambio, se lee en `start()`: cambiarlo
     exige `stop()` + `start()`.
   - Las escrituras están serializadas entre sí, sin importar de qué hilo vengan, y
     `get_stats()` nunca espera a una: devuelve la última foto publicada.
@@ -299,6 +304,18 @@ class ImageCollector:
         """True si el hilo de intervalo está vivo. Siempre False en modo on_demand."""
         return self._thread is not None and self._thread.is_alive()
 
+    def should_collect(self, camera_slot: str) -> bool:
+        """
+        True si la recolección está prendida y esa cámara está entre las que se guardan.
+
+        Es el mismo filtro que aplican `push_frame()` y `save_now()`: el llamador lo
+        consulta para no armar el JSON ni el contexto de lo que se va a descartar.
+        """
+        if not self.is_active:
+            return False
+        cameras = self._get_cameras()
+        return not cameras or camera_slot in cameras
+
     def set_active(self, active: bool) -> bool:
         """
         Prende o apaga la recolección y lo persiste en el config.
@@ -348,15 +365,15 @@ class ImageCollector:
         """
         Deja el último frame de esa cámara para que el hilo lo guarde. Modo interval.
 
-        Thread-safe y barata: copia los frames y vuelve, sin tocar el disco. Cada
-        llamada reemplaza a la anterior de esa cámara, así que el frame anotado y el
-        JSON son siempre los de la captura que se está guardando, nunca los de una
-        anterior — por eso conviene un solo productor por cámara.
+        Thread-safe y barata: guarda la referencia a los frames y vuelve, sin copiarlos ni
+        tocar el disco. Cada llamada reemplaza a la anterior de esa cámara, así que el
+        frame anotado y el JSON son siempre los de la captura que se está guardando, nunca
+        los de una anterior — por eso conviene un solo productor por cámara.
 
         No guarda nada por sí sola: sin hilo de intervalo corriendo el frame se
         descarta. Para pedir un guardado puntual está `save_now()`.
         """
-        if not self.is_active:
+        if not self.should_collect(camera_slot):
             return
         if not self.is_running:
             self._warn_throttled(
@@ -385,19 +402,21 @@ class ImageCollector:
 
         `frame_bgr` es el frame de cámara y `annotated_bgr` el mismo frame con las
         anotaciones dibujadas: van en la misma llamada para que original/ y annotated/
-        correspondan siempre a la misma captura. Los frames se copian acá; el dict de
-        inferencia se guarda como vino, así que el llamador no lo modifica después.
+        correspondan siempre a la misma captura. Los frames no se copian, porque nadie los
+        modifica después; el dict de inferencia se guarda como vino, así que el llamador no
+        lo modifica después.
 
         `context` son los parámetros con los que se produjo esa medición —una escala, un
         umbral—: se guardan tal cual en el JSON y el colector no mira adentro. Existen
         porque un dataset sin ellos no se puede reanalizar: dentro de seis meses, con la
         escala cambiada, nadie puede saber con qué números se calculó lo que quedó escrito.
 
-        Devuelve False si la recolección está apagada, no vino nada que guardar, algún
-        filtro descartó el frame o ninguna escritura tuvo éxito. Funciona en los dos
-        modos: en interval es el guardado puntual que no espera la vuelta del hilo.
+        Devuelve False si la recolección está apagada o no incluye esa cámara, no vino
+        nada que guardar, algún filtro descartó el frame o ninguna escritura tuvo éxito.
+        Funciona en los dos modos: en interval es el guardado puntual que no espera la
+        vuelta del hilo.
         """
-        if not self.is_active:
+        if not self.should_collect(camera_slot):
             return False
         job = self._build_job(camera_slot, frame_bgr, annotated_bgr, inference, context)
         if job is None:
@@ -409,6 +428,7 @@ class ImageCollector:
         Estado de la recolección con claves estables:
           mode              : 'interval' | 'on_demand'
           active            : bool — `image_collector.enabled`
+          cameras           : [camera_slot] que se guardan; [] = todas
           running           : bool — hilo de intervalo vivo
           images            : {camera_slot: guardados en disco dentro del tope}
           saved / skipped   : guardados y descartados por filtro desde que se creó
@@ -430,6 +450,7 @@ class ImageCollector:
         return {
             "mode": self.mode,
             "active": self.is_active,
+            "cameras": self._get_cameras(),
             "running": self.is_running,
             "images": images,
             "saved": counters["saved"],
@@ -756,21 +777,34 @@ class ImageCollector:
                    annotated_bgr: np.ndarray | None, inference: dict | None,
                    context: dict | None) -> _SaveJob | None:
         """
-        Copia la captura en un job propio, o None si no vino nada que guardar.
+        Arma el job de la captura, o None si no vino nada que guardar.
 
-        Los frames se copian acá y no en la escritura: el productor reutiliza sus
-        buffers en cuanto vuelve de la llamada.
+        Los frames no se copian: el driver entrega arrays propios que nadie modifica
+        después (ver `AbstractCameraDriver.get_frame`), y el anotado se dibuja una vez y
+        no se vuelve a tocar. En modo interval esto corre por resultado, y copiar los dos
+        frames eran 18 MB por medición para quedarse sólo con el último.
         """
         if frame_bgr is None and annotated_bgr is None and not inference:
             return None
         return _SaveJob(
             camera_slot=camera_slot,
             captured_at=datetime.now(),
-            frame_bgr=None if frame_bgr is None else frame_bgr.copy(),
-            annotated_bgr=None if annotated_bgr is None else annotated_bgr.copy(),
+            frame_bgr=frame_bgr,
+            annotated_bgr=annotated_bgr,
             inference=dict(inference) if inference else None,
             context=dict(context) if context else None,
         )
+
+    def _get_cameras(self) -> list[str]:
+        """Slots de `image_collector.cameras`. Vacía = todas, y un valor que no es lista, también."""
+        cameras = self._config.get("image_collector.cameras", []) or []
+        if not isinstance(cameras, (list, tuple)):
+            self._warn_throttled(
+                "cameras",
+                f"'image_collector.cameras' no es una lista ({cameras!r}): se guardan todas."
+            )
+            return []
+        return [str(slot) for slot in cameras]
 
     def _get_dataset_path(self) -> str:
         """Ruta absoluta del dataset; las relativas se anclan a la raíz del repo."""

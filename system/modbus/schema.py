@@ -40,6 +40,19 @@ PRODUCER_CONFIG = "config"         # espejo R/W de config.yaml; lo maneja este e
 PRODUCERS = (PRODUCER_INFERENCE, PRODUCER_HEALTH, PRODUCER_CONFIG)
 
 
+def to_plc_address(addr: int) -> str:
+    """
+    La dirección como la nombra el PLC: el registro 1 es el 40001.
+
+    El `4` adelante es la convención con la que se documentan los holding registers, y no
+    algo que viaje por el cable —en el protocolo la petición lleva un offset de base 0, así
+    que el registro 1 se pide como offset 0—. Son tres numeraciones para lo mismo, y por eso
+    la conversión vive acá y no en cada pantalla: adentro del repo la dirección es siempre
+    base-1, y esto es lo único que la traduce para mostrarla.
+    """
+    return f"4{int(addr):04d}"
+
+
 def to_uint16(value: object, scale: int = 1) -> int:
     """Codifica un valor (o None) a un holding register, saturando en el rango."""
     if value is None:

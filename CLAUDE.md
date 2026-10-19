@@ -1,10 +1,20 @@
 # CLAUDE.md
 
-Plantilla de proyectos de visión artificial industrial: captura de una o varias
-cámaras GigE, inferencia, publicación del resultado a PLC y a dashboards. Cada
-instalación es un fork de este repo; lo que cambia entre forks son los valores de
-`config.yaml`, el mapa de registros Modbus y el modelo de inferencia, no la
-plomería.
+**SIP Smart Belt Monitor — Cargill APG, proyecto 27084.** Mide la composición del material
+que pasa por una cinta: qué proporción es pellet entero y qué proporción viene desmenuzado,
+y cuán cargada está la cinta. Una cámara GigE sobre la cinta, un YOLO de segmentación en una
+Jetson, y el resultado al PLC por Modbus y a un dashboard de Grafana por InfluxDB.
+
+Es un fork del template de visión artificial industrial de la familia. La plomería —captura,
+inferencia, telemetría, video, licencia, interfaz— viene del template y se cross-portea; lo
+del proyecto son `config.yaml`, el mapa de registros, el modelo, el pipeline, las métricas y
+los annotators.
+
+**El equipo corre en una NVIDIA Jetson.** El `.engine` de TensorRT se compila ahí y no en la
+PC de desarrollo —está atado a la arquitectura de GPU y a la versión de TensorRT—, las
+métricas de GPU y consumo salen de sysfs de Tegra y del INA3221, y el GPIO es libgpiod sobre
+`/dev/gpiochip0`. El desarrollo y la suite de tests corren en Windows sin GPU: el modelo
+`mock` cubre el camino entero.
 
 **Este archivo es el mapa, no la documentación.** El contrato de cada módulo está
 en su propio docstring, que es la fuente de verdad y se lee antes de tocarlo. Las
@@ -15,18 +25,22 @@ archivo de qué se toca están en `README.md`.
 
 ## Cómo se corre
 
-El intérprete del proyecto es el del venv, **no** el `python` del PATH:
+El intérprete del proyecto es el del venv, **no** el `python` del PATH. Lint y tests salen
+de un solo punto de entrada, el mismo que corren los hooks de git:
 
-    .venv\Scripts\python.exe -m pytest -q          # Windows
-    .venv/bin/python -m pytest -q                  # Linux
+    .venv\Scripts\python.exe ci/check.py           # lint + suite, en paralelo (~15 s)
+    .venv/bin/python ci/check.py lint              # Ruff + índice de tests al día
+    .venv/bin/python ci/check.py test -- <args>    # pytest con lo que va después de --
 
 Python 3.10 de 64 bits, fijado por el wheel cp310 de stapipy. La suite completa
 corre sin hardware, sin GUI y sin red: todo lo externo se reemplaza por dobles
-dentro del propio archivo de test.
+dentro del propio archivo de test. Cómo se escribe un test y qué se hace cuando uno falla
+está en la skill `pruebas`; qué prueba cada archivo, en `docs/tests.md`.
 
 Lo que sí necesita hardware —o una pantalla, como la prueba de la interfaz— vive en
 `manual_test/<tema>/`, cada uno con su `config.yaml` al lado. La instalación de los
-SDK de cámara está en `setup/cameras/{windows,linux}/`.
+SDK de cámara está en `setup/cameras/{windows,linux}/`; la de la Jetson, en
+`setup/jetson/`, y el venv lo arma y lo verifica `setup/venv-setup/`.
 
 ## Mapa
 
@@ -39,12 +53,17 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       paths.py                nivel 0 — rutas del proyecto sin depender del CWD
       version.py              nivel 0 — la versión del programa; va en código, no en config
       system_monitor.py       métricas de hardware: CPU, RAM, disco, red, GPU
+      gpio_control.py         entradas y salidas digitales sobre libgpiod; sin ella, simulado
       camera/
         capture_thread.py     un hilo por cámara; entrega frames y telemetría por señales
+        capture_scheduler.py  el ciclo de N frames por medición; con `frames_per_cycle: 1`,
+                              un pass-through, que es como corre este proyecto
         lens_health.py        nivel 1 — ¿el vidrio está sucio? nitidez sobre el ROI
       formats/                módulos puros: cada uno arma un bitfield y nadie más corre bits
         camera_health.py      estado de una cámara: adquisición excluyente + lente sucio
         com_status.py         un bit por canal de salida que está andando
+        gpio_status.py        las dos palabras de GPIO: entradas leídas y salidas comandadas
+        pipeline_status.py    una palabra por pipeline: ¿sus números son una medición?
         system_status.py      ¿se puede confiar en las mediciones de proceso?
       image_collector/
         collector.py          dataset en disco, por intervalo o a pedido
@@ -56,15 +75,23 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
           model_key.py        de dónde sale la clave con la que se abren esos pesos
           model_factory.py    único archivo que conoce las clases concretas
           mock_model.py       detecciones sintéticas, sin framework
+          yolo_seg_model.py   DEL PROYECTO — YOLO de segmentación (ultralytics)
           null_model.py       lo que devuelve la fábrica ante una config inválida
         abstract_pipeline.py  maquinaria de las etapas: las crea, las carga y las cronometra
-        pipeline.py           el pipeline concreto; es lo que cambia en cada instalación
+        pipeline.py           DEL PROYECTO — una etapa: el segmentador de la cinta
+        pipeline_factory.py   único archivo que conoce esas clases; `type` elige una por slot
+        null_pipeline.py      lo que devuelve la fábrica ante un `type` no registrado
         result.py             nivel 1 — Detection e InferenceResult, el dato que cruza
         overlay.py            nivel 1 — dibujado del resultado; también lo lee la UI
-        annotations.py        nivel 1 — dibujos propios de la planta; se reescribe en cada fork
+        composer.py           nivel 1 — un anotado por cámara con los overlays de sus pipelines
+        annotations.py        DEL PROYECTO — el rectángulo de cinta y el panel
         analysis.py           nivel 1 — agregaciones genéricas sobre detecciones
-        metrics.py            nivel 1 — las métricas del proceso; se reescribe en cada fork
+        rolling.py            nivel 1 — media móvil por tiempo, y cuánto de la ventana se midió
+        metrics.py            DEL PROYECTO — composición y carga por conteo de píxeles
         engine.py             un hilo por pipeline; fan-in de las cámaras que tiene asignadas
+        preprocessing.py      el preprocessor del motor: lente y ajuste de imagen por cámara
+        hooks.py              DEL PROYECTO — el analyzer y los annotators de la cinta
+        offline.py            los pipelines del config sobre imágenes sueltas, como en vivo
       license/                ata el equipo a la máquina para la que se emitió la licencia
         schema.py             nivel 1 — dueño del formato del .lic: campos, token, firma
         verify.py             nivel 0 — Ed25519 contra la clave pública embebida
@@ -78,7 +105,7 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         __main__.py           CLI: status | fingerprint | request | install
       modbus/
         schema.py             nivel 1 — maquinaria del mapa: carga, escalas, espejo R/W
-        register_map.yaml     el mapa concreto; es lo que cambia en cada instalación
+        register_map.yaml     DEL PROYECTO — las direcciones son las que ya lee el PLC
         registers.py          carga el YAML al importar y expone el SCHEMA validado
         server.py             servidor esclavo TCP + RTU sobre un datastore en RAM
         export_map.py         genera docs/modbus_map.{md,csv} desde el YAML
@@ -100,11 +127,12 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
         basler_driver.py      pypylon
         st_driver.py          stapipy (Sentech / Omron)
         rtsp_driver.py        cámara IP por RTSP, con FFmpeg de OpenCV
+        video_file_driver.py  video grabado en loop, al ritmo del reloj, como cámara en vivo
         mock_driver.py        frames sintéticos, sin hardware
         null_driver.py        lo que devuelve la fábrica ante una config inválida
         camera_catalog.py     modelos por fabricante, para la UI
       image/                  operaciones sobre un frame; no saben de dónde salió
-        enhance.py            gamma y contraste local para el camino de visualización
+        enhance.py            gamma para mirar; factor de brillo lineal por cámara para medir
         undistort.py          corrección de lente; va en el preprocessor del motor
 
     ui/                       nivel 4 — presentación; no la importa nadie de system/ ni tools/
@@ -128,14 +156,26 @@ SDK de cámara está en `setup/cameras/{windows,linux}/`.
       ui/                     levanta la app entera con cámaras mock; hace de main.py
       license/                emite la solicitud y simula el binario para probar la licencia
       model_protection/       cifra unos pesos y los abre en memoria; mide el costo
-    setup/                    instalación de SDK de cámara (en inglés, ver skill)
+      offline_inference/      corre los pipelines sobre una carpeta de imágenes; salida fechada
+    setup/                    instalación (en inglés, ver skill)
+      cameras/                SDK de cámara, por fabricante y sistema
+      venv-setup/             el venv, y verify_env.py que lo verifica en este equipo
+      jetson/                 lo de sistema de la Jetson; el framework de inferencia y
+                              sus versiones fijadas son DEL PROYECTO
     packages/                 wheels que no están en PyPI (stapipy)
     build/                    compilar con Nuitka y armar el entregable; ver su README
+    ci/                       verificación: check.py (lint + tests) y suite_index.py (docs/tests.md)
+    .githooks/                pre-commit corre el lint, pre-push corre todo; activados por clon
     docs/                     documentos con público propio: el mapa Modbus generado,
                               ui.md, influxdb.md (la estructura de las series) y
-                              licensing.md (cómo se pide y se renueva una licencia)
-                              mqtt.md (la misma estructura, en tópicos y JSON) y
-                              model_protection.md (cómo se protege y se reemplaza un modelo)
+                              licensing.md (cómo se pide y se renueva una licencia),
+                              influxdb_template.md (la estructura CANÓNICA del
+                              template, de la que este equipo diverge a propósito),
+                              mqtt.md (la misma estructura, en tópicos y JSON),
+                              model_protection.md (cómo se protege y se reemplaza un modelo),
+                              offline_testing.md (video grabado e imágenes sueltas) y
+                              tests.md (el índice de la suite, generado)
+    recordings/               videos que el driver `video_file` reproduce; no se versionan
     data/                     logs y dataset en runtime
 
 La dirección de las dependencias y las reglas de límites están en la skill
@@ -159,8 +199,12 @@ Son punteros: el contrato vive en el archivo, no acá.
   De dónde sale la clave es de `model_key.py`, y cómo se protege un modelo está en
   `docs/model_protection.md`.
 - **Pipeline de inferencia** — `system/inference/abstract_pipeline.py`: qué es una
-  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. El
-  pipeline concreto es `system/inference/pipeline.py`.
+  etapa, qué recibe de la anterior, y qué queda en `stage_times_ms` y en `labels`. `_run()`
+  recibe `(frame_bgr, camera_slot)`: el pipeline **sí** sabe de qué cámara viene el frame y
+  el modelo no, así que lo calibrado por montaje entra ahí. Los pipelines concretos están en
+  `system/inference/pipeline.py`, y qué clase corre cada slot lo dice
+  `inference.pipelines.<slot>.type`, que resuelve `pipeline_factory.py`: sin `type`, el
+  `default`.
 - **Resultado de inferencia** — `system/inference/result.py`: los campos de
   `Detection` e `InferenceResult`, el reparto entre `detections`, `labels` y `metrics`,
   el vocabulario de `invalid_reason` y qué significa `is_valid`. Es el objeto que
@@ -169,11 +213,22 @@ Son punteros: el contrato vive en el archivo, no acá.
   el frame ya anotado y el resultado, y dibuja in-place sus referencias. Se compone con
   `chain()` y entra por el constructor del motor.
 - **Preprocessor** — `system/inference/engine.py`: `(frame, camera_slot) -> frame`, y lo
-  que devuelve es el frame de referencia del ciclo. El corrector de lente que lo cumple
-  está en `tools/image/undistort.py`.
+  que devuelve es el frame de referencia del ciclo. Lo cumplen el corrector de lente
+  (`tools/image/undistort.py`) y el ajuste de imagen por cámara (`tools/image/enhance.py`),
+  que `system/inference/preprocessing.py` encadena en ese orden.
 - **Classifier** — `system/inference/engine.py`: `(detections, camera_slot) -> detections`,
-  entre el pipeline y el promedio de confianza. Es donde entra lo calibrado por cámara, que
-  el modelo no puede aplicar porque es uno solo para todas las del pipeline.
+  entre el pipeline y el promedio de confianza. Corre **después** de devolver las
+  detecciones al espacio del frame completo, así que es donde va lo que necesita posiciones
+  absolutas —una zona a ignorar, una regla por dónde cae la detección—. Lo que alcanza con
+  el recorte del ROI ya lo puede hacer el pipeline, que también recibe la cámara. Este
+  proyecto no lo usa.
+- **Medias móviles** — `system/inference/rolling.py`: `RollingMean` recorta la ventana por
+  tiempo y no por cantidad, `tick()` va aparte de `add()` para que una inferencia caída
+  drene la ventana en vez de congelarla, y `fill_pct()` dice cuánto de la ventana se llegó
+  a medir, que es lo que valida la media. `has_composition()` decide si una muestra sin
+  detecciones entra a un promedio de reparto entre clases. Es librería, como
+  `analysis.py`: agrega en el tiempo lo que `summarize_metrics` agrega dentro de un ciclo,
+  la usa el analyzer del fork que publique tendencias, y en el template no la llama nadie.
 - **Mapa de registros Modbus** — `system/modbus/schema.py`: los campos de una fila,
   el vocabulario de `producer`, las escalas y el espejo R/W del bloque de config.
   El mapa concreto es `system/modbus/register_map.yaml`.
@@ -184,6 +239,13 @@ Son punteros: el contrato vive en el archivo, no acá.
   puerta es `LensHealthMonitor`, que guarda **una ventana y una referencia por cámara**;
   las funciones sueltas son sus primitivos. El veredicto sale como estado propio y quien
   cablea lo traduce al bit de lente sucio de `formats/camera_health.py`.
+- **GPIO** — `system/gpio_control.py`: dueño único de las líneas del chip, canales
+  numerados desde 1 como en el borne, lecturas que son `1`, `0` o `READ_ERROR`, y el modo
+  simulado sin `gpiod`, que expone la misma API y lo declara en `hardware_available`. Las
+  salidas se informan como eco de lo comandado, no releyendo el hardware. Las dos palabras
+  que van al PLC son de `formats/gpio_status.py` y salen siempre, haya GPIO o no: sin
+  hardware llevan prendida su marca de «sin GPIO». El botón del header aparece sólo con
+  `gpio.enabled: true`, y al cerrar el polling se detiene antes de soltar las líneas.
 - **Licencia** — `system/license/manager.py`: el vocabulario `STATE_*`, qué habilita cada
   estado y las claves de `get_status()`. Es la única puerta del subsistema. El formato del
   `.lic` es de `schema.py`, qué hace el equipo cuando no vale es de `policy.py`, y cómo se
@@ -200,7 +262,112 @@ Son punteros: el contrato vive en el archivo, no acá.
 
 ## Decisiones vigentes
 
-Lo que no se deduce leyendo un archivo suelto:
+Lo que no se deduce leyendo un archivo suelto. Las primeras son de este proyecto; las que
+siguen vienen del template.
+
+- **Lo que se mide es superficie de píxeles segmentados, contada por unión.** Un píxel es
+  pellet, o es desmenuzado, o es cinta a la vista, y no puede ser dos cosas: las máscaras se
+  rasterizan sobre un lienzo de etiquetas antes de contar y donde dos se superponen gana la
+  última, que es el mismo criterio con el que se pinta el overlay. Sumar el área de cada
+  instancia contaría dos veces lo que dos polígonos se pisan e inflaría la carga sin que
+  pase nada en la cinta.
+- **Los dos ejes de la medición tienen denominadores distintos, y es a propósito.**
+  `pct_<clase>` se divide por el frame completo; `pct_carga`, por el rectángulo de cinta de
+  `process.belt_roi_px`. Por eso la suma de las clases no da la carga, y por eso la carga
+  puede pasar de 100 % —que es el dato de que la cinta desbordó— sin que ningún porcentaje
+  por clase lo haga.
+- **El rectángulo de cinta va en `process:` y NO en `cameras.<slot>.roi`.** Si fuera el ROI
+  de cámara, el motor recortaría antes de inferir y los dos denominadores pasarían a ser el
+  mismo, cambiando en silencio todos los porcentajes publicados. Como está en `process:`, lo
+  lee `system/inference/hooks.py` una sola vez y se lo pasa al analyzer y al annotator: el
+  rectángulo que ve el operador y el que se usó para el número que salió al PLC son el
+  mismo.
+- **El brillo de la versión anterior se reproduce en la medición.** Aquella infería sobre
+  el frame con un ajuste de software de ×4.6 (`brillo: 90`) a 800 µs, y calibraba el umbral
+  de fondo oscuro —60, sólo para desmenuzado— contra esa imagen. Acá se conservan los tres
+  números: la exposición en la cámara y el ×4.6 en `cameras.camera_1.image_adjust`, que es
+  el caso para el que existe ese ajuste. Por eso el dataset guarda la imagen ajustada, y
+  cambiar el factor o la exposición obliga a recalibrar el umbral: 60 sobre una imagen
+  amplificada no significa lo mismo que 60 sobre el frame crudo. La referencia de óptica
+  sigue valiendo, porque se mide sobre el frame de la cámara y sus condiciones no cambiaron.
+- **Las medias de la hora se alimentan una vez por tick, no una por frame.** La ventana se
+  compara contra el ritmo de publicación para saber cuánto de la hora se llegó a medir, y
+  metiendo los quince frames de cada segundo esa cobertura daría siempre llena aunque la
+  inferencia se hubiera caído media hora. Entra el promedio del segundo. Y viven en
+  `main.py` y no en el analyzer porque hay que envejecerlas en cada tick, haya medición o
+  no: el analyzer corre sólo cuando hay resultado y ahí la ventana se congelaría.
+- **La composición es un cociente de sumas y la carga es una media.** Lo que se pregunta es
+  qué parte del material que pasó fue cada clase: Σ píxeles de la clase sobre Σ píxeles
+  detectados, en el segundo y en la hora. Promediar la composición de cada frame hacía pesar
+  igual cuatro partículas que la cinta llena, y un frame vacío le metía un 0 a cada clase.
+  Como `pct_carga` es lo detectado sobre el ROI de cinta, pesar cada composición por su
+  carga da exactamente ese cociente sin publicar píxeles, y un momento sin material pesa 0
+  sin que haga falta filtrarlo. La carga sí es una media simple: ahí el 0 es una medición
+  legítima, y es el dato de que la cinta estuvo parada. Los registros 6 y 7 conservaron su
+  dirección y su nombre al pasar de la media de cocientes a esto. Y siguen los dos registros
+  que validan las medias —cuánto de la hora se midió y cuánto de lo medido tenía
+  material—: sin ellos, una media de tres muestras sobre una hora se lee igual que una hora
+  entera bien medida.
+- **El refinamiento de fondo oscuro lo aplica el pipeline sobre las máscaras del
+  segmentador.** El contorno del modelo es aproximadamente convexo y se traga la cinta que
+  se ve *entre* partículas sueltas, así que una pila dispersa mediría como una compacta.
+  Corregirlo es una etapa posterior a la segmentación, que es exactamente lo que el pipeline
+  es. Ni el modelo ni el analyzer sirven: el modelo es uno solo para todas las cámaras y el
+  umbral depende de la iluminación, que es de cada montaje; y el analyzer no modifica el
+  resultado, así que arreglaría los números mientras el overlay sigue pintando los píxeles
+  descartados —y el umbral quedaría invisible justo mientras se lo calibra—.
+- **Para que el pipeline pudiera hacerlo, `_run()` pasó a recibir el `camera_slot`.** Es un
+  ensanche del contrato, no un cambio de comportamiento: la instancia sigue siendo una sola
+  para todas las cámaras del pipeline y los pesos se cargan una vez. Lo que cambia es que la
+  lógica del proceso ya puede depender de la cámara sin pasar por el `classifier`, que
+  existía justamente para tapar esa ceguera. Al modelo se le sigue sin pasar: un modelo es un
+  envoltorio de framework y se reusa entre proyectos; el pipeline es código del fork.
+- **El umbral de fondo oscuro lo lee el pipeline del config, no se lo pasa nadie.** La app
+  y la corrida de imágenes sueltas (`offline.py`, maquinaria) arman el pipeline igual, con
+  `create_pipeline(config, pipeline_slot)`, que con `type: default` instancia el `Pipeline`
+  de la cinta; si el umbral entrara por un argumento que sólo pasa
+  `main.py`, una imagen suelta mediría sin refinar y daría distinto que la línea, sin que
+  nada lo dijera. El argumento `dark_background_threshold` queda para los tests y para
+  `manual_test/belt`, que lo apaga con `--no-refine`.
+- **Las rutas de los streams llevan el nombre viejo de la cámara.** `video.http.stream_names`
+  mapea `camera_1` a `cinta` para no romper las URLs que ya están puestas en tableros y
+  navegadores de la planta. Es deuda, no diseño: afecta sólo a la ruta —en los registros y
+  en la telemetría la cámara sigue siendo `camera_1`— y cuando no quede nadie apuntando a
+  `/cinta/...` se saca la clave.
+- **La estructura de la telemetría NO es la del template, y es una deuda consciente.** El
+  dashboard ya existía cuando el proyecto se migró, así que se conservaron los measurements
+  y los nombres de campo viejos —varios en castellano— en vez de renombrar las series: una
+  serie renombrada no se migra, la historia queda con el nombre viejo y el panel deja de
+  encontrarla. Toda la divergencia está junta y marcada en un bloque de `main.py`, y la
+  estructura canónica quedó guardada en `docs/influxdb_template.md` para que el próximo fork
+  no la copie.
+- **El mapa de registros es el de la versión anterior del equipo.** Direcciones, escalas y
+  semántica se preservan porque el PLC ya está programado contra ellas; lo único que cambió
+  son los `name:`, que son el contrato con el código y no con el PLC. Dos excepciones: el
+  registro 51 pasó del enum 0-5 al bitfield del template —que es lo que transporta el bit de
+  lente sucio— y se agregaron 98-100 sobre direcciones que estaban libres.
+- **Las clases de esta cinta están en el código y no en el config, y deciden el nombre de
+  sus métricas.** De `CLASS_NAMES` en `system/inference/pipeline.py` salen `pct_pellet` y
+  `pct_pellet_norm`, y con ellos los registros que lee el PLC: no es algo que se edite en
+  planta, y un orden invertido invierte en silencio todos los porcentajes. Se declaran una
+  sola vez, ahí: el pipeline nombra cada detección por su índice, `hooks.py` se los pasa al
+  analyzer y al panel, `main.py` arma con ellos las medias de la hora, y la pestaña de
+  proceso los lee para los umbrales de fondo oscuro. Al cargar, el pipeline los confronta
+  con los que traen los pesos —el `.engine` los guarda en su cabecera— y con otros no
+  arranca, con el motivo en el log: 0 = desmenuzado, 1 = pellet. El template sigue leyendo `class_names` del config para
+  los forks que no declaran sus clases; en este la clave no está. La UI no la muestra en
+  ningún proyecto: se escribe en el archivo al armar el fork, porque un orden cambiado no da
+  un error, invierte los porcentajes.
+- **El color de una clase va por índice y tiene un solo dueño:
+  `inference.overlay.class_colors_bgr`.** No se edita desde la UI, sólo en el archivo, y
+  lo mismo vale para toda la sección `inference.overlay`: varios de sus valores son de la
+  instalación —`font_scale` está calibrado para el frame de esta cámara— y no van a
+  constantes de `overlay.py`, que es maquinaria y se cross-portea. Con esa paleta el motor
+  pinta las máscaras y el panel de composición pinta sus filas —`hooks.py` se la pasa al
+  annotator—, así que una clase se ve del mismo color en los dos lados. Un
+  color por nombre en el annotator era una segunda fuente que ya no coincidía con la de las
+  máscaras, y que con un orden de clases invertido habría pintado la misma clase de dos
+  colores.
 
 - Las claves de `config.yaml` van en inglés y la jerarquía espeja los módulos, no
   las pantallas de la UI.
@@ -237,6 +404,20 @@ Lo que no se deduce leyendo un archivo suelto:
 - Un hilo por cámara, y el ritmo lo pone la cámara (free-run). Si alguna vez se
   captura por trigger, el ritmo y el orden de los disparos son de quien orqueste
   la captura, no del hilo.
+- **El video grabado entra como una cámara más, leído del archivo y no por un servidor
+  RTSP.** `driver: video_file` se declara en el config —se prueba en la máquina de
+  desarrollo, antes de la configuración final, así que no hace falta un flag que lo
+  sobreescriba— y el ritmo lo pone el reloj: un consumidor lento pierde frames y el video no
+  se estira. Un servidor RTSP probaría además el transporte, pero agrega dos binarios y
+  fallas que no son del proyecto justo en la herramienta que tiene que ser la más
+  confiable. La cámara va marcada como sintética: es imagen real, pero no la línea ahora, y
+  el estado que lee el PLC lo dice. Los videos van en `recordings/`, que no se versiona.
+- **Lo que se prueba sin la línea corre el código de la línea.** La corrida de imágenes
+  sueltas (`system/inference/offline.py`) arma los pipelines como la app —el mismo
+  `Pipeline`, `build_preprocessor()` y `build_hooks()`— y corre el ciclo del motor con
+  `InferenceThread.process()`, sin arrancar el hilo. Un segundo camino de inferencia
+  podría dar distinto que el primero, y una imagen que pasa la prueba no diría nada de la
+  línea. Por eso lo del fork que entra al motor vive en `hooks.py` y no en `main.py`.
 - El video sale por dos caminos y no compiten: MJPEG por HTTP es el stream liviano
   para mirar en el navegador, y RTSP es el de resolución completa para un NVR o un
   reproductor. El RTSP se publica por interfaz (`video.rtsp.net_interfaces`), y
@@ -248,8 +429,9 @@ Lo que no se deduce leyendo un archivo suelto:
   distintos son dos hilos y sí corren en paralelo.
 - **El orden de las etapas de un pipeline es código, no configuración.** Vive en
   `system/inference/pipeline.py` porque encadenar dos modelos es lógica del proceso:
-  qué recorta el segundo, qué hace con lo que encontró el primero. Del config salen de
-  dónde se carga cada modelo y qué cámaras entran a cada pipeline.
+  qué recorta el segundo, qué hace con lo que encontró el primero. Del config salen qué
+  clase corre cada slot, de dónde se carga cada modelo y qué cámaras entran a cada
+  pipeline.
 - La confianza se juzga en dos niveles y son de dueños distintos: el modelo descarta
   la detección por debajo de su `min_confidence_pct` —bajo a propósito cuando hay que
   contar cientos de objetos—, y el pipeline marca el resultado completo como no
@@ -263,14 +445,15 @@ Lo que no se deduce leyendo un archivo suelto:
   plano y con `sample_count`) y elige con `analysis.pick_representative` cuál de los N
   frames se guarda y se muestra. Promediar en el motor escondería la dispersión, que suele
   ser el dato que dice si el proceso está estable.
-- Qué significan las detecciones es del proyecto y se inyecta: `metrics.compute_metrics`
-  entra por el constructor del motor y su salida viaja en `metrics`, un dict plano.
+- Qué significan las detecciones es del proyecto y se inyecta: `metrics.build_analyzer()`
+  —una factory, porque la cuenta necesita el rectángulo de cinta y los umbrales— entra por
+  el constructor del motor y su salida viaja en `metrics`, un dict plano.
   Plano porque va sin traducir al panel del anotado, al JSON del dataset, a los fields
   de la telemetría y a los registros del PLC.
 - **Los parámetros de lo que se mide viven en la sección `process` del config**, que es la
   única cuya forma cambia entre proyectos. No la lee ningún módulo de la maquinaria: la lee
-  `main.py` y se la pasa al analyzer y a los annotators, que así reciben números y se
-  testean sin archivo. Un valor que alimenta a dos consumidores —la altura del límite de
+  `system/inference/hooks.py` y se la pasa al classifier, al analyzer y a los annotators,
+  que así reciben números y se testean sin archivo. Un valor que alimenta a dos consumidores —la altura del límite de
   carga, que se dibuja y se mide— se lee una sola vez, para que el operador y el PLC no
   puedan estar mirando cosas distintas.
 - El frame anotado se dibuja una sola vez, en el motor, y el mismo array viaja a la UI,
@@ -279,6 +462,37 @@ Lo que no se deduce leyendo un archivo suelto:
   inferencia lo dibuja `overlay`, que es genérico; las referencias de la planta —un
   límite de carga, una zona— son annotators de `annotations.py` que el motor corre
   después, y su geometría va al config porque cambia con cada montaje.
+- **Una cámara que miran varios pipelines muestra un solo anotado, con todas las capas.**
+  Mostrar cada anotado tal como llega hace parpadear el overlay de cada uno —personas cada
+  100 ms y grano cada 500 ms dan cinco frames de uno por cada uno del otro—. Lo decide
+  `system/inference/composer.py`: el frame lo pone el resultado más nuevo de la cámara, y
+  encima van los demás pipelines con su último resultado, dibujados por su propio motor
+  (`draw_onto()`) y descartados pasado su tiempo de vigencia, para que uno caído no quede
+  congelado en pantalla. Uno más viejo que el último mostrado —un ciclo, con el instante
+  de su representativo— no pone el frame: el video no salta para atrás. El dataset sigue
+  guardando el anotado propio de cada pipeline, porque su JSON trae sólo esas detecciones.
+  Una cámara sin ningún resultado vigente —todos sus pipelines cortados o caídos— se ve en
+  vivo en vez de congelada en el último anotado; la vigencia mira también el tiempo real
+  entre resultados, así que un modelo lento no la hace parpadear entre anotado y vivo.
+  Con `crop_to_roi` no se combina: el lienzo es el recorte de uno y el ROI de los otros no
+  tiene por qué caer adentro.
+- **Una señal de la planta corta los frames de una cámara a un pipeline, no el pipeline.**
+  Es la compuerta de frames: la declara el fork en `_build_frame_gates()` de `main.py`
+  —`gate(camera_slot, signals) -> bool`— y el template no declara ninguna. Es por cámara
+  porque un pipeline cubre varias y cada una puede tener su propia señal —tres
+  plataformas, tres señales de volteo—, y no es `enabled` porque ese es config: se guarda
+  en el archivo y apaga todas las cámaras. Cortar los frames y no el hilo deja el modelo
+  cargado, así que al abrirse el frame siguiente ya se infiere. Se consulta en los dos
+  caminos del frame: en el hilo de captura para los pipelines sin ciclo y en el de la GUI,
+  antes de pedir el permiso del scheduler, para los que tienen. Por eso recibe
+  `FrameSignals`, una foto inmutable que `main.py` **reemplaza entera y nunca modifica**:
+  un hilo de captura la lee sin lock y ve la vieja o la nueva, nunca mitad de cada una.
+  Va en `main.py` y no en `hooks.py` porque lee el estado vivo de la planta, que la corrida
+  de imágenes sueltas no tiene. Mientras está cerrada, los registros del pipeline quedan
+  con su último valor, su overlay se va del anotado en el frame siguiente —el composer lo
+  olvida, no espera a que venza— y el bit 6 de su palabra lo dice: la señal no siempre es
+  del PLC, y sin el bit una pausa se lee como un pipeline sano. Así un veredicto como el
+  del grano aparece sólo mientras el proceso corre.
 - **Un veredicto del frame no es una detección ni una métrica.** Lo que dice una
   clasificación de la imagen entera —el estado de la cinta— viaja en `labels`, que es
   texto: no tiene forma ni posición, y si tiene que llegar al PLC lo traduce a bit el
@@ -300,17 +514,40 @@ Lo que no se deduce leyendo un archivo suelto:
 - El ROI y el mínimo de iluminación son de la cámara y viven en su sección del config:
   se recorta y se mide el brillo antes de gastar una pasada del modelo, y las
   detecciones vuelven al espacio del frame de referencia antes de salir.
-- **Corregir la geometría y ajustar el brillo son cosas distintas y van en caminos
-  distintos.** La corrección de lente cambia *dónde está* un píxel, así que entra por el
-  `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
+- **La geometría se corrige siempre en el frame de referencia; el brillo, sólo si la
+  cámara lo declara.** La corrección de lente cambia *dónde está* un píxel, así que entra
+  por el `preprocessor` del motor y lo que devuelve es el frame de referencia: el que ve el
   modelo, el que queda en `source_bgr`, el espacio del ROI y el lienzo del overlay. Un solo
   espacio de coordenadas y nada que mapear de vuelta. El brillo cambia *cómo se ve* un
-  píxel y no mueve nada, así que va sólo en el camino de visualización
-  (`video.display`, `tools/image/enhance.py`): el modelo y el dataset siguen recibiendo el
-  frame crudo, porque el dataset es con lo que se reentrena. Un modelo entrenado con
-  imágenes crudas que necesite mostrarse corregido tiene dos salidas honestas —reentrenar
-  con el dataset corregido, o corregir después de anotar y aceptar que las etiquetas se
-  deformen con la imagen—; lo que no se hace es medir en un espacio y dibujar en otro.
+  píxel y no mueve nada, y por eso tiene dos lugares que no se mezclan:
+  `video.display` lo ajusta sólo para mirar —streams y UI— con un gamma, que levanta las
+  sombras sin saturar los claros, y el modelo y el dataset siguen recibiendo el frame de la
+  cámara; `cameras.<slot>.image_adjust` lo mete en el `preprocessor`, después de la
+  corrección de lente, y ahí sí cambia lo que se mide. Va por cámara porque la luz es de
+  cada montaje, y es una decisión del proceso y no un slider, por tres consecuencias: el
+  dataset pasa a guardar la imagen ajustada —y se reentrena con eso—; el brillo del ROI que
+  se compara con `illumination_min` y que sale al PLC se mide después del ajuste, así que
+  ese umbral se revisa al cambiarlo; y la vista cruda sigue mostrando lo que entrega el
+  sensor mientras la anotada muestra el frame ajustado. La nitidez de la óptica no se
+  entera —se mide sobre el frame de la cámara—, y por eso `image_adjust` no está entre las
+  condiciones de su referencia.
+  Un modelo entrenado con imágenes crudas que necesite mostrarse corregido tiene
+  dos salidas honestas —reentrenar con el dataset corregido, o corregir después de anotar
+  y aceptar que las etiquetas se deformen con la imagen—; lo que no se hace es medir en un
+  espacio y dibujar en otro.
+- **El ajuste de medición existe para reproducir, no para afinar.** Su brillo es un factor
+  lineal —cada píxel por x0.1 a x5.0, saturado en 255— y no un gamma, porque su caso es un
+  equipo o un modelo entrenado sobre imágenes multiplicadas así: otra curva le daría al
+  modelo imágenes que no vio al entrenar, y satura a propósito porque el equipo que se
+  reproduce también saturaba. **En una instalación nueva va en x1.0.** Una escena
+  oscura se arregla con la iluminación, la exposición o la ganancia, que amplifica antes de
+  cuantizar y no tira los claros; la tolerancia a la luz se entrena con aumentación de
+  brillo, y el modelo aprende sobre lo que entrega el sensor. La razón es que el dataset
+  es lo único que no se puede regenerar: desde la imagen cruda se deriva después cualquier
+  ajuste, y un píxel saturado no vuelve. Un ajuste fijo ata además el modelo a ese número:
+  cambiarlo no da un error, da un equipo que mide peor sin que nada lo diga. Vive en el
+  template y no en cada fork porque el preprocessor se arma en maquinaria, y migrar un
+  equipo existente va a volver a pasar.
 - La telemetría se acumula en una ventana y sale en batch; cada punto viaja con el
   instante en que se midió, no con el de la escritura. El hilo drena la cola de continuo,
   así que el ritmo no lo limita la cola —medido: 50 puntos/s sin descartar—: lo que se
@@ -319,6 +556,20 @@ Lo que no se deduce leyendo un archivo suelto:
   publica **por tick y no por evento**, porque una serie de salud por evento no agrega
   información. La estructura de las series —measurements, tags y nombres de campo— es un
   contrato con los dashboards y está en `docs/influxdb.md`.
+- **En la Jetson el build es acelerado, no standalone.** Se compila lo nuestro —`system`,
+  `tools`, `ui`— y lo de terceros viaja suelto en `program/site-packages`, copiado del venv
+  que pasó `verify_env.py`: el standalone de torch no termina con 8 GB, y CUDA, TensorRT y
+  Python salen del JetPack igual. Lo decide `_ACCELERATED` en `build/build.py`; Windows
+  sigue standalone. `cryptography` va suelta aunque verifique la licencia —compilada,
+  Nuitka 4.2.2 carga vacía su extensión de Rust y ninguna licencia valida— y la cubre el
+  autocontrol de `system/license/verify.py`.
+- **Un handler de señal agenda el trabajo, no lo hace.** Compilado, Python corre el handler en
+  la primera instrucción no compilada del hilo principal, que suele estar adentro de un lock
+  —el `deepcopy` de `ConfigManager.get()`—, y en Qt 6 `quit()` corre `aboutToQuit` en el
+  acto: cerrar desde el handler dejaba a `stop()` esperando hilos que pedían ese lock, y Qt
+  abortaba al destruirlos vivos. El de `main.py` hace `QTimer.singleShot(0, app.quit)`. Por
+  lo mismo, una espera larga de un driver —un `connect()` que espera una cámara que no
+  aparece— se despierta con `interrupt()`, que `CaptureThread.requestInterruption()` llama.
 - **La licencia sólo se enforcea en un build compilado.** Corriendo desde fuentes el
   estado es `unlicensed_build`, la política es `off` y no se restringe nada, con una línea
   de log para que nunca sea silencioso: sacar la validación de un `.py` es borrar un `if`,
@@ -437,6 +688,14 @@ Lo que no se deduce leyendo un archivo suelto:
   es la forma en el cable —MQTT publica un JSON plano en `<topic_base>/<measurement>`, con
   los tags y los fields fusionados—, y eso está en `docs/mqtt.md`, que apunta a
   `docs/influxdb.md` para los campos en vez de repetirlos.
+- **La verificación es local y la barrera son los hooks de git, no un servidor.** El
+  pre-commit corre Ruff y el índice de tests; el pre-push, además, la suite entera en
+  paralelo. Los dos llaman a `ci/check.py`, que es el único lugar donde se decide cómo se
+  corre algo. El lint es sólo lint —pyflakes, bugbear y errores de sintaxis—, sin
+  formatter ni orden de imports: los forks cross-portean la maquinaria, y reformatear el
+  template haría chocar cada línea en el próximo merge. La suite corre en orden aleatorio
+  (pytest-randomly) para que un test que deja estado se note acá y no en otra máquina.
+  `--no-verify` saltea todo, y por eso no se usa: no hay otra red detrás.
 - **El mapa Modbus es un archivo de datos, no código.** Vive en
   `system/modbus/register_map.yaml` porque es lo que cambia en cada instalación, y
   es fuente única: la tabla que lee el integrador se genera con
@@ -458,7 +717,9 @@ Lo que no se deduce leyendo un archivo suelto:
   cableado publica los registros de salud y, del dict del analyzer, las claves que existen
   como registro; una que no existe no se publica y se avisa una vez. Así el nombre de la
   métrica es el contrato con el integrador y no hay una tabla de traducción que mantener.
-  Dos cámaras que publican la misma métrica se pisan: ahí el nombre lleva el slot adelante.
+  Las métricas se guardan por par (cámara, pipeline), y dos pares que publican la misma se
+  pisan en el registro —se avisa una vez, con los dos pares—: ahí el nombre lleva el slot
+  adelante.
 - **El latido no espera al hardware.** La primera lectura del monitor de sistema bloquea
   unos segundos, así que el ciclo de registros publica el heartbeat y las palabras de
   estado desde el primer tick y agrega las métricas de hardware cuando llegan: un PLC que
@@ -503,79 +764,98 @@ Lo que no se deduce leyendo un archivo suelto:
   forma de la ruta es del servidor de video, y componerla en la UI la dejaría definida en
   dos lugares.
 
-## Qué se toca en un fork
+## Qué es de este proyecto y qué viene del template
 
-La regla: **si un archivo describe cómo se hace algo, es maquinaria y se
-cross-portea; si describe qué se mide en esta planta, es del fork.**
+La regla: **si un archivo describe cómo se hace algo, es maquinaria y se cross-portea; si
+describe qué se mide en esta cinta, es de este proyecto.**
 
-- **Se reescriben**: `config.yaml` —sección `process:` incluida—,
-  `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
-  `system/inference/metrics.py`, este archivo y el `README.md`.
-- **Se agregan sin editar lo que ya está**: el modelo del proyecto en
-  `system/inference/` (+1 línea en la fábrica), `annotations.py`, un driver nuevo
-  en `tools/camera/` (+1 línea en su fábrica), el widget del área central del monitor
-  (lo devuelve `_build_monitor_content()` de `main.py`), y lo que corresponda en `test/`,
-  `manual_test/` y `docs/`.
-- **De `main.py` se completan tres métodos**, los del bloque marcado: el widget del
-  monitor, el analyzer y los annotators. El resto del archivo es cableado y se
-  cross-portea.
-- **De `ui/` sólo se agrega**: el widget del monitor, los textos que ese widget necesite
-  en `strings.py`, y —si el fork quiere editar `process:` desde la pantalla— una pestaña
-  en `views/config/` con +1 línea en `_TAB_CLASSES`. Las pestañas genéricas, los widgets,
-  los temas y las tres vistas son maquinaria: ver `docs/ui.md`.
-- **Todo lo demás es maquinaria.** Si hay que editarla para que el fork funcione,
-  el límite está mal puesto: lo que falta es un punto de extensión, no un parche.
+- **De este proyecto** —lo que se reescribió al migrar—: `config.yaml` (sección `process:`
+  incluida), `system/modbus/register_map.yaml`, `system/inference/pipeline.py`,
+  `system/inference/metrics.py`, `system/inference/annotations.py`,
+  `system/inference/hooks.py`, `system/inference/models/yolo_seg_model.py`, el contenido de
+  `setup/jetson/{constraints,requirements,requirements-nodeps}.txt` y el bloque del fork
+  de `setup/venv-setup/verify_env.py`, este archivo y el `README.md`.
+- **Lo que este proyecto agregó de genérico ya volvió al template**: el subsistema de GPIO
+  (`system/gpio_control.py`, `system/formats/gpio_status.py` y su cableado en `main.py`),
+  `system/inference/rolling.py`, la instalación y el build para la Jetson (`setup/jetson/`,
+  `setup/venv-setup/`, `build/`) y los arreglos de maquinaria que nacieron acá. Ahora son
+  maquinaria y se cross-portean como el resto; la lista está en «Lo que ya volvió» de
+  `docs/template_divergences.md`.
+- **De `main.py` se completó el bloque marcado**: el contexto del dataset y el widget del
+  monitor —que es la grilla de cámaras, sin widget propio—. El tercer método del bloque,
+  `_build_frame_gates()`, queda vacío como en el template: la cinta no tiene una señal de
+  planta que corte los frames. El analyzer y los annotators,
+  que antes también estaban ahí, son de `hooks.py` desde que la corrida de imágenes sueltas
+  los usa igual que la app.
+- **`main.py` diverge además fuera de ese bloque**, y es lo que hay que mirar al
+  cross-portear: el bloque de measurements de telemetría, `_build_inference_fields()`,
+  `_build_optics_fields()` y `_build_system_fields()` usan los nombres viejos del dashboard;
+  y el cableado de las medias móviles de la hora no existe en el template.
+- **Todo lo demás es maquinaria** y se cross-portea sin editar. Si hay que tocarla para que
+  algo de la cinta funcione, el límite está mal puesto: lo que falta es un punto de
+  extensión, no un parche.
 
-Los cinco puntos de extensión del motor de inferencia —`pipeline`, `classifier`,
+**Cuando algo del proyecto aparece adentro de maquinaria, el arreglo casi siempre es que el
+dato viaje con el pedido, no que la maquinaria lo aprenda.** Es la forma que toma la regla
+de arriba cuando ya se rompió, y conviene buscarla antes de agregar un `if`, una constante o
+un nombre propio a un archivo genérico.
+
+Un archivo de maquinaria que nombra algo de esta planta —una clave de `process:`, una clase
+del modelo, un slot de cámara— está haciendo de intermediario que *deduce* lo que alguien
+más ya sabía. El que sabe es el que pide: la pestaña que es dueña de su sección del config,
+el fork que conoce sus clases, el cableado que leyó el archivo. Que lo mande.
+
+El caso testigo: el diálogo de ROI se abría desde `main_window.py`, que armaba
+`process.belt_roi_px.<slot>` —una clave del proyecto adentro de la ventana principal—. El
+arreglo no fue mover el `if`, fue que la señal pasara a ser
+`open_roi_requested(camera_slot, config_prefix, title_key)`: cada pestaña manda **su** clave,
+`ConfigView` la reenvía sin leerla y `MainWindow` abre lo que le den. Ningún archivo de
+maquinaria volvió a nombrar el rectángulo, y una pestaña nueva con otro se engancha sola.
+
+Tres señales de que hace falta esto, y no un parche:
+
+- Un archivo genérico menciona una clave de `config.yaml` que no es suya.
+- Un `if` sobre el nombre de una cámara, de una clase o de un pipeline fuera de una fábrica.
+- Una señal o un método de maquinaria con un adjetivo del proyecto en el nombre
+  (`open_belt_roi_requested`).
+
+Los seis puntos de extensión del motor —`preprocessor`, `pipeline`, `classifier`,
 `analyzer`, `annotator`, `annotate_gate`— entran por su constructor y los cablea `main.py`.
 La tabla completa, archivo por archivo, está en `README.md`.
 
 ## Qué todavía no existe
 
-- Del template ya no falta el cableado: `main.py` instancia todo y conecta las señales,
-  y de sus tres métodos marcados sale lo del fork —el widget del monitor, el analyzer y
-  los annotators—. Lo que sigue faltando es el contenido: qué se mide y qué se publica.
-- El rango 3-50 del mapa de registros sigue reservado y vacío: la inferencia ya corre,
-  pero qué publica es lo más específico de cada fork y se declara al escribirlo.
-- De la salud de la óptica no falta nada: el módulo, el cableado, la sección
-  `lens_health:` del config, la pestaña con la calibración por cámara y el bit al PLC
-  están. Lo que queda es de cada instalación —calibrar cada cámara con el vidrio limpio,
-  que es lo que llena `cameras.<slot>.lens_health.reference`—.
-- **El área central de la vista de monitor** y el módulo de GPIO. La UI está completa y
-  andando —tres vistas, ocho pestañas de configuración, cinco de diagnóstico— salvo dos
-  huecos a propósito: el widget que va en el centro del monitor lo pone el fork con
-  `set_content()`, y `ui/dialogs/gpio_dialog.py` es la mitad de UI de un
-  `system/gpio_control.py` que todavía no existe (su docstring declara la interfaz que
-  espera, y el botón del header aparece sólo cuando se lo inyecta). Cómo se toca todo eso
-  está en `docs/ui.md`.
-- El modelo del proyecto. El template trae el mock —detecciones sintéticas, sin
-  framework— y el fork agrega el suyo en `system/inference/` registrándolo en la
-  fábrica; el pipeline y las métricas son los otros dos archivos que se reescriben.
+- **El binario de la Jetson con la cámara real.** El build acelerado está probado de punta a
+  punta —licencia, UI, Modbus, inferencia al mismo ritmo que desde fuentes y cierre limpio
+  por señal—, pero sin la cámara conectada. Lo medido y lo que falta está en
+  `.claude/plans/jetson-compilation.md`.
+- **El widget del área central del monitor.** Hoy es la grilla de cámaras genérica. La
+  versión anterior tenía un gráfico de áreas apiladas con la composición; si se lo quiere de
+  vuelta, entra por `_build_monitor_content()` sin tocar nada más.
+- **El loader nativo de TensorRT.** Hoy el modelo carga con ultralytics, que quiere una
+  ruta, así que unos pesos protegidos no abren por ese camino y `load()` corta con el
+  motivo. Cerrarlo es implementar `deserialize_cuda_engine(bytes)` y el postproceso de
+  segmentación, con su test de paridad numérica contra la salida de ultralytics. Ver
+  `docs/model_protection.md`.
+- **De la licencia falta la mitad que no es código**: la clave pública real, que la genera
+  el repositorio de firma al compilar, y compilar. Sin eso el estado es `unlicensed_build` y
+  no se restringe nada. El diseño completo está en `.claude/plans/licensing.md`.
+- **La palabra de estado del pipeline no tiene dirección.** El template la arma por slot
+  (`formats/pipeline_status.py`) y el cableado publica `pipeline_1_state_bitfield` si el mapa
+  tiene esa fila; el de este equipo no la tiene, así que no llega al PLC. Agregarla es una
+  fila en `register_map.yaml` —91-97 están libres— y una decisión con el integrador.
 - La captura por trigger de software está diseñada y diferida en
   `.claude/plans/software-trigger-capture.md`.
-- **De la licencia falta la mitad que no es código.** El subsistema está entero y cableado
-  —cupo de cámaras, features por pipeline, vencimiento, huella, modo de puesta en marcha
-  sin licencia, bit y reloj al PLC, pestaña de diagnóstico, chip de footer y cartel de
-  arranque— pero le faltan dos cosas para servir de algo: la **clave pública real**, que la
-  genera el repositorio de firma al compilar y hoy no la trae ningún build, y **compilar**
-  (roadmap B3), sin lo cual la validación se saltea borrando un `if`. Falta además el dato
-  de hardware que nadie puede sacar de acá: confirmar que una Jetson y un equipo de planta
-  lleguen a las dos fuentes de huella que exige el piso. El diseño completo está en
-  `.claude/plans/licensing.md`.
-- **De la protección de los pesos falta lo mismo que de la licencia: lo que no es código.**
-  El formato, el descifrado y la lectura desde el contrato están y se prueban sin GPU, pero
-  hacen falta la **clave real de cada fork** —la genera y la custodia el repositorio de
-  firma. **Compilar ya no es lo que falta** —`build/` arma el entregable con Nuitka, y
-  compilado la clave queda adentro del binario y no en un `.py` suelto— pero sigue
-  haciendo falta generarla en el repositorio de firma para cada cliente. El diseño está
-  en `.claude/plans/model-protection.md` y lo operativo en `docs/model_protection.md`.
-- Las próximas líneas de trabajo —visuales de configuración, lo que falta de la protección
-  del entregable (hash del modelo, ahora que compilar ya no es lo pendiente) y
-  rendimiento/despliegue (optimización en Jetson, Docker)— están en
-  `.claude/plans/roadmap.md`, con qué hay que averiguar antes de empezar cada una.
+- **El ground truth de esta cinta.** El template ya trae las dos piezas —la cámara
+  `video_file` y la corrida de imágenes sueltas de `manual_test/offline_inference/`—, pero
+  faltan las imágenes con el resultado esperado. El diseño está en
+  `.claude/plans/replay-and-ground-truth.md`.
 
 ## Dónde va lo que se escribe
 
+- En qué diverge este equipo del template, y qué hacer con cada divergencia en un merge
+  → `docs/template_divergences.md`. Es lo primero que se lee antes de traer una versión
+  nueva del template.
 - El contrato de un módulo → su docstring, en la misma edición que el código.
 - El mapa, las decisiones y lo que falta → este archivo.
 - Un documento con público propio —notas de puesta en marcha, un protocolo nuevo—

@@ -26,6 +26,7 @@ CAMERA_CATALOG: dict[str, dict] = {
         "driver": "st_gige",
         "models": [
             "STC-MCA503POE-HS",
+            "STC-MCS312POE",
         ],
     },
     "rtsp": {
@@ -34,6 +35,11 @@ CAMERA_CATALOG: dict[str, dict] = {
         "models": [
             "generic",
         ],
+    },
+    "replay": {
+        "label": "Video grabado",
+        "driver": "video_file",
+        "models": ["file"],
     },
     "mock": {
         "label": "Simulado (Mock)",

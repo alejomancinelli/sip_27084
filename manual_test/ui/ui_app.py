@@ -22,7 +22,7 @@ hacer `main.py`, con los mismos métodos públicos. Ver `docs/ui.md`.
 **Ningún estado está simulado.** Todo lo que muestra la pantalla lo informó su dueño:
 
     4 hilos de captura (mock)      frames, fps y temperatura de cada cámara
-    1 hilo de inferencia           resultados, anotado e iluminación
+    2 hilos de inferencia          resultados, anotado e iluminación
     SystemMonitor (en su hilo)     CPU, GPU, RAM, disco, temperaturas y red
     servidor HTTP de video         su `status`, sus clientes y sus URLs
     servidor Modbus TCP + RTU      su `status` por transporte, y el datastore que se
@@ -32,7 +32,7 @@ hacer `main.py`, con los mismos métodos públicos. Ver `docs/ui.md`.
     el logger real                 puenteado al log de la barra lateral
 
 Lo único sintético son los frames, que salen del `mock` driver, y el controlador de
-GPIO, porque ese módulo todavía no existe en el repo. El servidor RTSP es el único que no
+GPIO, porque el de verdad sin `gpiod` deja las entradas quietas. El servidor RTSP es el único que no
 se levanta —necesita GStreamer—: su chip dice `disabled` si el config lo apaga.
 
 Qué mirar:
@@ -45,6 +45,11 @@ Qué mirar:
     mira.** En «Video crudo» el motor no gasta una pasada de overlay: el `annotate_gate`
     que recibe está atado al combo. Pasar a «Video anotado» y ver aparecer las cajas, las
     máscaras y el panel de resumen del mock.
+  - **«Cinta entrada» la miran dos pipelines y el anotado no parpadea.** `pipeline_1`
+    infiere cada 0.5 s con máscaras y `pipeline_3` —otra clase, `demo_person`, con su
+    propio mock— cada 0.1 s con cajas sin máscara. En «Video anotado» las dos capas tienen
+    que verse juntas y quietas en cada frame; sin el composer, cinco de cada seis frames
+    llevarían sólo las cajas de `pipeline_3`. Las otras cámaras tienen un solo pipeline.
   - **El selector de foco** deja una cámara sola y en grande, y permite saltar directo a
     otra sin volver a la grilla; la primera opción vuelve a mostrarlas todas.
   - **La barra lateral se colapsa** con la tira de la izquierda, que queda visible.
@@ -100,9 +105,9 @@ Qué mirar:
   - **Herramienta de ROI**: pestaña Cámaras → Cinta entrada → «Herramienta interactiva de
     ROI». Se dibuja con el mouse sobre el frame en vivo; al guardar, el recuadro azul
     aparece en el panel de la grilla, que lee el ROI del config.
-  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble
-    —el módulo de GPIO todavía no existe en el repo—. Las salidas conmutan y las
-    entradas se mueven solas cada dos segundos.
+  - **El botón GPIO del header** aparece porque esta prueba inyecta un controlador doble:
+    el de verdad, sin `gpiod`, queda en simulado y con las entradas quietas. Las salidas
+    conmutan y las entradas se mueven solas cada dos segundos.
   - **Sin licencia instalada, el equipo abre igual.** Correr con `--simulate-no-license`
     para verlo: al abrir la ventana aparece un cartel, y el footer muestra un chip rojo
     «SIN LICENCIA» todo el tiempo que dure el estado. Sin el flag, corriendo desde
@@ -118,6 +123,7 @@ import random
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -138,15 +144,18 @@ from PySide6.QtWidgets import QApplication                               # noqa:
 from system.camera.capture_thread import CaptureThread                   # noqa: E402
 from system.config_manager import ConfigManager                          # noqa: E402
 from system.formats import camera_health, com_status, system_status       # noqa: E402
+from system.inference import pipeline_factory                            # noqa: E402
+from system.inference.abstract_pipeline import AbstractPipeline          # noqa: E402
+from system.inference.composer import FrameComposer                      # noqa: E402
 from system.inference.engine import InferenceThread                      # noqa: E402
-from system.inference.metrics import compute_metrics                     # noqa: E402
-from system.inference.pipeline import Pipeline                           # noqa: E402
+from system.inference.hooks import build_hooks                           # noqa: E402
+from system.inference.pipeline_factory import create_pipeline           # noqa: E402
 from system.inference.result import InferenceResult                      # noqa: E402
 from system.license import manager as license_manager_module              # noqa: E402
 from system.license.manager import LicenseManager                        # noqa: E402
 from system.license.request import save_request                          # noqa: E402
 from system.logger import logger                                         # noqa: E402
-from system.modbus.registers import SCHEMA                               # noqa: E402
+from system.modbus.registers import REGISTERS, SCHEMA                    # noqa: E402
 from system.modbus.server import SharedModbusServer                      # noqa: E402
 from system.system_monitor import SystemMonitor                          # noqa: E402
 from system.telemetry.persistence import PersistenceThread               # noqa: E402
@@ -168,7 +177,29 @@ _GPIO_INTERVAL_MS = 2000         # cada cuánto se mueven las entradas del GPIO 
 _CONFIG_WATCH_INTERVAL_MS = 1000 # cada cuánto se mira si cambió el config.yaml
 
 _HEARTBEAT_MAX = 65535           # el registro es uint16: el contador da la vuelta ahí
+
+# Los nombres del mapa cargado, como en `main.py`: el de cada instalación declara lo que
+# lee su PLC y no tiene por qué traer todo lo que esto mide.
+_REGISTER_NAMES = frozenset(reg.name for reg in REGISTERS)
 _SERVER_STOP_TIMEOUT_S = 5.0     # espera al hilo del servidor Modbus al cerrar
+
+
+class _PersonDemoPipeline(AbstractPipeline):
+    """
+    Segundo proceso sobre la misma cámara, con su propio modelo mock: `model_3`.
+
+    Es el `type: demo_person` del config de al lado. En un fork la clase va en
+    `pipeline.py` y se registra con una línea en la fábrica; acá se registra a mano para no
+    agregarle al template un pipeline que ninguna instalación corre.
+    """
+
+    model_slots = ("model_3",)
+
+    def _run(self, frame_bgr, camera_slot):
+        return self._run_stage("model_3", frame_bgr)
+
+
+pipeline_factory._PIPELINE_CLASSES["demo_person"] = _PersonDemoPipeline
 
 _GPIO_INPUT_COUNT = 4
 _GPIO_OUTPUT_COUNT = 4
@@ -241,8 +272,8 @@ class _FakeGpioController:
     """
     Controlador de GPIO de mentira, con la interfaz que espera `ui/dialogs/gpio_dialog.py`.
 
-    Está acá y no en el repo porque el módulo de GPIO todavía no existe: cuando exista,
-    esta clase se borra y se cablea el de verdad.
+    Es un doble y no `system/gpio_control.py` porque el de verdad, sin `gpiod`, queda en
+    simulado con las entradas quietas, y esta prueba las quiere ver moverse.
     """
 
     hardware_available = False
@@ -353,18 +384,28 @@ class _DemoApp(QObject):
         # ── Inferencia ───────────────────────────────────────────────────────
         # Un hilo por pipeline habilitado. `annotate_gate` atado al combo de la
         # grilla: si nadie mira el anotado, el motor no lo dibuja.
+        # Los hooks son los del proyecto, los mismos que arma `main.py`.
+        hooks = build_hooks(config)
         self._engines: list = []
         for pipeline_slot in (config.get("inference.pipelines", {}) or {}):
             if not config.get(f"inference.pipelines.{pipeline_slot}.enabled", True):
                 logger.info(f"[Demo] {pipeline_slot} deshabilitado: no se le levanta hilo.")
                 continue
             engine = InferenceThread(
-                config, Pipeline(config, pipeline_slot),
-                analyzer=compute_metrics,
+                config, create_pipeline(config, pipeline_slot),
+                classifier=hooks.classifier,
+                analyzer=hooks.analyzer,
+                annotator=hooks.annotator,
                 annotate_gate=self._is_annotated_watched,
             )
             engine.result_ready.connect(self._on_result_ready)
             self._engines.append(engine)
+        # Un solo anotado por cámara con los overlays de todos sus pipelines, como en
+        # `main.py`: `camera_1` entra a dos, cada uno a su ritmo.
+        self._composer = FrameComposer({
+            engine.pipeline_slot: float(config.get(
+                f"inference.pipelines.{engine.pipeline_slot}.interval_s", 0.0) or 0.0)
+            for engine in self._engines})
 
         # ── Captura ──────────────────────────────────────────────────────────
         for camera_slot in (config.get("cameras", {}) or {}):
@@ -446,7 +487,8 @@ class _DemoApp(QObject):
             self._grid.update_frame(frame_bgr, camera_slot)
         self._http_video.push_raw(camera_slot, frame_bgr)
         for engine in self._engines:
-            engine.push_frame(frame_bgr, camera_slot)
+            if engine.has_camera(camera_slot):
+                engine.push_frame(frame_bgr, camera_slot)
 
     @Slot(object, str)
     def _on_camera_status(self, status: dict, camera_slot: str):
@@ -465,13 +507,18 @@ class _DemoApp(QObject):
              "detection_count": result.detection_count,
              "illumination_pct": result.illumination_pct,
              **result.metrics},
-            tags={"camera": result.camera_slot, "pipeline": result.pipeline_slot},
+            tags={"camara_id": result.camera_slot, "pipeline": result.pipeline_slot},
         )
         if result.annotated_bgr is None:
             return
+        shown_bgr = self._composer.compose(
+            result, result.annotated_bgr, time.monotonic(),
+            {engine.pipeline_slot: engine for engine in self._engines})
+        if shown_bgr is None:
+            return
         if self._grid.mode == MODE_ANNOTATED:
-            self._grid.update_frame(result.annotated_bgr, result.camera_slot)
-        self._http_video.push_annotated(result.camera_slot, result.annotated_bgr)
+            self._grid.update_frame(shown_bgr, result.camera_slot)
+        self._http_video.push_annotated(result.camera_slot, shown_bgr)
 
     def _is_annotated_watched(self, camera_slot: str) -> bool:
         """
@@ -554,8 +601,10 @@ class _DemoApp(QObject):
 
         # Un solo `encode_batch` para los dos consumidores: el datastore que lee el PLC
         # y la tabla que mira el operador. Si se codificara dos veces, podrían
-        # divergir.
-        registers = SCHEMA.encode_batch(values)
+        # divergir. Sólo lo que tiene fila: con un nombre de más, `encode_batch` levanta
+        # KeyError y el ciclo entero se cae.
+        registers = SCHEMA.encode_batch(
+            {name: value for name, value in values.items() if name in _REGISTER_NAMES})
         self._modbus.update_block(registers)
         self._window.diagnostics_view.update_modbus_values(registers)
 

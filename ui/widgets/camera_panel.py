@@ -128,11 +128,18 @@ class CameraPanel(QGroupBox):
 
     @Slot(object)
     def update_frame(self, frame_bgr: np.ndarray | None):
-        """Slot de `CaptureThread.frame_ready` (o del frame anotado del motor)."""
+        """
+        Slot de `CaptureThread.frame_ready` (o del frame anotado del motor).
+
+        Con el panel oculto —otra vista al frente, u otra cámara enfocada— sólo guarda el
+        frame: pintar lo que nadie ve costaba una conversión de 3 MP por frame en el hilo
+        de la GUI. Se pinta al volver a mostrarse.
+        """
         if frame_bgr is None or frame_bgr.size == 0:
             return
         self._last_frame = _to_bgr(frame_bgr)
-        self._repaint()
+        if self._video_label.isVisible():
+            self._repaint()
 
     def clear_frame(self, message: str = ""):
         """
@@ -148,31 +155,43 @@ class CameraPanel(QGroupBox):
 
     def eventFilter(self, watched, event):
         """
-        Reescala la imagen cuando cambia el tamaño del video.
+        Reescala la imagen cuando cambia el tamaño del video, y la pinta al mostrarse.
 
         El pixmap se escala al tamaño que tiene el label en el momento de pintarlo, así
         que sin esto una imagen quieta se queda del tamaño viejo. En crudo no se nota
         —llegan cinco frames por segundo y cada uno se pinta al tamaño nuevo— pero el
         anotado es uno por ciclo: plegar la barra lateral o enfocar una cámara dejaba la
-        imagen chica hasta la medición siguiente.
+        imagen chica hasta la medición siguiente. Al mostrarse pasa lo mismo: mientras
+        estuvo oculto guardó el frame sin pintarlo.
         """
-        if (watched is self._video_label and event.type() == QEvent.Resize
-                and event.size() != event.oldSize()):
+        if watched is self._video_label and (
+                event.type() == QEvent.Show
+                or (event.type() == QEvent.Resize and event.size() != event.oldSize())):
             self._repaint()
         return super().eventFilter(watched, event)
 
     def _repaint(self):
-        """Pinta `_last_frame` al tamaño que tiene ahora el label."""
+        """
+        Pinta `_last_frame` al tamaño que tiene ahora el label.
+
+        Se achica con OpenCV **antes** de pasarlo a Qt: convertir el frame entero a pixmap
+        para después escalarlo eran 9 MB por frame en el hilo de la GUI, y el label mide
+        una fracción de eso.
+        """
         frame_bgr = self._last_frame
         if frame_bgr is None:
             return
         height, width = frame_bgr.shape[:2]
-        image = QImage(frame_bgr.data, width, height, 3 * width, QImage.Format_BGR888)
-        scaled = QPixmap.fromImage(image).scaled(
-            self._video_label.size(), Qt.KeepAspectRatio, Qt.FastTransformation
-        )
-        self._draw_roi(scaled, width, height)
-        self._video_label.setPixmap(scaled)
+        label_size = self._video_label.size()
+        scale = min(label_size.width() / width, label_size.height() / height)
+        target_px = (max(1, int(width * scale)), max(1, int(height * scale)))
+        shown = cv2.resize(frame_bgr, target_px,
+                           interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+        image = QImage(shown.data, target_px[0], target_px[1], 3 * target_px[0],
+                       QImage.Format_BGR888)
+        pixmap = QPixmap.fromImage(image)
+        self._draw_roi(pixmap, width, height)
+        self._video_label.setPixmap(pixmap)
 
     @Slot(object)
     def update_status(self, status: dict):

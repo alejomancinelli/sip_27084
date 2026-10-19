@@ -2,9 +2,13 @@
 Tests del driver Sentech: la reconexión del thread de captura.
 
 No hay cámara ni StApi de verdad: se reemplaza el módulo `st` por un doble y se corre
-`_grab_loop` directamente. Lo que se verifica es la máquina de reintentos, que es donde
+`_grab_loop` directamente. El doble se instala con `raising=False` porque sin stapipy
+instalado el driver no define `st`, y la suite corre igual en un equipo sin la SDK. Lo que se verifica es la máquina de reintentos, que es donde
 estaba el bug — el resto del driver es la SDK y no se puede afirmar sin hardware.
 """
+
+import threading
+import time
 
 import pytest
 
@@ -65,7 +69,8 @@ def system(monkeypatch):
     stub = _System()
     monkeypatch.setattr(st_driver, "st",
                         type("_St", (), {"initialize": staticmethod(lambda: None),
-                                         "create_system": staticmethod(lambda: stub)}))
+                                         "create_system": staticmethod(lambda: stub)}),
+                        raising=False)
     monkeypatch.setattr(st_driver, "_RETRY_DELAY_S", 0)
     return stub
 
@@ -137,6 +142,63 @@ class TestGrabLoopReconnect:
 
         assert driver.grabbed == []
         assert system.by_address_calls == 4
+
+
+class TestInterrupt:
+    """
+    El cierre no espera a una cámara que no aparece: ni en `connect()` ni entre
+    reintentos. Sin esto el hilo de captura seguía vivo cuando el cierre se rendía, y Qt
+    abortaba el proceso.
+    """
+
+    def test_a_waiting_connect_returns_at_once(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", True)
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        camera_never_answers = threading.Event()
+        monkeypatch.setattr(driver, "_grab_loop", lambda: camera_never_answers.wait(5))
+        results = []
+        waiter = threading.Thread(target=lambda: results.append(driver.connect()))
+        waiter.start()
+        time.sleep(0.2)
+
+        started_s = time.monotonic()
+        driver.interrupt()
+        waiter.join(2)
+        camera_never_answers.set()
+
+        assert results == [False]
+        assert time.monotonic() - started_s < 1.0
+
+    def test_an_interrupted_driver_does_not_connect_again(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", True)
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        driver.interrupt()
+        assert driver.connect() is False
+        assert driver._grab_thread is None
+
+    def test_the_wait_between_retries_wakes_up_too(self, monkeypatch, system):
+        monkeypatch.setattr(st_driver, "_RETRY_DELAY_S", 30)
+        system.is_plugged = False
+        driver = _driver(system, grabs_before_stop=1)
+        loop = threading.Thread(target=driver._grab_loop)
+        loop.start()
+        assert _wait_for(lambda: system.by_address_calls >= 1)
+
+        started_s = time.monotonic()
+        driver.interrupt()
+        loop.join(2)
+
+        assert not loop.is_alive()
+        assert time.monotonic() - started_s < 1.0
+
+
+def _wait_for(condition, timeout_s: float = 2.0) -> bool:
+    deadline_s = time.monotonic() + timeout_s
+    while time.monotonic() < deadline_s:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
 
 
 class TestDeviceListRefresh:
@@ -324,7 +386,8 @@ class TestCameraParams:
         monkeypatch.setattr(st_driver, "st",
                             type("_St", (), {"PyIFloat": _Accessor,
                                              "PyIEnumeration": _Accessor,
-                                             "PyIInteger": _Accessor}))
+                                             "PyIInteger": _Accessor}),
+                            raising=False)
         return _Nodemap()
 
     def _apply(self, nodemap, acquisition: dict):
@@ -393,7 +456,8 @@ class TestTheSessionIsAlwaysReleased:
                             type("_St", (), {"PyIFloat": _Accessor,
                                              "PyIEnumeration": _Accessor,
                                              "PyIInteger": _Accessor,
-                                             "EGCCallbackType": None}))
+                                             "EGCCallbackType": None}),
+                            raising=False)
         made = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
         made._grab_active = True
         return made
@@ -426,3 +490,105 @@ class TestTheSessionIsAlwaysReleased:
             driver._do_grabbing(_Session(datastream_fails=True))
 
         assert driver._st_device is None
+
+
+# ── El apretón de manos de connect() ─────────────────────────────────────────
+# No usan el doble de `st`: `connect()` sólo mira `_STAPI_AVAILABLE` y levanta el thread,
+# así que estos corren también en un equipo sin el SDK instalado.
+
+class _SlowGrabLoop:
+    """
+    Doble de `_grab_loop`: confirma la adquisición recién pasados `confirm_after_s`.
+
+    Es una cámara GigE que tarda en enumerar más de lo que `connect()` espera, que es el
+    caso que este bloque cuida.
+    """
+
+    def __init__(self, driver, confirm_after_s: float):
+        self._driver = driver
+        self._confirm_after_s = confirm_after_s
+        self.runs = 0
+
+    def __call__(self):
+        self.runs += 1
+        deadline_s = time.monotonic() + self._confirm_after_s
+        while self._driver._grab_active and time.monotonic() < deadline_s:
+            time.sleep(0.01)
+        if self._driver._grab_active:
+            self._driver.is_connected = True
+        # Se queda vivo mientras lo dejen, como el loop real.
+        while self._driver._grab_active:
+            time.sleep(0.01)
+
+
+@pytest.fixture
+def slow_camera(monkeypatch):
+    """Driver con StApi disponible y un `_grab_loop` que tarda en confirmar."""
+    monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", True)
+    monkeypatch.setattr(st_driver, "_CONNECT_TIMEOUT_S", 0.2)
+
+    def build(confirm_after_s: float) -> tuple:
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        loop = _SlowGrabLoop(driver, confirm_after_s)
+        driver._grab_loop = loop
+        return driver, loop
+
+    drivers: list = []
+
+    def build_and_track(confirm_after_s: float) -> tuple:
+        driver, loop = build(confirm_after_s)
+        drivers.append(driver)
+        return driver, loop
+
+    yield build_and_track
+    for driver in drivers:
+        driver.disconnect()
+
+
+class TestConnectHandshake:
+    def test_a_camera_that_confirms_in_time_connects(self, slow_camera):
+        driver, _ = slow_camera(0.0)
+        assert driver.connect() is True
+
+    def test_a_slow_camera_connects_on_the_next_attempt(self, slow_camera):
+        """
+        La regresión: enumerar tardaba más que el timeout y `connect()` mataba el thread
+        justo cuando estaba por lograrlo. Como cada reintento vuelve a enumerar desde cero
+        con el mismo presupuesto, la cámara no conectaba nunca.
+        """
+        driver, loop = slow_camera(0.5)
+        assert driver.connect() is False
+        deadline_s = time.monotonic() + 3.0
+        while not driver.is_connected and time.monotonic() < deadline_s:
+            time.sleep(0.02)
+        assert driver.connect() is True
+        assert loop.runs == 1, "el segundo intento volvió a enumerar desde cero"
+
+    def test_a_timeout_does_not_kill_the_thread(self, slow_camera):
+        driver, _ = slow_camera(0.5)
+        driver.connect()
+        assert driver._grab_active is True
+        assert driver._grab_thread.is_alive()
+
+    def test_a_second_connect_does_not_raise_another_thread(self, slow_camera):
+        driver, loop = slow_camera(0.0)
+        driver.connect()
+        first_thread = driver._grab_thread
+        driver.connect()
+        assert driver._grab_thread is first_thread and loop.runs == 1
+
+    def test_disconnecting_while_waiting_does_not_wait_out_the_timeout(
+            self, slow_camera, monkeypatch):
+        """Cerrar la aplicación durante el primer intento no puede colgarse el timeout."""
+        timeout_s = 5.0
+        monkeypatch.setattr(st_driver, "_CONNECT_TIMEOUT_S", timeout_s)
+        driver, _ = slow_camera(timeout_s)
+        threading.Timer(0.2, driver.disconnect).start()
+        started_s = time.monotonic()
+        assert driver.connect() is False
+        assert time.monotonic() - started_s < timeout_s / 2
+
+    def test_without_the_sdk_it_refuses_without_a_thread(self, monkeypatch):
+        monkeypatch.setattr(st_driver, "_STAPI_AVAILABLE", False)
+        driver = st_driver.StDriver({"address": "10.8.1.130", "acquisition": {}})
+        assert driver.connect() is False and driver._grab_thread is None

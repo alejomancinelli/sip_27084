@@ -4,9 +4,6 @@ ventana de publicación, aislamiento de un backend roto y vaciado al cerrar.
 Los backends son dobles: lo que se verifica es el hilo, no InfluxDB ni MQTT."""
 
 import logging
-import os
-import queue
-import sys
 import threading
 import time
 

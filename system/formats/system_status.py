@@ -5,8 +5,9 @@ Responde UNA sola pregunta: **¿se puede confiar en las mediciones de proceso?**
 Con cualquiera de sus bits en 1, las mediciones no son aptas para control.
 
 Lo que reporta otra palabra no se repite acá: el estado de los canales está en
-`com_status` y la salud de cada cámara —sin frames, mal configurada— en
-`camera_health`. Lo que queda es lo que **ninguna otra palabra puede expresar**.
+`com_status`, la salud de cada cámara —sin frames, mal configurada— en
+`camera_health`, y el detalle de cada pipeline —sin licencia, deshabilitado, sin
+modelo— en `pipeline_status`, que el bit de modelo no cargado resume para todos. Lo que queda es lo que **ninguna otra palabra puede expresar**.
 Todos los bits tienen en común que el sistema sigue publicando números
 verosímiles mientras pasan.
 

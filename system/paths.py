@@ -27,7 +27,7 @@ import os
 import sys
 
 # Nuitka define `__compiled__` en cada módulo que compila; CPython no.
-_IS_COMPILED = "__compiled__" in globals()
+_COMPILED = globals().get("__compiled__")
 
 # Variable de entorno con la que se separan los datos del programa.
 DATA_DIR_ENV = "SIP_DATA_DIR"
@@ -35,12 +35,23 @@ DATA_DIR_ENV = "SIP_DATA_DIR"
 
 def _app_dir() -> str:
     """Dónde está el programa: la carpeta del ejecutable, o la raíz del repo."""
-    if _IS_COMPILED:
-        # `sys.executable` es el propio .exe en un standalone de Nuitka. `argv[0]` es el
-        # respaldo para la compilación acelerada, donde el ejecutable no es el intérprete.
-        launcher = sys.executable if sys.executable else sys.argv[0]
-        return os.path.dirname(os.path.abspath(launcher))
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return _locate_program(_COMPILED, sys.executable, __file__)
+
+
+def _locate_program(compiled: object | None, executable: str, module_file: str) -> str:
+    """
+    La carpeta del programa según cómo corre: desde fuentes, standalone o acelerado.
+
+    En un standalone `sys.executable` es el propio ejecutable. En la compilación acelerada
+    es el intérprete con el que se compiló —en la planta, una ruta que no existe— y la
+    carpeta del binario es `containing_dir`. Ese campo no sirve para los dos modos: en un
+    standalone Nuitka lo sube un nivel y apunta a la carpeta que contiene al programa.
+    """
+    if compiled is None:
+        return os.path.dirname(os.path.dirname(os.path.abspath(module_file)))
+    if compiled.standalone:
+        return os.path.dirname(os.path.abspath(executable))
+    return os.path.abspath(compiled.containing_dir)
 
 
 def _data_dir(app_dir: str) -> str:

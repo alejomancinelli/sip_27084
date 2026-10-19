@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# Antes de cada push: el lint y la suite completa, en paralelo. Tarda unos 15 s.
+#
+# Es la única barrera antes del remoto: el proyecto no corre CI en servidores, así que un
+# push que se saltea esto con --no-verify llega sin probar.
+
+root="$(git rev-parse --show-toplevel)" || exit 1
+
+for python in "$root/.venv/Scripts/python.exe" "$root/.venv/bin/python"; do
+    if [ -x "$python" ]; then
+        exec "$python" "$root/ci/check.py"
+    fi
+done
+
+echo "pre-push: no hay .venv en $root; crearlo con setup/venv-setup y --dev." >&2
+exit 1

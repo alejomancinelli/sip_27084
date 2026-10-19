@@ -6,6 +6,8 @@ ni levanta un servidor Modbus: el servidor se reemplaza por un doble que sólo
 recuerda valores.
 """
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from system.modbus.schema import (
@@ -95,7 +97,7 @@ class TestRegDefaults:
     def test_is_frozen(self):
         """El mapa se arma al importar y se comparte entre hilos sin lock."""
         reg = Reg(1, "heartbeat", "Heartbeat", PRODUCER_HEALTH)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             reg.addr = 2
 
     def test_producers_vocabulary(self):

@@ -82,8 +82,9 @@ class AbstractTelemetryBackend(ABC):
         """
         Escribe un lote de registros.
 
-        Sin setup, deshabilitado o con el destino caído no hace nada. El batch que
-        falla se pierde: acá no hay reintento ni buffer en disco.
+        Sin setup o deshabilitado no hace nada. Con el destino caído, un backend puede
+        guardar en memoria lo que no salió y mandarlo en un `write()` posterior —el de
+        InfluxDB lo hace—; no hay buffer en disco, y lo pendiente al cerrar se pierde.
         """
 
     @abstractmethod

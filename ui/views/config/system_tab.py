@@ -6,6 +6,11 @@ instalación y se escriben una vez, al armar el fork. Cambiarlos desde la UI de 
 rompería la correspondencia entre el equipo y sus datos históricos —y el nombre, además,
 es el que aparece en el título de la ventana y en el header, que se arman al iniciar—.
 
+`system.device_id` también es de sólo lectura, por la misma razón: es una identidad que se
+fija en la puesta en marcha y no una preferencia de planta. Es el `client_id` de MQTT —dos
+equipos con el mismo id se echan del broker— y el tag `device` de cada punto de InfluxDB,
+así que cambiarlo parte la serie en dos. La licencia no lo compara: la ata la huella.
+
 El idioma y el tema son las dos únicas claves que la UI aplica sin reiniciar la app:
 las emite el ConfigView y las toma la ventana principal.
 """
@@ -51,7 +56,8 @@ class SystemTab(AbstractConfigTab):
     def _build_general_box(self) -> QWidget:
         box, form = build_group_box(tr("sys_box_general"))
         self._app_name = add_form_row(form, tr("sys_app_name"), build_readonly_line_edit(""))
-        self._device_id = add_form_row(form, tr("sys_device_id"), build_line_edit(""))
+        self._device_id = add_form_row(form, tr("sys_device_id"), build_readonly_line_edit(""))
+        add_hint_row(form, tr("sys_device_id_note"))
         self._log_level = add_form_row(
             form, tr("sys_log_level"), build_combo_box(list(_LOG_LEVELS), "INFO")
         )
@@ -97,8 +103,8 @@ class SystemTab(AbstractConfigTab):
         )
 
     def save(self):
-        # `app_name` no se guarda: es de sólo lectura.
-        self._config.set("system.device_id", self._device_id.text())
+        # `app_name` y `device_id` no se guardan: son de sólo lectura. El `device_id` es
+        # la identidad del equipo en MQTT y en InfluxDB, y se cambia en el config.yaml.
         self._config.set("system.log_level", self._log_level.currentText())
         self._config.set("system.paths.logs", self._logs_path.text())
         self._config.set("system.paths.dataset", self._dataset_path.text())

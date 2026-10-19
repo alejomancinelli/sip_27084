@@ -5,8 +5,6 @@ El cliente de InfluxDB es un doble: no hace falta la librería instalada ni un
 servidor levantado para verificar el contrato del backend."""
 
 import logging
-import os
-import sys
 
 import pytest
 
@@ -68,23 +66,32 @@ class _FakePrecision:
 
 def _install(monkeypatch, *, ping: bool = True, write_error: bool = False,
              client_error: bool = False) -> dict:
-    """Deja el módulo con una librería falsa y devuelve el espía de lo que pasó."""
-    spy = {"clients": 0, "writes": [], "closes": 0}
+    """
+    Deja el módulo con una librería falsa y devuelve el espía de lo que pasó.
+
+    `spy["write_error"]` se puede cambiar en medio del test —el servidor que se cae y
+    vuelve— y `spy["attempts"]` cuenta las escrituras intentadas, salgan o no.
+    """
+    spy = {"clients": 0, "writes": [], "closes": 0, "attempts": 0,
+           "write_error": write_error}
 
     class _FakeWriteApi:
         def write(self, bucket, org, record):
-            if write_error:
-                raise RuntimeError("servidor caído")
-            spy["writes"].append((bucket, org, record))
+            spy["attempts"] += 1
+            if spy["write_error"]:
+                raise spy["write_error"] if isinstance(spy["write_error"], Exception) \
+                    else RuntimeError("servidor caído")
+            spy["writes"].append((bucket, org, list(record)))
 
     class _FakeClient:
-        def __init__(self, url, token, org):
+        def __init__(self, url, token, org, timeout=None):
             if client_error:
                 raise RuntimeError("url inválida")
             spy["clients"] += 1
             spy["url"] = url
             spy["token"] = token
             spy["org"] = org
+            spy["timeout"] = timeout
 
         def write_api(self, write_options=None):
             spy["write_options"] = write_options
@@ -286,6 +293,141 @@ class TestWrite:
         backend = _ready(monkeypatch)
         backend.write([_RECORD])
         assert backend.status == "connected"
+
+
+# ── Corte del servidor ───────────────────────────────────────────────────────
+
+class _Clock:
+    """Reloj monotónico del módulo, movido a mano: el intervalo de reintento sin esperarlo."""
+
+    def __init__(self):
+        self.now_s = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now_s
+
+
+def _record(index: int) -> dict:
+    return {"measurement": "m", "fields": {"i": index}, "time": 1700000000.0 + index}
+
+
+def _written_indices(spy: dict) -> list:
+    return [point.fields["i"] for _, _, points in spy["writes"] for point in points]
+
+
+class _HttpError(Exception):
+    """Lo que levanta la librería cuando el servidor contesta con un código de error."""
+
+    def __init__(self, status: int):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
+@pytest.fixture
+def clock(monkeypatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(ib, "time", fake)
+    return fake
+
+
+class TestOutage:
+    """Un corte del servidor no pierde los puntos, y no frena al hilo en cada batch."""
+
+    def test_the_points_of_a_failed_write_go_out_with_the_next_one(self, monkeypatch,
+                                                                    clock):
+        spy = _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        backend.write([_record(1)])
+        spy["write_error"] = False
+        clock.now_s += ib._RETRY_INTERVAL_S
+
+        backend.write([_record(2)])
+
+        assert _written_indices(spy) == [1, 2]
+        assert backend.status == "connected"
+
+    def test_while_the_server_is_down_it_is_not_called_on_every_batch(self, monkeypatch,
+                                                                      clock):
+        """Cada intento bloquea el hilo hasta el timeout HTTP y la cola se llena."""
+        spy = _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        for index in range(5):
+            backend.write([_record(index)])
+            clock.now_s += 1.0
+        assert spy["attempts"] == 1
+
+    def test_it_tries_again_once_the_interval_passes(self, monkeypatch, clock):
+        spy = _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        backend.write([_record(1)])
+        clock.now_s += ib._RETRY_INTERVAL_S
+        backend.write([_record(2)])
+        assert spy["attempts"] == 2
+
+    def test_an_outage_is_logged_once(self, monkeypatch, clock, caplog):
+        _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        with caplog.at_level(logging.WARNING, logger="app"):
+            for index in range(3):
+                backend.write([_record(index)])
+                clock.now_s += ib._RETRY_INTERVAL_S
+        assert _logged(caplog, "Error escribiendo") == 1
+
+    def test_the_recovery_is_logged_with_what_was_written(self, monkeypatch, clock, caplog):
+        spy = _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        backend.write([_record(1), _record(2)])
+        spy["write_error"] = False
+        clock.now_s += ib._RETRY_INTERVAL_S
+        with caplog.at_level(logging.INFO, logger="app"):
+            backend.write([_record(3)])
+        assert _logged(caplog, "El servidor volvió: 3 puntos escritos") == 1
+
+    def test_a_full_buffer_drops_the_oldest_points(self, monkeypatch, clock, caplog):
+        monkeypatch.setattr(ib, "_PENDING_MAX_POINTS", 3)
+        spy = _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        with caplog.at_level(logging.INFO, logger="app"):
+            for index in range(5):
+                backend.write([_record(index)])
+            spy["write_error"] = False
+            clock.now_s += ib._RETRY_INTERVAL_S
+            backend.write([])
+        assert _written_indices(spy) == [2, 3, 4]
+        assert _logged(caplog, "2 perdidos por falta de lugar") == 1
+
+    def test_a_rejected_batch_is_not_retried(self, monkeypatch, clock):
+        """Un 4xx falla siempre: reintentarlo arrastraría a todo lo que venga detrás."""
+        spy = _install(monkeypatch, write_error=_HttpError(422))
+        backend = _ready(monkeypatch)
+        backend.write([_record(1)])
+        spy["write_error"] = False
+        backend.write([_record(2)])
+        assert _written_indices(spy) == [2]
+
+    def test_a_429_is_the_server_asking_to_wait(self, monkeypatch, clock):
+        spy = _install(monkeypatch, write_error=_HttpError(429))
+        backend = _ready(monkeypatch)
+        backend.write([_record(1)])
+        spy["write_error"] = False
+        clock.now_s += ib._RETRY_INTERVAL_S
+        backend.write([_record(2)])
+        assert _written_indices(spy) == [1, 2]
+
+    def test_closing_with_points_pending_says_how_many_are_lost(self, monkeypatch, clock,
+                                                                caplog):
+        _install(monkeypatch, write_error=True)
+        backend = _ready(monkeypatch)
+        backend.write([_record(1), _record(2)])
+        with caplog.at_level(logging.WARNING, logger="app"):
+            backend.close()
+        assert _logged(caplog, "2 puntos sin escribir") == 1
+
+    def test_the_client_gets_a_short_timeout(self, monkeypatch):
+        """El de la librería es 10 s: con el servidor caído, es lo que bloquea cada intento."""
+        spy = _install(monkeypatch)
+        _ready(monkeypatch)
+        assert spy["timeout"] == ib._TIMEOUT_MS
 
 
 # ── Cierre ───────────────────────────────────────────────────────────────────

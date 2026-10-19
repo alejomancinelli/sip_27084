@@ -1,8 +1,7 @@
 """Tests del MockDriver: es el único driver que corre sin hardware, así que es
 donde se verifica el contrato que la base impone a todos."""
 
-import os
-import sys
+import time
 
 
 import tools.camera.mock_driver as md
@@ -62,6 +61,30 @@ class TestMeasuredFps:
         for _ in range(10):
             driver.get_frame()
         assert driver.get_status()["fps_estimated"] > 0.0
+
+    def test_fps_drops_to_zero_when_the_frames_stop(self):
+        """Una cámara trabada no puede seguir leyéndose con los fps de antes."""
+        driver = _connected()
+        stopped_s = time.monotonic() - 5.0
+        driver._frame_stamps.extend(stopped_s - (29 - i) / 15 for i in range(30))
+        assert driver.get_status()["fps_estimated"] == 0.0
+
+    def test_fps_holds_while_the_frames_keep_coming(self):
+        driver = _connected()
+        last_s = time.monotonic()
+        driver._frame_stamps.extend(last_s - (29 - i) / 15 for i in range(30))
+        assert driver.get_status()["fps_estimated"] == 15.0
+
+    def test_a_wall_clock_step_does_not_move_the_measurement(self, monkeypatch):
+        """Un NTP que ajusta la hora al arrancar —Jetson sin RTC— no es un frame que tardó."""
+        driver = _connected()
+        for _ in range(5):
+            driver.get_frame()
+        wall_clock = time.time
+        monkeypatch.setattr(time, "time", lambda: wall_clock() + 3600.0)
+        for _ in range(5):
+            driver.get_frame()
+        assert driver.get_status()["fps_estimated"] > 50.0
 
     def test_disabled_capture_does_not_add_frames_to_the_measurement(self):
         driver = _connected()

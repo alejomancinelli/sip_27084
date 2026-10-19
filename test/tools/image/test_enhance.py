@@ -1,5 +1,5 @@
-"""Tests del ajuste de visualización: qué aclara, qué no toca y cuándo no hay nada que
-ajustar.
+"""Tests del ajuste de imagen: qué aclara, qué no toca, cuándo no hay nada que ajustar y
+cómo se reparte por cámara cuando entra al preprocessor.
 
 Se verifica el efecto sobre los píxeles y que el frame de entrada nunca se modifique: el
 mismo array lo comparten la captura, el modelo y el dataset.
@@ -8,8 +8,9 @@ mismo array lo comparten la captura, el modelo y el dataset.
 import numpy as np
 import pytest
 
-from tools.image.enhance import (CLAHE_CLIP_MAX, GAMMA_MAX, GAMMA_MIN, apply_clahe,
-                                 apply_gamma, build_display_adjust)
+from tools.image.enhance import (BRIGHTNESS_FACTOR_MAX, CLAHE_CLIP_MAX, GAMMA_MAX, GAMMA_MIN,
+                                 apply_clahe, apply_gamma, build_display_adjust,
+                                 build_image_adjust)
 
 
 def _frame(level: int = 60) -> np.ndarray:
@@ -113,3 +114,76 @@ class TestBuildDisplayAdjust:
     def test_it_names_itself_with_its_parameters(self):
         """El aviso de quien lo aplica tiene que decir con qué estaba configurado."""
         assert "0.5" in build_display_adjust(gamma=0.5).__name__
+
+
+class TestBuildImageAdjust:
+    """El ajuste de medición por cámara, con la firma del `preprocessor` del motor."""
+
+    @pytest.mark.parametrize("adjust_by_camera", [
+        {},
+        None,
+        {"camera_1": {}},
+        {"camera_1": {"brightness_factor": 1.0, "clahe_clip": 0.0}},
+        {"camera_1": "no es un dict"},
+    ])
+    def test_nothing_to_adjust_returns_none(self, adjust_by_camera):
+        """Sin ajuste el motor no gasta la pasada: el preprocessor no existe."""
+        assert build_image_adjust(adjust_by_camera) is None
+
+    @pytest.mark.parametrize("factor", [0.3, 1.8, 4.6])
+    def test_the_brightness_is_the_linear_factor_of_the_equipment_it_reproduces(self, factor):
+        """
+        Píxel a píxel la cuenta del equipo que se reproduce: multiplicar en float32 y
+        truncar a uint8. Otra curva le daría al modelo imágenes que no vio al entrenar.
+        """
+        frame = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
+        expected = np.clip(frame.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": factor}})
+        assert np.array_equal(adjust(frame, "camera_1"), expected)
+
+    def test_above_one_brightens_and_saturates(self):
+        """Más número es más brillo, y lo que pasa de 255 queda blanco, como en el equipo."""
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": 4.0}})
+        assert adjust(_frame(20), "camera_1").mean() == 80
+        assert adjust(_frame(100), "camera_1").mean() == 255
+
+    def test_below_one_darkens(self):
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": 0.5}})
+        assert adjust(_frame(60), "camera_1").mean() == 30
+
+    def test_an_out_of_range_factor_is_saturated_not_ignored(self):
+        """Es un número copiado de otro equipo: ignorarlo dejaría al modelo sin su ajuste."""
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": 9.0}})
+        assert adjust(_frame(20), "camera_1").mean() == 20 * BRIGHTNESS_FACTOR_MAX
+
+    def test_each_camera_gets_its_own_parameters(self):
+        """La luz es de cada montaje: una cámara oscura no arrastra a la de al lado."""
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": 2.0},
+                                     "camera_2": {"brightness_factor": 0.5}})
+        assert adjust(_frame(60), "camera_1").mean() > 60
+        assert adjust(_frame(60), "camera_2").mean() < 60
+
+    def test_a_camera_without_adjustment_passes_the_same_array(self):
+        """Ni copia ni cambio: el frame de referencia de esa cámara sigue siendo el suyo."""
+        adjust = build_image_adjust({"camera_1": {"brightness_factor": 2.0}})
+        frame = _frame(60)
+        assert adjust(frame, "camera_2") is frame
+
+    def test_the_local_contrast_runs_on_the_brightened_frame(self):
+        """El CLAHE ecualiza la imagen como la ve el modelo, ya aclarada."""
+        both = build_image_adjust({"camera_1": {"brightness_factor": 2.0, "clahe_clip": 2.0}})
+        factor_only = build_image_adjust({"camera_1": {"brightness_factor": 2.0}})
+        expected = apply_clahe(factor_only(_gradient(), "camera_1"), 2.0)
+        assert np.array_equal(both(_gradient(), "camera_1"), expected)
+
+    def test_the_camera_frame_is_never_touched(self):
+        """El mismo array lo usan la vista cruda y la nitidez de la óptica."""
+        frame = _frame(60)
+        build_image_adjust({"camera_1": {"brightness_factor": 2.0}})(frame, "camera_1")
+        assert np.array_equal(frame, _frame(60))
+
+    def test_it_names_the_cameras_it_adjusts(self):
+        """Es lo que dice el log de arranque: qué cámaras miden sobre un frame ajustado."""
+        adjust = build_image_adjust({"camera_2": {"brightness_factor": 2.0},
+                                     "camera_1": {"clahe_clip": 2.0}, "camera_3": {}})
+        assert adjust.__name__ == "image_adjust(camera_1, camera_2)"

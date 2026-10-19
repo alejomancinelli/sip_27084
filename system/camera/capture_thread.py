@@ -13,7 +13,9 @@ De qué se ocupa:
   - Publicar cada frame por `frame_ready` y la salud de la cámara por
     `status_updated`.
   - Parar limpio: `requestInterruption()` + `wait()` cortan el bucle y liberan el
-    driver.
+    driver. `requestInterruption()` además despierta un `connect()` que esté esperando
+    una cámara que no aparece: sin eso el hilo seguía vivo cuando el `wait()` se
+    rendía, y Qt abortaba el proceso al destruirlo.
 
 Cuatro puntos del contrato que no se ven en las firmas:
   - La sección de la cámara se lee una vez, al construir el hilo, que es donde se
@@ -68,7 +70,7 @@ class CaptureThread(QThread):
             self._driver.get_status().get("error") if self._driver.is_config_error else None
         )
         self._last_status: dict = self._driver.get_status()
-        self._last_status_time_s = time.time()
+        self._last_status_time_s = time.monotonic()
         # Pedido de prender o apagar la captura, pendiente de aplicar. None = nada que
         # hacer. Lo escribe el hilo que llama a `set_capture_enabled` y lo consume este
         # hilo: asignar una referencia es atómico bajo el GIL, así que no necesita lock.
@@ -104,6 +106,11 @@ class CaptureThread(QThread):
         de arrancar la captura— y no quiera esperar hasta el próximo período.
         """
         return dict(self._last_status)
+
+    def requestInterruption(self):
+        """La marca de Qt, y además le avisa al driver: ver el docstring del módulo."""
+        super().requestInterruption()
+        self._driver.interrupt()
 
     def run(self):
         logger.info(f"[{self.camera_slot}] Hilo de captura iniciado.")
@@ -152,7 +159,7 @@ class CaptureThread(QThread):
                 self.msleep(self._idle_sleep_ms())
 
             # ── Telemetría ───────────────────────────────────────────────────
-            if (time.time() - self._last_status_time_s) > _STATUS_INTERVAL_S:
+            if (time.monotonic() - self._last_status_time_s) > _STATUS_INTERVAL_S:
                 self._emit_status()
 
         logger.info(f"[{self.camera_slot}] Liberando el driver y cerrando el hilo.")
@@ -162,7 +169,7 @@ class CaptureThread(QThread):
 
     def _emit_status(self):
         """Lee la salud del driver y la publica. Un driver que falla acá no baja el hilo."""
-        self._last_status_time_s = time.time()
+        self._last_status_time_s = time.monotonic()
         try:
             status = self._driver.get_status()
         except Exception as e:
